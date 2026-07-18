@@ -243,6 +243,7 @@ export const RESERVED_BUSINESS_WEB_PROFILE_SLUGS = new Set([
   "home-preview",
   "cta",
   "embed",
+  "e",
   "api",
   "assets",
   "index.html",

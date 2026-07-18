@@ -267,9 +267,9 @@ export async function createGroupThread(
   }
 }
 
-export type MessengerCustomer = { id: string; name: string }
+export type MessengerCustomer = { id: string; name: string; phone: string | null }
 
-/** Search the signed-in user's customers to reference in chat. */
+/** Search the signed-in user's customers to reference in chat or dial. */
 export async function searchMessengerCustomers(
   supabase: SupabaseClient | null,
   me: string | null | undefined,
@@ -278,15 +278,29 @@ export async function searchMessengerCustomers(
 ): Promise<MessengerCustomer[]> {
   if (!supabase || !me) return []
   try {
-    let q = supabase.from("customers").select("id, display_name").eq("user_id", me)
+    let q = supabase
+      .from("customers")
+      .select("id, display_name, customer_identifiers ( type, value )")
+      .eq("user_id", me)
     const trimmed = query.trim()
     if (trimmed) q = q.ilike("display_name", `%${trimmed}%`)
     const { data, error } = await q.order("updated_at", { ascending: false }).limit(limit)
     if (error) return []
-    return ((data ?? []) as { id: string; display_name: string | null }[]).map((r) => ({
-      id: r.id,
-      name: r.display_name?.trim() || "Unnamed customer",
-    }))
+    return (
+      (data ?? []) as {
+        id: string
+        display_name: string | null
+        customer_identifiers?: { type: string; value: string }[] | null
+      }[]
+    ).map((r) => {
+      const phone =
+        r.customer_identifiers?.find((i) => i.type === "phone" && String(i.value ?? "").trim())?.value?.trim() ?? null
+      return {
+        id: r.id,
+        name: r.display_name?.trim() || "Unnamed customer",
+        phone,
+      }
+    })
   } catch {
     return []
   }

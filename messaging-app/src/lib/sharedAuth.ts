@@ -33,7 +33,8 @@ export async function applySessionFromUrl(url: string): Promise<boolean> {
 }
 
 /**
- * Register handoff listeners. On native, listens for Capacitor App `appUrlOpen`.
+ * Register handoff listeners. On native, listens for Capacitor App `appUrlOpen`
+ * and also checks cold-start `getLaunchUrl` (common miss when Messaging was closed).
  * On web, checks the current location hash once.
  */
 export async function initSharedAuth(): Promise<() => void> {
@@ -46,15 +47,26 @@ export async function initSharedAuth(): Promise<() => void> {
   // Native: Capacitor App plugin (loaded dynamically so web build/dev works without it).
   try {
     const mod = (await import("@capacitor/app")) as {
-      App?: { addListener: (event: string, cb: (data: { url: string }) => void) => Promise<{ remove: () => void }> }
+      App?: {
+        addListener: (event: string, cb: (data: { url: string }) => void) => Promise<{ remove: () => void }>
+        getLaunchUrl?: () => Promise<{ url?: string } | undefined>
+      }
     }
     const App = mod.App
-    if (App?.addListener) {
-      const handle = await App.addListener("appUrlOpen", (data) => {
-        if (data?.url) void applySessionFromUrl(data.url)
-      })
-      return () => handle.remove()
+    if (!App?.addListener) return () => {}
+
+    // Cold start: app opened by the deep link while previously closed.
+    try {
+      const launch = await App.getLaunchUrl?.()
+      if (launch?.url) await applySessionFromUrl(launch.url)
+    } catch {
+      /* ignore */
     }
+
+    const handle = await App.addListener("appUrlOpen", (data) => {
+      if (data?.url) void applySessionFromUrl(data.url)
+    })
+    return () => handle.remove()
   } catch {
     /* @capacitor/app not installed in this environment — web fallback only */
   }

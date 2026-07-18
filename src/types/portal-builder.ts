@@ -1506,6 +1506,12 @@ export const DEFAULT_ESTIMATE_TEMPLATE_ITEMS: PortalSettingItem[] = [
     defaultChecked: true,
   },
   {
+    id: "estimate_template_offer_esign",
+    type: "checkbox",
+    label: "Offer e-sign link when sending to customer",
+    defaultChecked: false,
+  },
+  {
     id: "estimate_template_use_ai",
     type: "checkbox",
     label: "Use AI assistant to help refine estimate wording",

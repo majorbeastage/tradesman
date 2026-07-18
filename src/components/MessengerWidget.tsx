@@ -82,6 +82,11 @@ export default function MessengerWidget({ setPage }: Props) {
   const [custQuery, setCustQuery] = useState("")
   const [custResults, setCustResults] = useState<MessengerCustomer[]>([])
 
+  // Dial-out customer search
+  const [dialCustQuery, setDialCustQuery] = useState("")
+  const [dialCustResults, setDialCustResults] = useState<MessengerCustomer[]>([])
+  const [dialSelectedName, setDialSelectedName] = useState<string | null>(null)
+
   // New group
   const [groupSel, setGroupSel] = useState<Set<string>>(new Set())
   const [groupTitle, setGroupTitle] = useState("")
@@ -269,6 +274,20 @@ export default function MessengerWidget({ setPage }: Props) {
     }
   }, [custPickerOpen, custQuery, me])
 
+  // Dialer customer search
+  useEffect(() => {
+    if (view !== "dial") return
+    let cancelled = false
+    const id = window.setTimeout(async () => {
+      const rows = await searchMessengerCustomers(supabase, me, dialCustQuery)
+      if (!cancelled) setDialCustResults(rows)
+    }, 220)
+    return () => {
+      cancelled = true
+      window.clearTimeout(id)
+    }
+  }, [view, dialCustQuery, me])
+
   const selectedThread = useMemo(() => threads.find((t) => t.id === selectedThreadId) ?? null, [threads, selectedThreadId])
 
   function threadTitle(t: ThreadSummary): string {
@@ -303,7 +322,7 @@ export default function MessengerWidget({ setPage }: Props) {
       void refreshThreads()
     } else {
       setInput(body)
-      if (ref) setPendingCustomer({ id: ref.customerId, name: ref.name })
+      if (ref) setPendingCustomer({ id: ref.customerId, name: ref.name, phone: null })
       alert(res.error ?? "Could not send message.")
     }
   }
@@ -541,7 +560,7 @@ export default function MessengerWidget({ setPage }: Props) {
                           setAvailOpen(false)
                           if (me) void saveMyAvailability(supabase, me, a)
                         }}
-                        style={{ border: "none", background: availability === a ? "#f1f5f9" : "transparent", textAlign: "left", padding: "6px 8px", borderRadius: 6, cursor: "pointer", fontWeight: 700, fontSize: 12 }}
+                        style={{ border: "none", background: availability === a ? "#f1f5f9" : "transparent", textAlign: "left", padding: "6px 8px", borderRadius: 6, cursor: "pointer", fontWeight: 700, fontSize: 12, color: "#0f172a" }}
                       >
                         <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: AVAILABILITY_COLOR[a], marginRight: 6 }} />
                         {AVAILABILITY_LABEL[a]}
@@ -890,13 +909,58 @@ export default function MessengerWidget({ setPage }: Props) {
               ) : (
                 <>
                   <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-                    Call from this computer using your Tradesman business number. Audio uses your microphone and speaker.
+                    Call from this computer using your Tradesman business number. Search a customer or type a number.
                   </p>
+                  <input
+                    value={dialCustQuery}
+                    onChange={(e) => {
+                      setDialCustQuery(e.target.value)
+                      setDialSelectedName(null)
+                    }}
+                    placeholder="Search customer…"
+                    style={{ padding: "9px 12px", borderRadius: 8, border: `1px solid ${theme.border}`, fontSize: 14, color: "#0f172a", background: "#fff" }}
+                  />
+                  {dialCustResults.length > 0 && !dialSelectedName ? (
+                    <div style={{ maxHeight: 140, overflowY: "auto", border: `1px solid ${theme.border}`, borderRadius: 8, background: "#fff" }}>
+                      {dialCustResults.slice(0, 8).map((c) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          disabled={!c.phone}
+                          onClick={() => {
+                            if (!c.phone) return
+                            setDialNumber(c.phone)
+                            setDialSelectedName(c.name)
+                            setDialCustQuery(c.name)
+                          }}
+                          style={{
+                            width: "100%",
+                            textAlign: "left",
+                            border: "none",
+                            borderBottom: `1px solid ${theme.border}`,
+                            background: "#fff",
+                            padding: "8px 10px",
+                            cursor: c.phone ? "pointer" : "default",
+                            opacity: c.phone ? 1 : 0.5,
+                          }}
+                        >
+                          <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a" }}>{c.name}</div>
+                          <div style={{ fontSize: 11, color: "#64748b" }}>{c.phone || "No phone on file"}</div>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                  {dialSelectedName ? (
+                    <p style={{ margin: 0, fontSize: 12, color: "#059669", fontWeight: 700 }}>Calling: {dialSelectedName}</p>
+                  ) : null}
                   <input
                     type="tel"
                     inputMode="tel"
                     value={dialNumber}
-                    onChange={(e) => setDialNumber(e.target.value)}
+                    onChange={(e) => {
+                      setDialNumber(e.target.value)
+                      setDialSelectedName(null)
+                    }}
                     placeholder="(555) 123-4567"
                     style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${theme.border}`, fontSize: 16, color: "#0f172a", background: "#fff" }}
                   />

@@ -73,6 +73,9 @@ export default function MessengerScreen({ me }: { me: string }) {
 
   // Phone (softphone)
   const [dialNumber, setDialNumber] = useState("")
+  const [dialCustQuery, setDialCustQuery] = useState("")
+  const [dialCustResults, setDialCustResults] = useState<MessengerCustomer[]>([])
+  const [dialSelectedName, setDialSelectedName] = useState<string | null>(null)
   const voice = useVoiceDevice()
 
   // Calendar
@@ -131,6 +134,14 @@ export default function MessengerScreen({ me }: { me: string }) {
     }, 200)
     return () => window.clearTimeout(h)
   }, [custPickerOpen, custQuery, me])
+
+  useEffect(() => {
+    if (tab !== "phone") return
+    const h = window.setTimeout(() => {
+      void searchMessengerCustomers(supabase, me, dialCustQuery).then(setDialCustResults)
+    }, 200)
+    return () => window.clearTimeout(h)
+  }, [tab, dialCustQuery, me])
 
   useEffect(() => {
     if (tab !== "calendar") return
@@ -480,9 +491,16 @@ export default function MessengerScreen({ me }: { me: string }) {
         </div>
 
         {pendingCustomer ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderTop: "1px solid var(--border)", background: "#eef2ff" }}>
-            <span style={{ fontSize: 13, fontWeight: 700, color: "#3730a3" }}>👤 Customer: {pendingCustomer.name}</span>
-            <button type="button" onClick={() => setPendingCustomer(null)} style={{ border: "none", background: "transparent", color: "#475569", cursor: "pointer", fontSize: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderTop: "1px solid var(--border)", background: "#eef2ff", minWidth: 0 }}>
+            <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: "#3730a3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              👤 {pendingCustomer.name}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPendingCustomer(null)}
+              aria-label="Clear customer reference"
+              style={{ border: "none", background: "#e2e8f0", color: "#0f172a", cursor: "pointer", fontSize: 18, lineHeight: 1, width: 32, height: 32, borderRadius: 16, flexShrink: 0 }}
+            >
               ×
             </button>
           </div>
@@ -499,7 +517,7 @@ export default function MessengerScreen({ me }: { me: string }) {
         ) : null}
 
         <div className="app-footer" style={{ borderTop: "1px solid var(--border)" }}>
-          <div style={{ display: "flex", gap: 6, padding: "10px 10px 4px", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 4, padding: "8px 8px 4px", alignItems: "center", minWidth: 0 }}>
             <input ref={fileInputRef} type="file" hidden onChange={(e) => void onPickFile(e)} />
             <button type="button" onClick={() => fileInputRef.current?.click()} disabled={fileBusy} title="Attach a file" style={composerBtn}>
               📎
@@ -528,10 +546,16 @@ export default function MessengerScreen({ me }: { me: string }) {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void send()}
               placeholder="Message…"
-              style={{ flex: 1, padding: "11px 12px", borderRadius: 20, border: "1px solid var(--border)", fontSize: 15, color: "#0f172a", background: "#fff" }}
+              style={{ flex: 1, minWidth: 0, padding: "10px 12px", borderRadius: 20, border: "1px solid var(--border)", fontSize: 15, color: "#0f172a", background: "#fff" }}
             />
-            <button type="button" onClick={() => void send()} style={{ border: "none", background: "var(--orange)", color: "#fff", borderRadius: 20, padding: "0 16px", fontWeight: 700, cursor: "pointer", height: 42 }}>
-              Send
+            <button
+              type="button"
+              onClick={() => void send()}
+              title="Send"
+              aria-label="Send"
+              style={{ border: "none", background: "var(--orange)", color: "#fff", borderRadius: 20, width: 42, height: 42, fontWeight: 800, cursor: "pointer", flexShrink: 0, fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center" }}
+            >
+              ➤
             </button>
           </div>
           <div style={{ padding: "0 14px 6px", fontSize: 11, color: "var(--muted)" }}>👤 = reference a customer in chat (not a text to them)</div>
@@ -540,9 +564,14 @@ export default function MessengerScreen({ me }: { me: string }) {
         {custPickerOpen ? (
           <div style={overlay}>
             <div style={sheet}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                <strong style={{ fontSize: 15 }}>Reference a customer</strong>
-                <button type="button" onClick={() => setCustPickerOpen(false)} style={{ marginLeft: "auto", border: "none", background: "transparent", fontSize: 20, cursor: "pointer", color: "#475569" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, paddingTop: 4 }}>
+                <strong style={{ flex: 1, fontSize: 15, minWidth: 0 }}>Reference a customer</strong>
+                <button
+                  type="button"
+                  onClick={() => setCustPickerOpen(false)}
+                  aria-label="Close"
+                  style={{ border: "none", background: "#e2e8f0", width: 36, height: 36, borderRadius: 18, fontSize: 20, cursor: "pointer", color: "#0f172a", flexShrink: 0, lineHeight: 1 }}
+                >
                   ×
                 </button>
               </div>
@@ -682,11 +711,59 @@ export default function MessengerScreen({ me }: { me: string }) {
             </div>
           ) : (
             <>
+              <p style={{ margin: 0, fontSize: 13, color: "var(--muted)", lineHeight: 1.5 }}>
+                Calls go out from your Tradesman Twilio number. Search a customer or type a number.
+              </p>
+              <input
+                value={dialCustQuery}
+                onChange={(e) => {
+                  setDialCustQuery(e.target.value)
+                  setDialSelectedName(null)
+                }}
+                placeholder="Search customer…"
+                style={{ padding: "12px 14px", borderRadius: 10, border: "1px solid var(--border)", fontSize: 15, color: "#0f172a", background: "#fff" }}
+              />
+              {dialCustResults.length > 0 && !dialSelectedName ? (
+                <div style={{ maxHeight: 180, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 10, background: "#fff" }}>
+                  {dialCustResults.slice(0, 10).map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      disabled={!c.phone}
+                      onClick={() => {
+                        if (!c.phone) return
+                        setDialNumber(c.phone)
+                        setDialSelectedName(c.name)
+                        setDialCustQuery(c.name)
+                      }}
+                      style={{
+                        width: "100%",
+                        textAlign: "left",
+                        border: "none",
+                        borderBottom: "1px solid var(--border)",
+                        background: "#fff",
+                        padding: "12px 14px",
+                        cursor: c.phone ? "pointer" : "default",
+                        opacity: c.phone ? 1 : 0.5,
+                      }}
+                    >
+                      <div style={{ fontSize: 15, fontWeight: 700, color: "#0f172a" }}>{c.name}</div>
+                      <div style={{ fontSize: 12, color: "var(--muted)" }}>{c.phone || "No phone on file"}</div>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              {dialSelectedName ? (
+                <p style={{ margin: 0, fontSize: 13, color: "#059669", fontWeight: 700 }}>Calling: {dialSelectedName}</p>
+              ) : null}
               <input
                 type="tel"
                 inputMode="tel"
                 value={dialNumber}
-                onChange={(e) => setDialNumber(e.target.value)}
+                onChange={(e) => {
+                  setDialNumber(e.target.value)
+                  setDialSelectedName(null)
+                }}
                 placeholder="(555) 123-4567"
                 style={{ padding: "14px", borderRadius: 10, border: "1px solid var(--border)", fontSize: 18, color: "#0f172a", background: "#fff" }}
               />
@@ -823,9 +900,9 @@ const composerBtn: CSSProperties = {
   background: "#fff",
   color: "var(--text)",
   borderRadius: 20,
-  width: 42,
-  height: 42,
-  fontSize: 18,
+  width: 38,
+  height: 38,
+  fontSize: 16,
   cursor: "pointer",
   flexShrink: 0,
 }
@@ -862,7 +939,7 @@ const sheet: CSSProperties = {
   background: "#fff",
   borderTopLeftRadius: 16,
   borderTopRightRadius: 16,
-  padding: "16px 16px calc(16px + env(safe-area-inset-bottom))",
-  maxHeight: "70vh",
+  padding: "calc(12px + env(safe-area-inset-top, 0px)) 16px calc(16px + env(safe-area-inset-bottom))",
+  maxHeight: "75vh",
   boxSizing: "border-box",
 }

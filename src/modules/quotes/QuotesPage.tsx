@@ -192,7 +192,7 @@ import {
   generatePurchaseOrderNumber,
   type PurchaseOrderRecord,
 } from "../../lib/purchaseOrders"
-import { archiveEstimatePdfFromQuote } from "../../lib/estimatePdfExport"
+import { archiveEstimatePdfFromQuote, openEstimatePdfForProfile } from "../../lib/estimatePdfExport"
 import { autoAdvanceCustomerWorkflow } from "../../lib/customerWorkflowAutoComplete"
 import { uploadBytesForOutbound } from "../../lib/uploadCommAttachment"
 import { clampAutomatedNotifyInnerText, SMS_AUTOMATED_NOTIFY_INNER_MAX_CHARS } from "../../lib/smsComplianceLimits"
@@ -545,8 +545,12 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [jobPackBulletsBusy, setJobPackBulletsBusy] = useState(false)
   const [activityChannelFocus, setActivityChannelFocus] = useState<"all" | "voicemail" | "sms" | "email">("all")
   const [saveToDeviceFormatModal, setSaveToDeviceFormatModal] = useState(false)
-  type EstimateCustomerDeliveryPanel = null | "email" | "sms" | "separate_email" | "both"
+  type EstimateCustomerDeliveryPanel = null | "email" | "sms" | "separate_email" | "both" | "esign"
   const [customerDeliveryPanel, setCustomerDeliveryPanel] = useState<EstimateCustomerDeliveryPanel>(null)
+  const [quoteOfferEsign, setQuoteOfferEsign] = useState(false)
+  const [esignLinkUrl, setEsignLinkUrl] = useState<string | null>(null)
+  const [esignLinkBusy, setEsignLinkBusy] = useState(false)
+  const [esignLinkError, setEsignLinkError] = useState<string | null>(null)
   const [estimateSaveMenuOpen, setEstimateSaveMenuOpen] = useState(false)
   const [estimateSendMenuOpen, setEstimateSendMenuOpen] = useState(false)
   const estimateSaveMenuRef = useRef<HTMLDivElement>(null)
@@ -1371,6 +1375,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
       setQuoteLegalText(typeof meta.estimate_template_legal_text === "string" ? meta.estimate_template_legal_text : "")
       setQuoteCancellationText(typeof meta.estimate_template_cancellation_fee === "string" ? meta.estimate_template_cancellation_fee : "")
       setQuoteLegalSignatures(meta.estimate_template_legal_signatures !== false)
+      setQuoteOfferEsign(meta.estimate_template_offer_esign === true)
       const laborMeta = meta.estimate_default_labor_rate
       if (typeof laborMeta === "number" && Number.isFinite(laborMeta)) setEstimateDefaultLaborRate(String(laborMeta))
       else if (typeof laborMeta === "string") setEstimateDefaultLaborRate(laborMeta)
@@ -1475,6 +1480,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
         else if (item.id === "estimate_template_legal_text") next[item.id] = legalBody
         else if (item.id === "estimate_template_cancellation_fee") next[item.id] = legalCancel
         else if (item.id === "estimate_template_legal_signatures") next[item.id] = legalSigs ? "checked" : "unchecked"
+        else if (item.id === "estimate_template_offer_esign")
+          next[item.id] = meta.estimate_template_offer_esign === true ? "checked" : "unchecked"
         else if (item.id === "estimate_template_use_ai") next[item.id] = useAi ? "checked" : "unchecked"
         else if (item.id === "estimate_template_specialty_inspection")
           next[item.id] = meta.estimate_template_specialty_inspection === true ? "checked" : "unchecked"
@@ -1571,6 +1578,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
       prevMeta.estimate_template_legal_signatures =
         estimateTemplateFormValues.estimate_template_legal_signatures === "checked"
     }
+    if (hasItem("estimate_template_offer_esign")) {
+      prevMeta.estimate_template_offer_esign = estimateTemplateFormValues.estimate_template_offer_esign === "checked"
+    }
     const { error } = await supabase
       .from("profiles")
       .update({
@@ -1612,6 +1622,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
     }
     if (hasItem("estimate_template_legal_signatures")) {
       setQuoteLegalSignatures(estimateTemplateFormValues.estimate_template_legal_signatures === "checked")
+    }
+    if (hasItem("estimate_template_offer_esign")) {
+      setQuoteOfferEsign(estimateTemplateFormValues.estimate_template_offer_esign === "checked")
     }
     setShowEstimateTemplateModal(false)
   }
@@ -4524,6 +4537,59 @@ export default function QuotesPage(_props: QuotesPageProps) {
     if (!smsOk) return
     if (!sandboxTraining) alert("Email and text sent with estimate PDF attached.")
     setCustomerDeliveryPanel(null)
+  }
+
+  async function prepareEsignLinkPanel() {
+    if (!customerSendWorkflowGate.allowed) {
+      alert(customerSendWorkflowGate.reason ?? "Complete internal workflow approvals before sending to the customer.")
+      return
+    }
+    if (!supabase || !userId || !selectedQuote) return
+    const token = session?.access_token?.trim()
+    if (!token) {
+      alert("Sign in again to create an e-sign link.")
+      return
+    }
+    if (!selectedQuoteItems.length) {
+      alert("Add at least one quote item before sending an e-sign link.")
+      return
+    }
+    setEstimateSendMenuOpen(false)
+    setCustomerDeliveryPanel("esign")
+    setEsignLinkBusy(true)
+    setEsignLinkError(null)
+    setEsignLinkUrl(null)
+    try {
+      const view = await openEstimatePdfForProfile(supabase, userId, selectedQuote.id, { archiveIfGenerated: true })
+      const pdfUrl = view.url.startsWith("http") ? view.url : ""
+      const res = await fetch("/api/estimate-esign?__action=create", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          action: "create",
+          quoteId: selectedQuote.id,
+          pdfUrl: pdfUrl || undefined,
+          origin: typeof window !== "undefined" ? window.location.origin : undefined,
+        }),
+      })
+      const data = (await res.json()) as { url?: string; error?: string }
+      if (!res.ok || !data.url) throw new Error(data.error || "Could not create e-sign link.")
+      setEsignLinkUrl(data.url)
+      const name = selectedQuote.customers?.display_name ?? "Customer"
+      const businessName = profileDisplayNameForPdf.trim() || "our team"
+      setQuoteEmailSubject(`Please review and sign your estimate — ${name}`)
+      setQuoteEmailBody(
+        `Hi ${name},\n\nPlease review and electronically sign your estimate here:\n${data.url}\n\nThank you,\n${businessName}`,
+      )
+      setQuoteSmsBody(`Hi ${name}, please review & sign your estimate from ${businessName}: ${data.url}`)
+    } catch (e) {
+      setEsignLinkError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setEsignLinkBusy(false)
+    }
   }
 
   const filteredQuotes = quotes.filter((q: any) => {
@@ -7528,6 +7594,25 @@ export default function QuotesPage(_props: QuotesPageProps) {
                         >
                           Send to both
                         </button>
+                        {quoteOfferEsign ? (
+                          <button
+                            type="button"
+                            onClick={() => void prepareEsignLinkPanel()}
+                            style={{
+                              padding: "10px 12px",
+                              borderRadius: 6,
+                              border: "none",
+                              background: "transparent",
+                              textAlign: "left",
+                              fontWeight: 600,
+                              fontSize: 13,
+                              color: theme.text,
+                              cursor: "pointer",
+                            }}
+                          >
+                            Send e-sign link
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           onClick={() => {
@@ -7681,6 +7766,122 @@ export default function QuotesPage(_props: QuotesPageProps) {
                     </span>
                   ) : null}
                 </div>
+                {customerDeliveryPanel === "esign" ? (
+                  <div
+                    style={{
+                      padding: 14,
+                      borderRadius: 8,
+                      border: `1px solid ${theme.border}`,
+                      background: "#fff",
+                      display: "grid",
+                      gap: 12,
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: theme.text }}>Send e-sign link</div>
+                      <p style={{ margin: "6px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                        Customer opens the link, reviews the estimate, and signs on their phone or computer. No DocuSign
+                        account required.
+                      </p>
+                    </div>
+                    {esignLinkBusy ? <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>Creating secure link…</p> : null}
+                    {esignLinkError ? (
+                      <p style={{ margin: 0, fontSize: 13, color: "#dc2626", fontWeight: 600 }}>{esignLinkError}</p>
+                    ) : null}
+                    {esignLinkUrl ? (
+                      <>
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: 8,
+                            alignItems: "center",
+                            flexWrap: "wrap",
+                            padding: "10px 12px",
+                            borderRadius: 8,
+                            background: "#f8fafc",
+                            border: `1px solid ${theme.border}`,
+                          }}
+                        >
+                          <code style={{ flex: 1, minWidth: 0, fontSize: 12, color: "#0f172a", wordBreak: "break-all" }}>
+                            {esignLinkUrl}
+                          </code>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void navigator.clipboard?.writeText(esignLinkUrl)
+                            }}
+                            style={{
+                              border: `1px solid ${theme.border}`,
+                              background: "#fff",
+                              borderRadius: 6,
+                              padding: "6px 10px",
+                              fontWeight: 700,
+                              fontSize: 12,
+                              cursor: "pointer",
+                              flexShrink: 0,
+                            }}
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            onClick={() => setCustomerDeliveryPanel("email")}
+                            style={{
+                              border: "none",
+                              background: theme.primary,
+                              color: "#fff",
+                              borderRadius: 8,
+                              padding: "10px 14px",
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              fontSize: 13,
+                            }}
+                          >
+                            Email link to customer
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCustomerDeliveryPanel("sms")}
+                            style={{
+                              border: `1px solid ${theme.border}`,
+                              background: "#fff",
+                              color: theme.text,
+                              borderRadius: 8,
+                              padding: "10px 14px",
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              fontSize: 13,
+                            }}
+                          >
+                            Text link to customer
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCustomerDeliveryPanel(null)
+                              setEsignLinkUrl(null)
+                              setEsignLinkError(null)
+                            }}
+                            style={{
+                              border: "none",
+                              background: "transparent",
+                              color: "#64748b",
+                              borderRadius: 8,
+                              padding: "10px 14px",
+                              fontWeight: 600,
+                              cursor: "pointer",
+                              fontSize: 13,
+                            }}
+                          >
+                            Close
+                          </button>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
                 {(customerDeliveryPanel === "email" ||
                   customerDeliveryPanel === "separate_email" ||
                   customerDeliveryPanel === "both") ? (

@@ -34,6 +34,7 @@ import AccountDeletionPage from "./modules/public/AccountDeletionPage"
 import TermsPage from "./modules/public/TermsPage"
 import EmbedLeadPage from "./modules/public/EmbedLeadPage"
 import PublicBusinessWebProfilePage from "./modules/public/PublicBusinessWebProfilePage"
+import EstimateEsignPage from "./modules/public/EstimateEsignPage"
 import { isReservedBusinessWebProfileSlug } from "./lib/businessPublicProfile"
 import { recordMarketingPageView } from "./lib/siteTrafficBeacon"
 import { useAuth, type UserRole } from "./contexts/AuthContext"
@@ -904,6 +905,12 @@ function App() {
   }
   if (pathname === "/signup") {
     return <SignupRoutePage />
+  }
+
+  const esignMatch = /^\/e\/([^/]+)\/?$/i.exec(pathname)
+  if (esignMatch) {
+    const esignToken = decodeURIComponent(esignMatch[1] || "").trim()
+    if (esignToken) return <EstimateEsignPage token={esignToken} />
   }
 
   const businessWebProfileMatch = /^\/([^/]+)\/?$/i.exec(pathname)

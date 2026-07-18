@@ -196,7 +196,7 @@ export async function createGroupThread(
   return newId as string
 }
 
-export type MessengerCustomer = { id: string; name: string }
+export type MessengerCustomer = { id: string; name: string; phone: string | null }
 
 export async function searchMessengerCustomers(
   supabase: SupabaseClient,
@@ -204,15 +204,29 @@ export async function searchMessengerCustomers(
   query: string,
   limit = 20,
 ): Promise<MessengerCustomer[]> {
-  let q = supabase.from("customers").select("id, display_name").eq("user_id", me)
+  let q = supabase
+    .from("customers")
+    .select("id, display_name, customer_identifiers ( type, value )")
+    .eq("user_id", me)
   const trimmed = query.trim()
   if (trimmed) q = q.ilike("display_name", `%${trimmed}%`)
   const { data, error } = await q.order("updated_at", { ascending: false }).limit(limit)
   if (error) return []
-  return ((data ?? []) as { id: string; display_name: string | null }[]).map((r) => ({
-    id: r.id,
-    name: r.display_name?.trim() || "Unnamed customer",
-  }))
+  return (
+    (data ?? []) as {
+      id: string
+      display_name: string | null
+      customer_identifiers?: { type: string; value: string }[] | null
+    }[]
+  ).map((r) => {
+    const phone =
+      r.customer_identifiers?.find((i) => i.type === "phone" && String(i.value ?? "").trim())?.value?.trim() ?? null
+    return {
+      id: r.id,
+      name: r.display_name?.trim() || "Unnamed customer",
+      phone,
+    }
+  })
 }
 
 export async function loadPeerNames(supabase: SupabaseClient, ids: string[]): Promise<Map<string, string>> {
