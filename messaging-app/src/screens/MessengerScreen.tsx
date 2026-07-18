@@ -221,17 +221,24 @@ export default function MessengerScreen({ me }: { me: string }) {
     if (!file || !selected) return
     setFileBusy(true)
     try {
-      const path = `${me}/${Date.now()}-${file.name.replace(/[^\w.\-]+/g, "_")}`
-      const { error: upErr } = await supabase.storage.from("messenger-files").upload(path, file, {
+      // Reuse the platform bucket (already provisioned) under the signed-in user prefix.
+      const safeName = file.name.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "file"
+      const path = `${me}/messenger/${Date.now()}-${safeName}`
+      const { error: upErr } = await supabase.storage.from("comm-attachments").upload(path, file, {
         contentType: file.type || "application/octet-stream",
         upsert: false,
       })
       if (upErr) {
-        // Bucket may not exist yet — still send a note so the feature is usable.
-        await sendThreadMessage(supabase, me, selected, `📎 ${file.name} (file upload pending — ask admin to create messenger-files storage)`, null)
+        await sendThreadMessage(
+          supabase,
+          me,
+          selected,
+          `📎 ${file.name} (upload failed: ${upErr.message})`,
+          null,
+        )
       } else {
-        const { data: signed } = await supabase.storage.from("messenger-files").createSignedUrl(path, 60 * 60 * 24)
-        const url = signed?.signedUrl
+        const { data } = supabase.storage.from("comm-attachments").getPublicUrl(path)
+        const url = data?.publicUrl?.trim()
         const body = url ? `📎 ${file.name}\n${url}` : `📎 ${file.name}`
         await sendThreadMessage(supabase, me, selected, body, null)
       }
