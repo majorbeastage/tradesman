@@ -17,6 +17,7 @@ import {
   formatEventTime,
   loadUpcomingCalendarEvents,
   startOfWeek,
+  endOfWeek,
   type MobileCalendarEvent,
 } from "../lib/calendarEvents"
 import {
@@ -146,10 +147,12 @@ export default function MessengerScreen({ me }: { me: string }) {
   useEffect(() => {
     if (tab !== "calendar") return
     setCalLoading(true)
-    void loadUpcomingCalendarEvents(supabase, me)
+    const from = startOfWeek(weekAnchor)
+    const to = endOfWeek(weekAnchor)
+    void loadUpcomingCalendarEvents(supabase, me, { from, to })
       .then(setCalEvents)
       .finally(() => setCalLoading(false))
-  }, [tab, me])
+  }, [tab, me, weekAnchor])
 
   // Soft status bar: don't draw under the system clock/battery strip.
   useEffect(() => {
@@ -846,6 +849,25 @@ export default function MessengerScreen({ me }: { me: string }) {
                           </div>
                           <div style={{ fontSize: 15, fontWeight: 800, marginTop: 2 }}>{ev.title}</div>
                           {ev.customer_name ? <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 2 }}>{ev.customer_name}</div> : null}
+                          {ev.videoCall ? (
+                            <button
+                              type="button"
+                              onClick={() => void room.joinNamedRoom(ev.videoCall!.roomId, { video: ev.videoCall!.video })}
+                              style={{
+                                marginTop: 10,
+                                border: "none",
+                                background: "#059669",
+                                color: "#fff",
+                                borderRadius: 8,
+                                padding: "8px 12px",
+                                fontWeight: 800,
+                                fontSize: 13,
+                                cursor: "pointer",
+                              }}
+                            >
+                              {ev.videoCall.video ? "Join video call" : "Join conference call"}
+                            </button>
+                          ) : null}
                         </div>
                       ))}
                     </div>
@@ -854,7 +876,9 @@ export default function MessengerScreen({ me }: { me: string }) {
               )
             })}
           {!calLoading && calEvents.length === 0 ? (
-            <p style={{ color: "var(--muted)", fontSize: 13, textAlign: "center", marginTop: 24 }}>No upcoming events in the next two weeks.</p>
+            <p style={{ color: "var(--muted)", fontSize: 13, textAlign: "center", marginTop: 24 }}>
+              No events this week on your Tradesman calendar.
+            </p>
           ) : null}
         </div>
       </div>

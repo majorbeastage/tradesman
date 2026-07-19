@@ -44,6 +44,8 @@ import DashboardQuickLinkCustomizeZones from "./DashboardQuickLinkCustomizeZones
 import DashboardTodayTodoModal from "./DashboardTodayTodoModal"
 import { OPEN_DASHBOARD_TODO_EVENT } from "../lib/dashboardTodoUi"
 import { openMessenger } from "../lib/messengerBus"
+import { openMessagingAppWithSession } from "../lib/messagingHandoff"
+import { isNativeApp } from "../lib/capacitorMobile"
 import DashboardTileStyleMenu from "./DashboardTileStyleMenu"
 import PlatformAssistantField from "./PlatformAssistantField"
 import { isOfficeManagerLikeRole } from "../lib/profileRoles"
@@ -1313,7 +1315,16 @@ export default function DashboardQuickActions(props: Props) {
           removeChipLabel={labels.customizeRemove}
           onContextMenu={(e) => openStyleMenu(id, e)}
           tileStyle={tileStyle}
-          onClick={() => !customize && openMessenger()}
+          onClick={() => {
+            if (customize) return
+            // Mobile web + native apps: open Tradesman Messaging (or Play Store if not installed).
+            // Desktop browser: keep the in-app messenger widget.
+            if (isMobile || isNativeApp()) {
+              void openMessagingAppWithSession()
+              return
+            }
+            openMessenger()
+          }}
         />
       )
     }

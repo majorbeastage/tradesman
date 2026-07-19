@@ -19,7 +19,8 @@ type Zone = "visible" | "hidden"
 type DragSession = { id: DashboardQuickLinkId; zone: Zone }
 type SelectedTile = { id: DashboardQuickLinkId; zone: Zone }
 
-const MOBILE_DRAG_THRESHOLD_PX = 10
+const MOBILE_DRAG_THRESHOLD_PX = 8
+const MOBILE_LONG_PRESS_MS = 280
 
 type Props = {
   grid: DashboardTileGridSlot[]
@@ -57,6 +58,7 @@ export default function DashboardQuickLinkCustomizeZones({
   } | null>(null)
   const dragActiveRef = useRef(false)
   const lastPointRef = useRef<{ x: number; y: number } | null>(null)
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const gridRef = useRef<HTMLDivElement>(null)
   const visibleZoneRef = useRef<HTMLDivElement>(null)
   const hiddenZoneRef = useRef<HTMLDivElement>(null)
@@ -73,6 +75,13 @@ export default function DashboardQuickLinkCustomizeZones({
   const slotCount = displayRows * gridCols
 
   const clearHover = () => setHoverSlot(null)
+
+  const clearLongPress = () => {
+    if (longPressTimerRef.current != null) {
+      clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+  }
 
   const slotFromPoint = useCallback(
     (clientX: number, clientY: number): number | null => {
@@ -98,12 +107,24 @@ export default function DashboardQuickLinkCustomizeZones({
     try {
       document.body.style.overflow = ""
       document.body.style.touchAction = ""
+      document.documentElement.style.overflow = ""
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const lockScroll = () => {
+    try {
+      document.body.style.overflow = "hidden"
+      document.body.style.touchAction = "none"
+      document.documentElement.style.overflow = "hidden"
     } catch {
       /* ignore */
     }
   }
 
   const finishDrag = useCallback(() => {
+    clearLongPress()
     sessionRef.current = null
     pointerStartRef.current = null
     dragActiveRef.current = false
@@ -182,18 +203,14 @@ export default function DashboardQuickLinkCustomizeZones({
   )
 
   const activateDrag = useCallback((start: NonNullable<typeof pointerStartRef.current>) => {
+    clearLongPress()
     dragActiveRef.current = true
     sessionRef.current = { id: start.id, zone: start.zone }
     setDraggingId(start.id)
     setSelectedTile(null)
+    lockScroll()
     try {
       start.target.setPointerCapture(start.pointerId)
-    } catch {
-      /* ignore */
-    }
-    try {
-      document.body.style.overflow = "hidden"
-      document.body.style.touchAction = "none"
     } catch {
       /* ignore */
     }
@@ -202,6 +219,7 @@ export default function DashboardQuickLinkCustomizeZones({
   const beginPointerDrag = (e: React.PointerEvent, id: DashboardQuickLinkId, zone: Zone) => {
     if (e.button !== 0) return
     if ((e.target as HTMLElement).closest("[data-dash-remove-chip]")) return
+    clearLongPress()
     pointerStartRef.current = {
       x: e.clientX,
       y: e.clientY,
@@ -213,6 +231,15 @@ export default function DashboardQuickLinkCustomizeZones({
     dragActiveRef.current = false
     lastPointRef.current = { x: e.clientX, y: e.clientY }
     setPressPending(true)
+    // Lock scroll immediately on mobile so the page doesn't steal the gesture.
+    if (isMobile) lockScroll()
+    if (isMobile) {
+      longPressTimerRef.current = setTimeout(() => {
+        const start = pointerStartRef.current
+        if (!start || dragActiveRef.current) return
+        activateDrag(start)
+      }, MOBILE_LONG_PRESS_MS)
+    }
   }
 
   const handlePointerMove = useCallback(
@@ -237,6 +264,7 @@ export default function DashboardQuickLinkCustomizeZones({
 
   const handlePointerUp = useCallback(
     (clientX: number, clientY: number, pointerId: number) => {
+      clearLongPress()
       const start = pointerStartRef.current
       const point = lastPointRef.current ?? { x: clientX, y: clientY }
       pointerStartRef.current = null
@@ -244,6 +272,15 @@ export default function DashboardQuickLinkCustomizeZones({
       if (!start) return
 
       if (!dragActiveRef.current && isMobile) {
+        // Tap-to-place: if a tile is already selected, tapping another visible tile swaps into its slot.
+        if (selectedTile && (selectedTile.id !== start.id || selectedTile.zone !== start.zone) && start.zone === "visible") {
+          const toSlot = grid.findIndex((x) => x === start.id)
+          if (toSlot >= 0) {
+            placeAtSlot(selectedTile.id, toSlot)
+            unlockScroll()
+            return
+          }
+        }
         setSelectedTile((prev) =>
           prev?.id === start.id && prev.zone === start.zone ? null : { id: start.id, zone: start.zone },
         )
@@ -264,7 +301,7 @@ export default function DashboardQuickLinkCustomizeZones({
       commitDropAtPoint(point.x, point.y)
       dragActiveRef.current = false
     },
-    [isMobile, commitDropAtPoint],
+    [isMobile, commitDropAtPoint, selectedTile, grid, placeAtSlot],
   )
 
   const onPointerMove = (e: React.PointerEvent) => {
@@ -277,6 +314,14 @@ export default function DashboardQuickLinkCustomizeZones({
   }
 
   const onPointerCancel = () => {
+    // On mobile, scroll often cancels the pointer before threshold — keep tap-to-place selection if we never dragged.
+    clearLongPress()
+    const start = pointerStartRef.current
+    if (isMobile && start && !dragActiveRef.current) {
+      setSelectedTile((prev) =>
+        prev?.id === start.id && prev.zone === start.zone ? null : { id: start.id, zone: start.zone },
+      )
+    }
     finishDrag()
   }
 
@@ -410,8 +455,8 @@ export default function DashboardQuickLinkCustomizeZones({
       {isMobile ? (
         <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.45 }}>
           {selectedTile
-            ? "Tap an open slot (or another shortcut) to place it — including slots above. You can also press and drag."
-            : "Tap a shortcut to select it, then tap where you want it — or press and drag (including bottom to top)."}
+            ? "Tap an open slot or another shortcut to place it. Or hold briefly and drag."
+            : "Tap a shortcut to select it, then tap where it should go — or press-and-hold, then drag."}
         </p>
       ) : null}
       <div ref={visibleZoneRef} style={zoneShell}>
