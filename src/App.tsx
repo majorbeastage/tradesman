@@ -700,7 +700,8 @@ function App() {
   const [signupPackagePreset, setSignupPackagePreset] = useState<string | null>(null)
   const [loginError, setLoginError] = useState("")
   const loginIntentRef = useRef<"admin" | "contractor" | null>(loginIntentFromInitialView(initialView))
-  const pathname = typeof window !== "undefined" ? window.location.pathname.toLowerCase() : "/"
+  const rawPathname = typeof window !== "undefined" ? window.location.pathname : "/"
+  const pathname = rawPathname.toLowerCase()
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -907,7 +908,8 @@ function App() {
     return <SignupRoutePage />
   }
 
-  const esignMatch = /^\/e\/([^/]+)\/?$/i.exec(pathname)
+  // E-sign tokens are case-sensitive — use original path (pathname is lowercased for other routes).
+  const esignMatch = /^\/e\/([^/]+)\/?$/i.exec(rawPathname)
   if (esignMatch) {
     const esignToken = decodeURIComponent(esignMatch[1] || "").trim()
     if (esignToken) return <EstimateEsignPage token={esignToken} />

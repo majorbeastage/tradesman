@@ -29,7 +29,8 @@ function metaObj(raw: unknown): Record<string, unknown> {
 }
 
 function newToken(): string {
-  return randomBytes(24).toString("base64url")
+  // Hex only — URL path is lowercased in parts of the SPA, so avoid base64 case sensitivity.
+  return randomBytes(24).toString("hex")
 }
 
 async function resolveAuthedUser(
@@ -50,13 +51,26 @@ async function resolveAuthedUser(
 }
 
 async function findQuoteByEsignToken(service: SupabaseClient, token: string) {
-  const { data, error } = await service
+  const cleaned = token.trim()
+  if (!cleaned) return null
+
+  // Prefer JSON text path filter (same pattern as other APIs). Fallback: contains.
+  const primary = await service
     .from("quotes")
     .select("id, user_id, customer_id, status, metadata, customers ( display_name )")
-    .eq("metadata->>esign_token", token)
+    .filter("metadata->>esign_token", "eq", cleaned)
+    .limit(1)
     .maybeSingle()
-  if (error) throw new Error(error.message)
-  return data
+  if (!primary.error && primary.data) return primary.data
+
+  const fallback = await service
+    .from("quotes")
+    .select("id, user_id, customer_id, status, metadata, customers ( display_name )")
+    .contains("metadata", { esign_token: cleaned })
+    .limit(1)
+    .maybeSingle()
+  if (fallback.error) throw new Error(fallback.error.message)
+  return fallback.data
 }
 
 async function markApproved(
