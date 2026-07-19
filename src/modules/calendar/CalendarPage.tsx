@@ -28,6 +28,7 @@ import {
   type CalendarVideoCall,
 } from "../../lib/calendarVideoCall"
 import { joinConference } from "../../lib/messengerBus"
+import { isAdminPortalRole } from "../../lib/profileRoles"
 import {
   formatCalendarEventLabel,
   loadCalendarDisplayPrefs,
@@ -459,6 +460,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [assigneeSaveNote, setAssigneeSaveNote] = useState("")
   const [eventAssigneeSaving, setEventAssigneeSaving] = useState(false)
   const [eventVideoEnabled, setEventVideoEnabled] = useState(false)
+  const [eventConferenceCall, setEventConferenceCall] = useState(false)
   const [eventVideoInvitees, setEventVideoInvitees] = useState<string[]>([])
   const [eventVideoSaving, setEventVideoSaving] = useState(false)
   const [eventVideoNote, setEventVideoNote] = useState("")
@@ -521,6 +523,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [addNotifyEmail, setAddNotifyEmail] = useState(false)
   const [addNotifySms, setAddNotifySms] = useState(false)
   const [addVideoCall, setAddVideoCall] = useState(false)
+  const [addConferenceCall, setAddConferenceCall] = useState(false)
   const [addVideoCallInvitees, setAddVideoCallInvitees] = useState<string[]>([])
   const [addQuoteOptions, setAddQuoteOptions] = useState<CalendarQuotePickerOption[]>([])
   const [addQuoteOptionsLoading, setAddQuoteOptionsLoading] = useState(false)
@@ -2704,6 +2707,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   useEffect(() => {
     const vc = readCalendarVideoCall(selectedEvent?.metadata)
     setEventVideoEnabled(Boolean(vc))
+    setEventConferenceCall(Boolean(vc) && vc?.video === false)
     setEventVideoInvitees(vc?.inviteeUserIds ?? [])
     setEventVideoNote("")
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2822,7 +2826,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     try {
       const existing = readCalendarVideoCall(selectedEvent.metadata)
       const call: CalendarVideoCall | null = eventVideoEnabled
-        ? { roomId: existing?.roomId || newVideoCallRoomId(), video: true, inviteeUserIds: eventVideoInvitees }
+        ? {
+            roomId: existing?.roomId || newVideoCallRoomId(),
+            video: !eventConferenceCall,
+            inviteeUserIds: eventVideoInvitees,
+          }
         : null
       const nextMeta = mergeCalendarVideoCall(selectedEvent.metadata, call)
       const ownerId = selectedEvent.user_id ?? calendarDbUserId
@@ -2838,7 +2846,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       const patched = { ...selectedEvent, metadata: nextMeta }
       setSelectedEvent(patched)
       setEvents((prev) => prev.map((e) => (e.id === selectedEvent.id ? patched : e)))
-      setEventVideoNote(eventVideoEnabled ? "Video call saved." : "Video call removed.")
+      if (!eventVideoEnabled) setEventVideoNote("Call removed.")
+      else setEventVideoNote(eventConferenceCall ? "Conference call saved." : "Video call saved.")
     } finally {
       setEventVideoSaving(false)
     }
@@ -2956,10 +2965,10 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             sms: addNotifySms,
           })
         }
-        if (addVideoCall) {
+        if (addVideoCall || addConferenceCall) {
           meta = mergeCalendarVideoCall(meta, {
             roomId: newVideoCallRoomId(),
-            video: true,
+            video: !addConferenceCall,
             inviteeUserIds: addVideoCallInvitees,
           })
         }
@@ -3037,6 +3046,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     setAddNotifyEmail(false)
     setAddNotifySms(false)
     setAddVideoCall(false)
+    setAddConferenceCall(false)
     setAddVideoCallInvitees([])
   }
 
@@ -4883,7 +4893,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
 
               <div style={isMobile ? undefined : { gridColumn: "1 / -1" }}>
                 <p style={{ fontSize: 12, fontWeight: 600, color: theme.text, margin: "0 0 8px" }}>Notify customer</p>
-                {!addCustomerId ? (
+                {addVideoCall || addConferenceCall ? (
+                  <p style={{ margin: 0, fontSize: 12, color: "#94a3b8", lineHeight: 1.45 }}>
+                    Customer notify is unavailable for internal video/conference calls. Team members join from the event or messenger — customers are not invited from this flow yet.
+                  </p>
+                ) : !addCustomerId ? (
                   <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>Select a customer to email or text appointment details.</p>
                 ) : (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
@@ -4910,11 +4924,43 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               </div>
 
               <div style={isMobile ? undefined : { gridColumn: "1 / -1" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "13px", color: theme.text }}>
-                  <input type="checkbox" checked={addVideoCall} onChange={(e) => setAddVideoCall(e.target.checked)} />
-                  Schedule as a video call (invite internal team)
-                </label>
-                {addVideoCall ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "13px", color: theme.text }}>
+                    <input
+                      type="checkbox"
+                      checked={addVideoCall}
+                      onChange={(e) => {
+                        const on = e.target.checked
+                        setAddVideoCall(on)
+                        if (on) {
+                          setAddConferenceCall(false)
+                          setAddNotifyEmail(false)
+                          setAddNotifySms(false)
+                        }
+                      }}
+                    />
+                    Schedule as a video call (invite internal team)
+                  </label>
+                  {isAdminPortalRole(authRole) ? (
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "13px", color: theme.text }}>
+                      <input
+                        type="checkbox"
+                        checked={addConferenceCall}
+                        onChange={(e) => {
+                          const on = e.target.checked
+                          setAddConferenceCall(on)
+                          if (on) {
+                            setAddVideoCall(false)
+                            setAddNotifyEmail(false)
+                            setAddNotifySms(false)
+                          }
+                        }}
+                      />
+                      Schedule as a conference call (invite internal team)
+                    </label>
+                  ) : null}
+                </div>
+                {addVideoCall || addConferenceCall ? (
                   <div style={{ marginTop: 8, padding: 10, border: `1px solid ${theme.border}`, borderRadius: 8, background: "#f8fafc" }}>
                     <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 600, color: theme.text }}>Invite team members</p>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -4942,7 +4988,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                           })
                       )}
                     </div>
-                    <p style={{ margin: "8px 0 0", fontSize: 11.5, color: "#64748b" }}>A "Join video call" button appears on the event. Invitees join from their event card or the messenger.</p>
+                    <p style={{ margin: "8px 0 0", fontSize: 11.5, color: "#64748b" }}>
+                      {addConferenceCall
+                        ? 'A "Join conference call" button appears on the event (audio). Invitees join from their event card or the messenger.'
+                        : 'A "Join video call" button appears on the event. Invitees join from their event card or the messenger.'}
+                    </p>
                   </div>
                 ) : null}
               </div>
@@ -5674,10 +5724,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               </div>
 
               <div>
-                <label style={{ fontSize: "12px", color: theme.text, fontWeight: 600 }}>Video call</label>
+                <label style={{ fontSize: "12px", color: theme.text, fontWeight: 600 }}>Team call</label>
                 {(() => {
                   const savedVc = readCalendarVideoCall(selectedEvent.metadata)
                   const invitables = selectableUsers.filter((u) => !u.isSelf && !isSandboxDemoUserId(u.userId))
+                  const isAdmin = isAdminPortalRole(authRole)
                   return (
                     <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 8 }}>
                       {savedVc ? (
@@ -5686,15 +5737,50 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                           onClick={() => joinConference(savedVc.roomId, savedVc.video)}
                           style={{ alignSelf: "flex-start", padding: "8px 14px", borderRadius: 8, border: "none", background: "#059669", color: "#fff", fontWeight: 800, fontSize: 13, cursor: "pointer" }}
                         >
-                          🎥 Join video call
+                          {savedVc.video ? "🎥 Join video call" : "📞 Join conference call"}
                         </button>
                       ) : null}
                       {canAssignToTeam ? (
                         <>
                           <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text }}>
-                            <input type="checkbox" checked={eventVideoEnabled} onChange={(e) => setEventVideoEnabled(e.target.checked)} />
-                            {savedVc ? "Video call enabled for this event" : "Turn this into a video call"}
+                            <input
+                              type="checkbox"
+                              checked={eventVideoEnabled && !eventConferenceCall}
+                              onChange={(e) => {
+                                const on = e.target.checked
+                                if (on) {
+                                  setEventVideoEnabled(true)
+                                  setEventConferenceCall(false)
+                                } else if (!eventConferenceCall) {
+                                  setEventVideoEnabled(false)
+                                }
+                              }}
+                            />
+                            {savedVc?.video !== false && savedVc
+                              ? "Video call enabled for this event"
+                              : "Turn this into a video call"}
                           </label>
+                          {isAdmin ? (
+                            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: theme.text }}>
+                              <input
+                                type="checkbox"
+                                checked={eventVideoEnabled && eventConferenceCall}
+                                onChange={(e) => {
+                                  const on = e.target.checked
+                                  if (on) {
+                                    setEventVideoEnabled(true)
+                                    setEventConferenceCall(true)
+                                  } else if (eventConferenceCall) {
+                                    setEventVideoEnabled(false)
+                                    setEventConferenceCall(false)
+                                  }
+                                }}
+                              />
+                              {savedVc && savedVc.video === false
+                                ? "Conference call enabled for this event"
+                                : "Turn this into a conference call"}
+                            </label>
+                          ) : null}
                           {eventVideoEnabled ? (
                             <div style={{ padding: 10, border: `1px solid ${theme.border}`, borderRadius: 8, background: "#f8fafc" }}>
                               <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 600, color: theme.text }}>Invite team members</p>
@@ -5721,6 +5807,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                                   })
                                 )}
                               </div>
+                              <p style={{ margin: "8px 0 0", fontSize: 11.5, color: "#64748b" }}>
+                                Internal team only — customers are not invited from calendar notify.
+                              </p>
                             </div>
                           ) : null}
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
@@ -5730,15 +5819,18 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                               onClick={() => void saveEventVideoCall()}
                               style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: theme.primary, color: "#fff", fontWeight: 700, fontSize: 12, cursor: eventVideoSaving ? "wait" : "pointer" }}
                             >
-                              {eventVideoSaving ? "Saving…" : "Save video call"}
+                              {eventVideoSaving ? "Saving…" : eventConferenceCall ? "Save conference call" : "Save video call"}
                             </button>
                             {eventVideoNote ? <span style={{ fontSize: 12, color: "#15803d", fontWeight: 600 }}>{eventVideoNote}</span> : null}
                           </div>
                         </>
                       ) : savedVc ? (
-                        <span style={{ fontSize: 12, color: "#64748b" }}>Scheduled video call{savedVc.inviteeUserIds.length ? ` · ${savedVc.inviteeUserIds.length + 1} invited` : ""}.</span>
+                        <span style={{ fontSize: 12, color: "#64748b" }}>
+                          Scheduled {savedVc.video ? "video" : "conference"} call
+                          {savedVc.inviteeUserIds.length ? ` · ${savedVc.inviteeUserIds.length + 1} invited` : ""}.
+                        </span>
                       ) : (
-                        <span style={{ fontSize: 12, color: "#64748b" }}>No video call scheduled.</span>
+                        <span style={{ fontSize: 12, color: "#64748b" }}>No team call scheduled.</span>
                       )}
                     </div>
                   )
