@@ -908,10 +908,14 @@ function App() {
     return <SignupRoutePage />
   }
 
-  // E-sign tokens are case-sensitive — use original path (pathname is lowercased for other routes).
+  // E-sign tokens — use original path (pathname is lowercased for other routes).
   const esignMatch = /^\/e\/([^/]+)\/?$/i.exec(rawPathname)
   if (esignMatch) {
-    const esignToken = decodeURIComponent(esignMatch[1] || "").trim()
+    let esignToken = decodeURIComponent(esignMatch[1] || "").trim()
+    // SMS/email clients sometimes append punctuation or an ellipsis when linkifying.
+    esignToken = esignToken.replace(/[.…]+$/g, "").replace(/[),.;:!?>\]}'"]+$/g, "").trim()
+    const hexOnly = esignToken.match(/[a-f0-9]{16,64}/i)?.[0]
+    if (hexOnly) esignToken = hexOnly.toLowerCase()
     if (esignToken) return <EstimateEsignPage token={esignToken} />
   }
 

@@ -33,6 +33,53 @@ function newToken(): string {
   return randomBytes(24).toString("hex")
 }
 
+/** Strip SMS/email mangling (ellipsis, trailing punctuation, whitespace). */
+function normalizeEsignToken(raw: string): string {
+  let t = String(raw ?? "")
+    .trim()
+    .replace(/[.…]+$/g, "")
+    .replace(/[),.;:!?>\]}'"]+$/g, "")
+    .trim()
+  // Prefer contiguous hex (current tokens). Fall back to cleaned raw for legacy links.
+  const hex = t.match(/[a-f0-9]{16,64}/i)?.[0]
+  if (hex) return hex.toLowerCase()
+  try {
+    t = decodeURIComponent(t)
+  } catch {
+    /* keep */
+  }
+  return t.trim()
+}
+
+function isUsablePublicOrigin(origin: string): boolean {
+  if (!origin) return false
+  try {
+    const u = new URL(origin)
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false
+    const host = u.hostname.toLowerCase()
+    if (!host || host === "localhost" || host === "127.0.0.1" || host.endsWith(".local")) return false
+    return true
+  } catch {
+    return false
+  }
+}
+
+function resolvePublicEsignBase(req: VercelRequest, bodyOrigin: string): string {
+  const candidates = [
+    bodyOrigin,
+    typeof req.headers.origin === "string" ? req.headers.origin : "",
+    typeof process.env.VITE_SITE_URL === "string" ? process.env.VITE_SITE_URL : "",
+    typeof process.env.SITE_URL === "string" ? process.env.SITE_URL : "",
+  ]
+  for (const c of candidates) {
+    const cleaned = String(c ?? "")
+      .trim()
+      .replace(/\/+$/, "")
+    if (isUsablePublicOrigin(cleaned)) return cleaned
+  }
+  return "https://www.tradesman-us.com"
+}
+
 async function resolveAuthedUser(
   req: VercelRequest,
 ): Promise<{ sb: SupabaseClient; userId: string; service: SupabaseClient }> {
@@ -51,8 +98,8 @@ async function resolveAuthedUser(
 }
 
 async function findQuoteByEsignToken(service: SupabaseClient, token: string) {
-  const cleaned = token.trim()
-  if (!cleaned) return null
+  const cleaned = normalizeEsignToken(token)
+  if (!cleaned || cleaned.length < 16) return null
 
   // Prefer JSON text path filter (same pattern as other APIs). Fallback: contains.
   const primary = await service
@@ -62,6 +109,15 @@ async function findQuoteByEsignToken(service: SupabaseClient, token: string) {
     .limit(1)
     .maybeSingle()
   if (!primary.error && primary.data) return primary.data
+
+  // After sign we keep esign_token; also accept prior tokens from multi-send / regenerate history.
+  const history = await service
+    .from("quotes")
+    .select("id, user_id, customer_id, status, metadata, customers ( display_name )")
+    .contains("metadata", { esign_token_history: [cleaned] })
+    .limit(1)
+    .maybeSingle()
+  if (!history.error && history.data) return history.data
 
   const fallback = await service
     .from("quotes")
@@ -89,6 +145,8 @@ async function markApproved(
   if (!quote) return
   const prev = metaObj(quote.metadata)
   const signedAt = new Date().toISOString()
+  // Keep esign_token so later opens of the same link show "already signed"
+  // instead of "invalid or has expired".
   const nextMeta = {
     ...prev,
     customer_approval: "approved",
@@ -96,7 +154,6 @@ async function markApproved(
     customer_signed_at: signedAt,
     esign_signed_at: signedAt,
     esign_signer_name: signerName,
-    esign_token: null,
   }
   const status = String(quote.status ?? "").trim()
   const nextStatus = status && status.toLowerCase() !== "accepted" ? "Accepted" : quote.status
@@ -182,18 +239,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const action = String(req.query.__action ?? req.body?.action ?? "").trim().toLowerCase()
 
     if (req.method === "GET" || action === "get") {
-      const token = String(req.query.token ?? "").trim()
+      const token = normalizeEsignToken(String(req.query.token ?? ""))
       if (!token || token.length < 16) return json(res, 400, { error: "Missing token." })
       const service = createServiceSupabase()
       const quote = await findQuoteByEsignToken(service, token)
       if (!quote) return json(res, 404, { error: "This signing link is invalid or has expired." })
       const meta = metaObj(quote.metadata)
+      if (meta.esign_signed_at) {
+        return json(res, 200, { alreadySigned: true, signerName: meta.esign_signer_name ?? null })
+      }
       const expiresAt = typeof meta.esign_expires_at === "string" ? meta.esign_expires_at : null
       if (expiresAt && Date.parse(expiresAt) < Date.now()) {
         return json(res, 410, { error: "This signing link has expired. Ask the business for a new link." })
-      }
-      if (meta.esign_signed_at) {
-        return json(res, 200, { alreadySigned: true, signerName: meta.esign_signer_name ?? null })
       }
       const { data: profile } = await service
         .from("profiles")
@@ -230,38 +287,53 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .maybeSingle()
       if (error || !quote) return json(res, 404, { error: "Estimate not found." })
 
-      const token = newToken()
+      const prev = metaObj(quote.metadata)
       const createdAt = new Date().toISOString()
       const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
-      const prev = metaObj(quote.metadata)
+      const existingToken =
+        typeof prev.esign_token === "string" ? normalizeEsignToken(prev.esign_token) : ""
+      const existingExpires =
+        typeof prev.esign_expires_at === "string" ? Date.parse(prev.esign_expires_at) : NaN
+      const alreadySigned = Boolean(prev.esign_signed_at)
+      // Reuse an active link so email + SMS share one URL; only rotate after sign or expiry.
+      const reuse =
+        !alreadySigned &&
+        existingToken.length >= 16 &&
+        Number.isFinite(existingExpires) &&
+        existingExpires > Date.now()
+      const token = reuse ? existingToken : newToken()
+      const historyRaw = Array.isArray(prev.esign_token_history) ? prev.esign_token_history : []
+      const history = [
+        ...new Set(
+          [...historyRaw, existingToken, token]
+            .map((t) => (typeof t === "string" ? normalizeEsignToken(t) : ""))
+            .filter((t) => t.length >= 16),
+        ),
+      ].slice(-8)
       const nextMeta = {
         ...prev,
         esign_token: token,
-        esign_created_at: createdAt,
-        esign_expires_at: expiresAt,
+        esign_token_history: history,
+        esign_created_at: reuse && typeof prev.esign_created_at === "string" ? prev.esign_created_at : createdAt,
+        esign_expires_at: reuse && typeof prev.esign_expires_at === "string" ? prev.esign_expires_at : expiresAt,
         esign_pdf_url: pdfUrl || (typeof prev.esign_pdf_url === "string" ? prev.esign_pdf_url : null),
+        // Creating/reusing a link always starts a fresh unsigned invite.
         esign_signed_at: null,
         esign_signer_name: null,
       }
       const { error: upErr } = await service.from("quotes").update({ metadata: nextMeta }).eq("id", quoteId).eq("user_id", userId)
       if (upErr) return json(res, 500, { error: upErr.message })
 
-      const origin = String(body.origin ?? "")
-        .trim()
-        .replace(/\/+$/, "")
-      const base =
-        origin ||
-        (typeof req.headers.origin === "string" ? req.headers.origin.replace(/\/+$/, "") : "") ||
-        "https://www.tradesman-us.com"
+      const base = resolvePublicEsignBase(req, String(body.origin ?? ""))
       return json(res, 200, {
         token,
         url: `${base}/e/${token}`,
-        expiresAt,
+        expiresAt: typeof nextMeta.esign_expires_at === "string" ? nextMeta.esign_expires_at : expiresAt,
       })
     }
 
     if (action === "sign") {
-      const token = String(body.token ?? "").trim()
+      const token = normalizeEsignToken(String(body.token ?? ""))
       const signerName = String(body.signerName ?? "").trim().slice(0, 120)
       const signaturePngBase64 =
         typeof body.signaturePngBase64 === "string" && body.signaturePngBase64.startsWith("data:image")
@@ -274,11 +346,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const quote = await findQuoteByEsignToken(service, token)
       if (!quote) return json(res, 404, { error: "This signing link is invalid or has expired." })
       const meta = metaObj(quote.metadata)
+      if (meta.esign_signed_at) return json(res, 200, { ok: true, alreadySigned: true })
       const expiresAt = typeof meta.esign_expires_at === "string" ? meta.esign_expires_at : null
       if (expiresAt && Date.parse(expiresAt) < Date.now()) {
         return json(res, 410, { error: "This signing link has expired." })
       }
-      if (meta.esign_signed_at) return json(res, 200, { ok: true, alreadySigned: true })
 
       const { data: profile } = await service.from("profiles").select("display_name").eq("id", quote.user_id).maybeSingle()
       const businessLabel =

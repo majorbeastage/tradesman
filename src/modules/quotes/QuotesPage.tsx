@@ -195,7 +195,8 @@ import {
 import { archiveEstimatePdfFromQuote, openEstimatePdfForProfile } from "../../lib/estimatePdfExport"
 import { autoAdvanceCustomerWorkflow } from "../../lib/customerWorkflowAutoComplete"
 import { uploadBytesForOutbound } from "../../lib/uploadCommAttachment"
-import { clampAutomatedNotifyInnerText, SMS_AUTOMATED_NOTIFY_INNER_MAX_CHARS } from "../../lib/smsComplianceLimits"
+import { clampAutomatedNotifyInnerText, SMS_AUTOMATED_NOTIFY_INNER_MAX_CHARS, truncateOutboundSmsHard } from "../../lib/smsComplianceLimits"
+import { getPublicSiteOrigin } from "../../lib/publicSiteOrigin"
 import {
   CUSTOMER_SIGNED_ESTIMATE_LABEL,
   filterCustomerSignedEstimateAttachments,
@@ -4492,7 +4493,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
         },
         body: outboundMessagesJsonBody({
           to: phone,
-          body: clampAutomatedNotifyInnerText(body),
+          // E-sign URLs must not be sliced by the 280-char automated clamp (that mid-cuts /e/{token}).
+          body: /\/e\/[a-z0-9]+/i.test(body) ? truncateOutboundSmsHard(body) : clampAutomatedNotifyInnerText(body),
           userId,
           conversationId: selectedQuote.conversation_id || undefined,
           customerId: selectedQuote.customer_id,
@@ -4572,7 +4574,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
           action: "create",
           quoteId: selectedQuote.id,
           pdfUrl: pdfUrl || undefined,
-          origin: typeof window !== "undefined" ? window.location.origin : undefined,
+          origin: getPublicSiteOrigin(),
         }),
       })
       const data = (await res.json()) as { url?: string; error?: string }
@@ -4584,7 +4586,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
       setQuoteEmailBody(
         `Hi ${name},\n\nPlease review and electronically sign your estimate here:\n${data.url}\n\nThank you,\n${businessName}`,
       )
-      setQuoteSmsBody(`Hi ${name}, please review & sign your estimate from ${businessName}: ${data.url}`)
+      // Keep the URL alone on its own line so SMS clients / length clamps do not truncate the token.
+      setQuoteSmsBody(`Hi ${name}, sign your estimate from ${businessName}:\n${data.url}`)
     } catch (e) {
       setEsignLinkError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -8054,7 +8057,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
                       onChange={(e) => setQuoteSmsBody(e.target.value)}
                       rows={4}
                       placeholder="Message"
-                      maxLength={SMS_AUTOMATED_NOTIFY_INNER_MAX_CHARS}
+                      maxLength={
+                        /\/e\/[a-z0-9]+/i.test(quoteSmsBody)
+                          ? 1600
+                          : SMS_AUTOMATED_NOTIFY_INNER_MAX_CHARS
+                      }
                       style={{ ...theme.formInput, resize: "vertical", color: "#111827" }}
                     />
                     <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
