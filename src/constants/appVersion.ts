@@ -33,6 +33,7 @@
  * **2.2.0** — Eight interactive setup mini-wizards (auto-replies, lead filters, line items, job types, scheduling alerts, receipt template, call forwarding, voicemail) with voice/TTS; platform assistant routes to wizards; shared speech input.
  * **2.3.0** — Unified Operations hub (Work Orders, POs, Invoicing, Inventory), dashboard quick-link fixes, optional call-screening settings (metadata only; whisper/forward unchanged), Business Workflow editor layout, admin mobile nav + Operations provisioning.
  * **2.3.1** — Call screening menu builder, live Twilio speech gather, AI lead/spam classification, customer timeline logging; whisper unchanged when screening off.
+ * **2.3.3** — E-sign links resilient to SMS truncation/wrong origins (shared token reuse, keep-token-after-sign, public www origin); new modern app icon (orange tile + white "T"), adaptive background #F26A1B.
  *
  * @see CopyrightVersionFooter
  */

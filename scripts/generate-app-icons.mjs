@@ -24,15 +24,17 @@ const DENSITIES = [
   { folder: "mipmap-xxxhdpi", foreground: 432, legacy: 192 },
 ]
 
-const BLACK = { r: 0, g: 0, b: 0, alpha: 1 }
+// Matches res/values/ic_launcher_background.xml so adaptive-icon corners stay seamless.
+const BRAND_BG = { r: 0xf2, g: 0x6a, b: 0x1b, alpha: 1 }
 
 async function squareIcon(size, outPath) {
   await sharp(src)
     .resize(size, size, {
       fit: "contain",
       position: "center",
-      background: BLACK,
+      background: BRAND_BG,
     })
+    .flatten({ background: BRAND_BG })
     .png()
     .toFile(outPath)
 }
@@ -47,7 +49,7 @@ async function main() {
   }
   await squareIcon(1024, iosIcon)
   console.log("wrote iOS AppIcon-512@2x.png (1024)")
-  console.log("Done. Android adaptive background: res/values/ic_launcher_background.xml should stay #000000 to match public/icon.png.")
+  console.log("Done. Android adaptive background: res/values/ic_launcher_background.xml is #F26A1B to match public/icon.png.")
 }
 
 main().catch((e) => {
