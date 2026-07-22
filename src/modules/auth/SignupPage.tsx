@@ -4,7 +4,7 @@ import { PasswordFieldWithReveal } from "../../components/PasswordFieldWithRevea
 import { useLocale } from "../../i18n/LocaleContext"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
-import { revokeOtherAuthSessions } from "../../lib/authSingleSession"
+import { registerAppSession } from "../../lib/appSessions"
 import { TIMEZONE_OPTIONS } from "../../constants/timezones"
 import { getDefaultPortalConfigForNewUser, getPortalConfigForProductPackage, signupRoleForProductPackage } from "../../types/portal-builder"
 import {
@@ -458,7 +458,7 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
         setError(signErr.message)
         return
       }
-      if (data.session) await revokeOtherAuthSessions()
+      if (data.session) await registerAppSession(supabase, "main")
       const uid = data.user?.id ?? data.session?.user?.id
       if (!uid) {
         setError(

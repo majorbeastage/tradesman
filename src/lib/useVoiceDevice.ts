@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { Capacitor } from "@capacitor/core"
 import { supabase } from "./supabase"
 import { resetCallAudioRoute, setCallSpeakerOn, prepareCallAudio } from "./nativeCallAudio"
+import { setVoiceTrafficInCall } from "./voiceTrafficGuard"
+import { setAppSessionInCall } from "./appSessions"
 import type { Call, Device } from "@twilio/voice-sdk"
 
 /**
@@ -68,6 +70,8 @@ export function useVoiceDevice() {
     }
     deviceRef.current = null
     void resetCallAudioRoute()
+    setVoiceTrafficInCall(false)
+    void setAppSessionInCall(supabase, "main", false)
     setCallState("idle")
     setMuted(false)
     setSpeakerOn(false)
@@ -82,10 +86,14 @@ export function useVoiceDevice() {
       setError(null)
       setCallState("connecting")
       setPeer({ id: e164, label: label || e164 })
+      setVoiceTrafficInCall(true)
+      void setAppSessionInCall(supabase, "main", true)
       const { token, error: tErr } = await fetchVoiceToken()
       if (!token) {
         setError(tErr ?? "Calling unavailable.")
         setCallState("error")
+        setVoiceTrafficInCall(false)
+        void setAppSessionInCall(supabase, "main", false)
         return
       }
       try {

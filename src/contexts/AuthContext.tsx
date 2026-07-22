@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, useCallback, useRef } f
 import type { User, Session } from "@supabase/supabase-js"
 import { supabase } from "../lib/supabase"
 import { activateDemoSession, demoAccessBlockReason } from "../lib/demoAccountLifecycle"
-import { revokeOtherAuthSessions } from "../lib/authSingleSession"
+import { registerAppSession, revokeLocalAppSession } from "../lib/appSessions"
 import { DEV_USER_ID } from "../core/dev"
 import type { PortalConfig } from "../types/portal-builder"
 import { mergeSandboxPortalConfig } from "../lib/sandboxPortalConfig"
@@ -220,7 +220,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!supabase) return { error: new Error("Supabase not configured") }
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) return { error }
-    await revokeOtherAuthSessions()
+    // Soft single-device for Main (does not kill Messaging refresh tokens).
+    await registerAppSession(supabase, "main")
     return { error: null }
   }, [])
 
@@ -228,12 +229,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!supabase) return { error: new Error("Supabase not configured") }
     const { data, error } = await supabase.auth.signUp({ email, password })
     if (error) return { error }
-    if (data.session) await revokeOtherAuthSessions()
+    if (data.session) await registerAppSession(supabase, "main")
     return { error: null }
   }, [])
 
   const signOut = useCallback(async () => {
-    if (supabase) await supabase.auth.signOut()
+    if (supabase) {
+      await revokeLocalAppSession(supabase, "main")
+      await supabase.auth.signOut()
+    }
   }, [])
 
   const refetchProfile = useCallback(async (): Promise<ProfileFetchResult> => {

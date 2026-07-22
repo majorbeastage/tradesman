@@ -475,7 +475,13 @@ export default function MessengerScreen({ me }: { me: string }) {
           </section>
           <button
             type="button"
-            onClick={() => void supabase.auth.signOut()}
+            onClick={() => {
+              void (async () => {
+                const { revokeLocalAppSession } = await import("../lib/appSessions")
+                await revokeLocalAppSession(supabase, "messaging")
+                await supabase.auth.signOut()
+              })()
+            }}
             style={{ border: `1px solid var(--border)`, background: "#fff", color: "#b91c1c", borderRadius: 10, padding: "12px 14px", fontWeight: 700, cursor: "pointer" }}
           >
             Sign out

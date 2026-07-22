@@ -1,8 +1,9 @@
 import { supabase } from "./supabase"
 
 /**
- * Ends every other Supabase session for this user (other browsers / devices / tabs),
- * keeping only the current session. Safe to call after password sign-in or password update.
+ * Hard-revoke every other Supabase Auth session (other browsers/devices).
+ * Use only for security-sensitive flows (password reset), NOT normal login —
+ * normal Main login uses user_app_sessions soft takeover so Messaging can stay signed in.
  *
  * @see https://supabase.com/docs/reference/javascript/auth-signout — scope `others`
  */

@@ -6,15 +6,22 @@ import './styles/appSchemes.css'
 import './styles/schemeContrast.css'
 import App from './App.tsx'
 import { ErrorBoundary } from './ErrorBoundary'
-import { AuthProvider } from './contexts/AuthContext'
+import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { LocaleProvider } from './i18n/LocaleContext'
 import NativeMobilePipeline from './components/NativeMobilePipeline'
+import MainAppSessionGuard from './components/MainAppSessionGuard'
+
+function SessionGuardHost() {
+  const { user } = useAuth()
+  return <MainAppSessionGuard userId={user?.id ?? null} />
+}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>
       <AuthProvider>
         <NativeMobilePipeline />
+        <SessionGuardHost />
         <LocaleProvider>
           <App />
         </LocaleProvider>
