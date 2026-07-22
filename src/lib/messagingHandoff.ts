@@ -12,15 +12,32 @@ export const MESSAGING_ANDROID_PACKAGE = "com.tradesmanus.messaging"
 export const MESSAGING_PLAY_STORE_URL = `https://play.google.com/store/apps/details?id=${MESSAGING_ANDROID_PACKAGE}`
 export const MESSAGING_PLAY_STORE_MARKET_URL = `market://details?id=${MESSAGING_ANDROID_PACKAGE}`
 
+/** Set when the iOS Messaging app is live on the App Store. */
+export const MESSAGING_IOS_APP_STORE_URL =
+  (typeof import.meta !== "undefined" &&
+    typeof import.meta.env?.VITE_MESSAGING_IOS_APP_STORE_URL === "string" &&
+    import.meta.env.VITE_MESSAGING_IOS_APP_STORE_URL.trim()) ||
+  ""
+
 function isAndroidUa(): boolean {
   if (typeof navigator === "undefined") return false
   return /Android/i.test(navigator.userAgent)
 }
 
-/** Open Play Store for Tradesman Messaging (market:// on Android, https elsewhere). */
+function isIosUa(): boolean {
+  if (typeof navigator === "undefined") return false
+  return /iPhone|iPad|iPod/i.test(navigator.userAgent)
+}
+
+/** Open store listing for Tradesman Messaging (Play on Android, App Store on iOS when configured). */
 export function openMessagingPlayStore(): void {
   if (typeof window === "undefined") return
   try {
+    const nativeIos = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "ios"
+    if ((nativeIos || isIosUa()) && MESSAGING_IOS_APP_STORE_URL) {
+      window.location.href = MESSAGING_IOS_APP_STORE_URL
+      return
+    }
     if (isAndroidUa() || (Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android")) {
       window.location.href = MESSAGING_PLAY_STORE_MARKET_URL
       return
@@ -32,8 +49,8 @@ export function openMessagingPlayStore(): void {
 }
 
 /**
- * Open Messaging with session when possible; otherwise Play Store.
- * On desktop web (wide screens), callers may prefer the in-app messenger widget instead.
+ * Open Messaging with session when possible; otherwise store listing.
+ * Prefer this on any phone / Capacitor shell (including wide native layouts).
  */
 export async function openMessagingAppWithSession(opts?: {
   /** After this many ms without leaving the page, open Play Store (Android/native). */
@@ -50,7 +67,9 @@ export async function openMessagingAppWithSession(opts?: {
 
   try {
     const nativeAndroid = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android"
+    const nativeIos = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "ios"
     const android = nativeAndroid || isAndroidUa()
+    const ios = nativeIos || isIosUa()
 
     if (android) {
       // Intent with Play Store browser_fallback when the package is missing.
@@ -60,7 +79,6 @@ export async function openMessagingAppWithSession(opts?: {
 
       const ms = opts?.playStoreFallbackMs ?? 1600
       window.setTimeout(() => {
-        // If deep link failed (still on this page), nudge to the store.
         try {
           if (document.visibilityState === "visible") openMessagingPlayStore()
         } catch {
@@ -70,7 +88,20 @@ export async function openMessagingAppWithSession(opts?: {
       return { ok: true }
     }
 
+    // iOS / desktop: custom scheme; store fallback if still visible (iOS only when URL configured).
     window.location.href = `tradesmanmsg://auth#${hash}`
+    if (ios) {
+      const ms = opts?.playStoreFallbackMs ?? 1600
+      window.setTimeout(() => {
+        try {
+          if (document.visibilityState === "visible" && MESSAGING_IOS_APP_STORE_URL) {
+            openMessagingPlayStore()
+          }
+        } catch {
+          /* ignore */
+        }
+      }, ms)
+    }
     return { ok: true }
   } catch (e) {
     openMessagingPlayStore()

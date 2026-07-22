@@ -58,6 +58,9 @@ verify_jwt = false
 [functions.push-test]
 verify_jwt = false
 
+[functions.notify-internal-message]
+verify_jwt = false
+
 # notify-scheduled: called by a schedule (cron), not a browser. Auth is a shared
 # secret header (NOTIFY_CRON_SECRET) checked inside index.ts; gateway JWT off.
 [functions.notify-scheduled]

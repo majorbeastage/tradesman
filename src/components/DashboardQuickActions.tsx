@@ -1317,9 +1317,9 @@ export default function DashboardQuickActions(props: Props) {
           tileStyle={tileStyle}
           onClick={() => {
             if (customize) return
-            // Mobile web + native apps: open Tradesman Messaging (or Play Store if not installed).
-            // Desktop browser: keep the in-app messenger widget.
-            if (isMobile || isNativeApp()) {
+            // Phone / Capacitor: always open Tradesman Messaging (or store if missing).
+            // Desktop browser only: keep the in-app messenger widget.
+            if (isNativeApp() || isMobile || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "")) {
               void openMessagingAppWithSession()
               return
             }

@@ -2,6 +2,7 @@ import { theme } from "../styles/theme"
 import { openPhoneDialer } from "../lib/telDial"
 import { useAuth } from "../contexts/AuthContext"
 import TwilioBridgeCallButton from "./TwilioBridgeCallButton"
+import SoftphonePrimaryCallButton from "./SoftphonePrimaryCallButton"
 import { isNativeApp } from "../lib/capacitorMobile"
 
 type Props = {
@@ -11,20 +12,32 @@ type Props = {
   compact?: boolean
   /**
    * Tradesman profile id for the business context (scoped user / quote owner). When set and you are signed in,
-   * shows **Call from Business number** first so the customer sees your Twilio business caller ID; device dialer is secondary.
+   * shows business-line call options so the customer sees your Twilio business caller ID; device dialer is secondary.
    */
   bridgeOwnerUserId?: string | null
+  /** Optional display name for softphone in-call header. */
+  label?: string
 }
 
-export default function CustomerCallButton({ phone, hint, compact, bridgeOwnerUserId }: Props) {
+export default function CustomerCallButton({ phone, hint, compact, bridgeOwnerUserId, label }: Props) {
   const { session } = useAuth()
   const trimmed = phone.trim()
   if (!trimmed) return null
 
+  /** Capacitor shell: softphone first (mute / keypad / speaker), bridge + dialer secondary. */
+  if (isNativeApp()) {
+    return (
+      <SoftphonePrimaryCallButton
+        phone={trimmed}
+        hint={hint}
+        compact={compact}
+        bridgeOwnerUserId={bridgeOwnerUserId}
+        label={label}
+      />
+    )
+  }
+
   const showTwilioFirst = Boolean(bridgeOwnerUserId?.trim() && session?.access_token)
-  const native = isNativeApp()
-  /** In the Capacitor shell, lead with one clear “Call” that uses Twilio (customer sees TWILIO_FROM_NUMBER). */
-  const twilioPrimaryNative = Boolean(showTwilioFirst && native)
 
   return (
     <div style={{ display: "inline-flex", flexDirection: "column", gap: 8, alignItems: "flex-start" }}>
@@ -34,13 +47,9 @@ export default function CustomerCallButton({ phone, hint, compact, bridgeOwnerUs
             customerPhone={trimmed}
             quoteOwnerUserId={bridgeOwnerUserId!.trim()}
             compact={compact}
-            label={twilioPrimaryNative ? "Call" : undefined}
-            variant={twilioPrimaryNative ? "primary" : "default"}
           />
           <span style={{ fontSize: 11, color: "#047857", maxWidth: 320, lineHeight: 1.35, fontWeight: 600 }}>
-            {twilioPrimaryNative
-              ? "Rings your Account Best contact / Primary phone first (use your personal cell, not your Twilio business line). Customer sees your business caller ID."
-              : "Rings your Account Best contact / Primary phone first — use a personal cell, not your Twilio business line."}
+            Rings your Account Best contact / Primary phone first — use a personal cell, not your Twilio business line.
           </span>
           <details style={{ fontSize: 11, color: "#6b7280", maxWidth: 340, lineHeight: 1.4 }}>
             <summary style={{ cursor: "pointer", fontWeight: 600, color: "#475569" }}>Which number rings first?</summary>
@@ -50,8 +59,7 @@ export default function CustomerCallButton({ phone, hint, compact, bridgeOwnerUs
             </p>
             <p style={{ margin: "8px 0 0" }}>
               Inbound calls: <strong>Admin → Communications → Forward to phone</strong>. If your cell never rings, turn
-              off <strong>Announce caller before I connect</strong> under Call forwarding and save. Check under the Call
-              button for a Twilio Call SID.
+              off <strong>Announce caller before I connect</strong> under Call forwarding and save.
             </p>
           </details>
         </>
@@ -74,20 +82,14 @@ export default function CustomerCallButton({ phone, hint, compact, bridgeOwnerUs
           fontSize: compact ? 12 : 14,
         }}
       >
-        {showTwilioFirst
-          ? twilioPrimaryNative
-            ? "Phone dialer (personal caller ID)"
-            : "Call from my phone (dialer)"
-          : "Call"}
+        {showTwilioFirst ? "Call from my phone (dialer)" : "Call"}
       </button>
       {hint ? (
         <span style={{ fontSize: 11, color: "#6b7280", maxWidth: 280, lineHeight: 1.35 }}>{hint}</span>
       ) : (
         <span style={{ fontSize: 11, color: "#6b7280", maxWidth: 280, lineHeight: 1.35 }}>
           {showTwilioFirst
-            ? twilioPrimaryNative
-              ? "Only the top button uses your business line; the dialer uses your own number."
-              : "The dialer button uses your personal cell as caller ID."
+            ? "The dialer button uses your personal cell as caller ID. Use Instant messaging dial for in-app mute/keypad/speaker."
             : "Opens the device dialer — the customer usually sees your mobile number. Sign in to use the business-line call when available."}
         </span>
       )}

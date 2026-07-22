@@ -1,4 +1,4 @@
-package com.tradesmanus.com;
+package com.tradesmanus.messaging;
 
 import android.content.Context;
 import android.media.AudioManager;
@@ -8,21 +8,17 @@ import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
-import com.google.firebase.FirebaseApp;
 
-/**
- * Native helpers for the main Tradesman Capacitor shell:
- * FCM readiness check + softphone speaker / earpiece routing.
- */
-@CapacitorPlugin(name = "TradesmanNative")
-public class TradesmanNativePlugin extends Plugin {
+@CapacitorPlugin(name = "MessagingNative")
+public class MessagingNativePlugin extends Plugin {
 
     @PluginMethod
     public void getFcmAvailability(PluginCall call) {
         JSObject ret = new JSObject();
         try {
-            boolean ok = !FirebaseApp.getApps(getContext()).isEmpty();
-            ret.put("available", ok);
+            Class<?> firebaseApp = Class.forName("com.google.firebase.FirebaseApp");
+            java.util.List<?> apps = (java.util.List<?>) firebaseApp.getMethod("getApps", Context.class).invoke(null, getContext());
+            ret.put("available", apps != null && !apps.isEmpty());
         } catch (Throwable t) {
             ret.put("available", false);
         }

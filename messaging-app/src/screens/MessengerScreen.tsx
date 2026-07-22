@@ -3,6 +3,7 @@ import { supabase } from "../lib/supabaseClient"
 import { useConferenceRoom } from "../lib/useConferenceRoom"
 import { useVoiceDevice } from "../lib/useVoiceDevice"
 import ConferenceCallView from "./ConferenceCallView"
+import InCallControls, { formatCallStateLabel } from "../components/InCallControls"
 import logo from "../assets/logo.png"
 import {
   AVAILABILITY_COLOR,
@@ -22,6 +23,8 @@ import {
 } from "../lib/calendarEvents"
 import {
   createGroupThread,
+  deleteThreadMessage,
+  editThreadMessage,
   findOrCreateDirectThread,
   loadOrgPeers,
   loadPeerNames,
@@ -30,11 +33,15 @@ import {
   markThreadRead,
   searchMessengerCustomers,
   sendThreadMessage,
+  setThreadNotificationMute,
+  isThreadPushMuted,
   type CustomerRef,
   type InternalMessage,
   type MessengerCustomer,
   type ThreadSummary,
 } from "../lib/internalMessaging"
+import MessageActionTarget from "../components/MessageActionTarget"
+import { ensureMessagingPush, loadMessagingNotifPrefs, saveMessagingNotifPrefs } from "../lib/messagingNotifications"
 
 type Peer = { id: string; name: string }
 type Tab = "chats" | "new" | "phone" | "calendar" | "settings"
@@ -71,6 +78,11 @@ export default function MessengerScreen({ me }: { me: string }) {
   const [custResults, setCustResults] = useState<MessengerCustomer[]>([])
   const [emojiOpen, setEmojiOpen] = useState(false)
   const [fileBusy, setFileBusy] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingBody, setEditingBody] = useState("")
+  const [muteMenuOpen, setMuteMenuOpen] = useState(false)
+  const [notifEnabled, setNotifEnabled] = useState(true)
+  const [notifPreview, setNotifPreview] = useState(true)
 
   // Phone (softphone)
   const [dialNumber, setDialNumber] = useState("")
@@ -93,7 +105,7 @@ export default function MessengerScreen({ me }: { me: string }) {
   const room = useConferenceRoom(me, peerName)
 
   const refresh = useCallback(async () => {
-    const list = await loadThreadsWithMeta(supabase, me)
+    const { threads: list } = await loadThreadsWithMeta(supabase, me)
     setThreads(list)
     const ids = list.flatMap((t) => t.members)
     setNames(await loadPeerNames(supabase, ids))
@@ -104,6 +116,11 @@ export default function MessengerScreen({ me }: { me: string }) {
     void loadOrgPeers(supabase, me).then(setPeers)
     void loadDisplayName(supabase, me).then(setMyName)
     void loadMyAvailability(supabase, me).then(setAvailability)
+    void loadMessagingNotifPrefs(me).then((p) => {
+      setNotifEnabled(p.enabled)
+      setNotifPreview(p.showPreview)
+      if (p.enabled) void ensureMessagingPush(me)
+    })
     const id = window.setInterval(() => void refresh(), 20_000)
     return () => window.clearInterval(id)
   }, [me, refresh])
@@ -112,6 +129,13 @@ export default function MessengerScreen({ me }: { me: string }) {
     const channel = supabase
       .channel(`im-${me}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "internal_messages" }, (payload) => {
+        const raw = payload.new as Record<string, unknown>
+        if ((raw.thread_id as string) === selectedRef.current) {
+          void loadThreadMessages(supabase, selectedRef.current).then(setMessages)
+        }
+        void refresh()
+      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "internal_messages" }, (payload) => {
         const raw = payload.new as Record<string, unknown>
         if ((raw.thread_id as string) === selectedRef.current) {
           void loadThreadMessages(supabase, selectedRef.current).then(setMessages)
@@ -186,9 +210,11 @@ export default function MessengerScreen({ me }: { me: string }) {
       const ids = [...newSel]
       let threadId: string | null = null
       if (ids.length === 1) {
-        threadId = await findOrCreateDirectThread(supabase, me, ids[0])
+        const r = await findOrCreateDirectThread(supabase, me, ids[0])
+        threadId = r.threadId
       } else {
-        threadId = await createGroupThread(supabase, me, ids, "")
+        const r = await createGroupThread(supabase, me, ids, "")
+        threadId = r.threadId
       }
       if (threadId) {
         setNewSel(new Set())
@@ -208,8 +234,9 @@ export default function MessengerScreen({ me }: { me: string }) {
     setInput("")
     setPendingCustomer(null)
     setEmojiOpen(false)
-    const msg = await sendThreadMessage(supabase, me, selected, body, ref)
-    if (msg) {
+    const res = await sendThreadMessage(supabase, me, selected, body, ref)
+    const msg = res.message
+    if (res.ok && msg) {
       setMessages((prev) => (prev.some((x) => x.id === msg.id) ? prev : [...prev, msg]))
       void refresh()
     } else {
@@ -306,8 +333,9 @@ export default function MessengerScreen({ me }: { me: string }) {
           })),
           onSend: (text: string) => {
             if (!selected) return
-            void sendThreadMessage(supabase, me, selected, text, null).then((msg) => {
-              if (msg) {
+            void sendThreadMessage(supabase, me, selected, text, null).then((res) => {
+              if (res.ok && res.message) {
+                const msg = res.message
                 setMessages((prev) => (prev.some((x) => x.id === msg.id) ? prev : [...prev, msg]))
                 void refresh()
               }
@@ -411,15 +439,44 @@ export default function MessengerScreen({ me }: { me: string }) {
     return (
       <div className="app-shell">
         {topNav}
-        <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
-          <h2 style={{ margin: "0 0 8px", fontSize: 18 }}>Messenger settings</h2>
-          <p style={{ margin: 0, color: "var(--muted)", fontSize: 13, lineHeight: 1.5 }}>
-            More settings are coming soon (notifications, file retention, dial defaults). Your session stays signed in on this device until you sign out.
-          </p>
+        <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "grid", gap: 14 }}>
+          <h2 style={{ margin: 0, fontSize: 18 }}>Messenger settings</h2>
+          <section style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 14, background: "#fff" }}>
+            <h3 style={{ margin: "0 0 8px", fontSize: 14 }}>Notifications</h3>
+            <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, fontWeight: 600, marginBottom: 10 }}>
+              <input
+                type="checkbox"
+                checked={notifEnabled}
+                onChange={(e) => {
+                  const on = e.target.checked
+                  setNotifEnabled(on)
+                  void saveMessagingNotifPrefs(me, { enabled: on, showPreview: notifPreview })
+                  if (on) void ensureMessagingPush(me)
+                }}
+              />
+              Enable push notifications
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, fontWeight: 600, opacity: notifEnabled ? 1 : 0.5 }}>
+              <input
+                type="checkbox"
+                checked={notifPreview}
+                disabled={!notifEnabled}
+                onChange={(e) => {
+                  const on = e.target.checked
+                  setNotifPreview(on)
+                  void saveMessagingNotifPrefs(me, { enabled: notifEnabled, showPreview: on })
+                }}
+              />
+              Show message preview
+            </label>
+            <p style={{ margin: "10px 0 0", fontSize: 12, color: "var(--muted)", lineHeight: 1.45 }}>
+              Per-chat mute is available from the chat header (bell). Unread badges still update when muted.
+            </p>
+          </section>
           <button
             type="button"
             onClick={() => void supabase.auth.signOut()}
-            style={{ marginTop: 20, border: `1px solid var(--border)`, background: "#fff", color: "#b91c1c", borderRadius: 10, padding: "12px 14px", fontWeight: 700, cursor: "pointer" }}
+            style={{ border: `1px solid var(--border)`, background: "#fff", color: "#b91c1c", borderRadius: 10, padding: "12px 14px", fontWeight: 700, cursor: "pointer" }}
           >
             Sign out
           </button>
@@ -433,68 +490,128 @@ export default function MessengerScreen({ me }: { me: string }) {
     return (
       <div className="app-shell">
         {topNav}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid var(--border)", background: "#fff" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid var(--border)", background: "#fff", position: "relative" }}>
           <button type="button" onClick={() => setSelected(null)} style={{ border: "none", background: "transparent", fontSize: 22, cursor: "pointer", color: "var(--text)" }}>
             ‹
           </button>
           <strong style={{ flex: 1, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{threadTitle(selectedThread)}</strong>
+          <button
+            type="button"
+            onClick={() => setMuteMenuOpen((v) => !v)}
+            style={iconBtn}
+            title="Notification options"
+          >
+            {isThreadPushMuted(selectedThread) ? "🔕" : "🔔"}
+          </button>
           <button type="button" onClick={() => callThread(selectedThread, false)} style={iconBtn} title="Audio call">
             📞
           </button>
           <button type="button" onClick={() => callThread(selectedThread, true)} style={iconBtn} title="Video call">
             🎥
           </button>
+          {muteMenuOpen ? (
+            <div style={{ position: "absolute", right: 12, top: 48, zIndex: 20, background: "#fff", border: "1px solid var(--border)", borderRadius: 10, boxShadow: "0 8px 24px rgba(15,23,42,0.15)", minWidth: 180, overflow: "hidden" }}>
+              {[
+                { label: "Mute forever", muted: true, until: null as string | null },
+                { label: "Mute 1 hour", muted: true, until: new Date(Date.now() + 3600_000).toISOString() },
+                { label: "Mute 8 hours", muted: true, until: new Date(Date.now() + 8 * 3600_000).toISOString() },
+                { label: "Mute 24 hours", muted: true, until: new Date(Date.now() + 24 * 3600_000).toISOString() },
+                { label: "Unmute", muted: false, until: null },
+              ].map((opt) => (
+                <button
+                  key={opt.label}
+                  type="button"
+                  onClick={() => {
+                    void setThreadNotificationMute(supabase, me, selectedThread.id, opt.muted, opt.until).then((r) => {
+                      if (r.ok) {
+                        setThreads((prev) =>
+                          prev.map((t) =>
+                            t.id === selectedThread.id
+                              ? { ...t, notificationsMuted: opt.muted, mutedUntil: opt.until }
+                              : t,
+                          ),
+                        )
+                      }
+                      setMuteMenuOpen(false)
+                    })
+                  }}
+                  style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 14px", border: "none", borderBottom: "1px solid var(--border)", background: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
         <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
           {messages.map((m) => {
             const mine = m.sender_id === me
+            const deleted = Boolean(m.deleted_at)
             return (
               <div key={m.id} style={{ alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "82%" }}>
                 {!mine && selectedThread.is_group ? (
                   <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 700, margin: "0 0 2px 4px" }}>{peerName(m.sender_id)}</div>
                 ) : null}
-                <div
-                  style={{
-                    padding: "9px 12px",
-                    borderRadius: 14,
-                    background: mine ? "var(--orange)" : "#fff",
-                    color: mine ? "#fff" : "var(--text)",
-                    border: mine ? "none" : "1px solid var(--border)",
-                    fontSize: 15,
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
+                <MessageActionTarget
+                  mine={mine && !deleted}
+                  onEdit={() => {
+                    setEditingId(m.id)
+                    setEditingBody(m.body)
+                  }}
+                  onDelete={() => {
+                    if (!confirm("Delete this message?")) return
+                    void deleteThreadMessage(supabase, me, m.id).then((r) => {
+                      if (r.ok && r.message) setMessages((prev) => prev.map((x) => (x.id === r.message!.id ? r.message! : x)))
+                    })
                   }}
                 >
-                  {m.customer_ref ? (
-                    <div
-                      style={{
-                        display: "inline-block",
-                        marginBottom: m.body ? 6 : 0,
-                        padding: "4px 8px",
-                        borderRadius: 8,
-                        background: mine ? "rgba(255,255,255,0.2)" : "#eef2ff",
-                        color: mine ? "#fff" : "#3730a3",
-                        fontSize: 13,
-                        fontWeight: 700,
-                      }}
-                    >
-                      👤 {m.customer_ref.name}
+                  <div
+                    style={{
+                      padding: "9px 12px",
+                      borderRadius: 14,
+                      background: mine ? "var(--orange)" : "#fff",
+                      color: mine ? "#fff" : "var(--text)",
+                      border: mine ? "none" : "1px solid var(--border)",
+                      fontSize: 15,
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                      fontStyle: deleted ? "italic" : undefined,
+                      opacity: deleted ? 0.85 : 1,
+                    }}
+                  >
+                    {deleted ? "Message deleted" : m.body}
+                    {!deleted && m.edited_at ? <span style={{ display: "block", marginTop: 4, fontSize: 11, opacity: 0.75 }}>edited</span> : null}
+                    {!deleted && m.customer_ref ? (
+                      <div style={{ marginTop: m.body ? 6 : 0, padding: "6px 8px", borderRadius: 8, background: mine ? "rgba(255,255,255,0.18)" : "#f8fafc", fontWeight: 700, fontSize: 13 }}>
+                        👤 {m.customer_ref.name}
+                      </div>
+                    ) : null}
+                  </div>
+                </MessageActionTarget>
+                {editingId === m.id ? (
+                  <div style={{ marginTop: 6, display: "grid", gap: 6 }}>
+                    <textarea value={editingBody} onChange={(e) => setEditingBody(e.target.value)} rows={2} style={{ width: "100%", borderRadius: 8, border: "1px solid var(--border)", padding: 8, fontSize: 14 }} />
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void editThreadMessage(supabase, me, m.id, editingBody).then((r) => {
+                            if (r.ok && r.message) {
+                              setMessages((prev) => prev.map((x) => (x.id === r.message!.id ? r.message! : x)))
+                              setEditingId(null)
+                            }
+                          })
+                        }}
+                        style={{ border: "none", background: "var(--orange)", color: "#fff", borderRadius: 8, padding: "8px 12px", fontWeight: 700 }}
+                      >
+                        Save
+                      </button>
+                      <button type="button" onClick={() => setEditingId(null)} style={{ border: "1px solid var(--border)", background: "#fff", borderRadius: 8, padding: "8px 12px", fontWeight: 700 }}>
+                        Cancel
+                      </button>
                     </div>
-                  ) : null}
-                  {m.body ? (
-                    <div>
-                      {m.body.split("\n").map((line, i) =>
-                        line.startsWith("http") ? (
-                          <a key={i} href={line} target="_blank" rel="noreferrer" style={{ color: mine ? "#fff" : "#2563eb", wordBreak: "break-all" }}>
-                            {line}
-                          </a>
-                        ) : (
-                          <div key={i}>{line}</div>
-                        ),
-                      )}
-                    </div>
-                  ) : null}
-                </div>
+                  </div>
+                ) : null}
               </div>
             )
           })}
@@ -698,29 +815,22 @@ export default function MessengerScreen({ me }: { me: string }) {
             Calls go out from your Tradesman Twilio number through this app (mic + speaker). Your personal phone is not dialed first.
           </p>
           {callActive ? (
-            <div style={{ display: "grid", gap: 12, border: `1px solid var(--border)`, borderRadius: 12, padding: 16, background: "#f8fafc" }}>
-              <div style={{ textAlign: "center" }}>
-                <div style={{ fontSize: 16, fontWeight: 800 }}>{voice.peer?.label ?? "Call"}</div>
-                <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700, color: "#475569" }}>
-                  {voice.callState === "connecting"
-                    ? "Connecting…"
-                    : voice.callState === "ringing"
-                      ? "Ringing…"
-                      : `In call · ${Math.floor(voice.seconds / 60)}:${String(voice.seconds % 60).padStart(2, "0")}`}
-                </div>
-              </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button type="button" onClick={voice.toggleMute} disabled={voice.callState !== "in_call"} style={{ flex: 1, border: `1px solid var(--border)`, background: voice.muted ? "#fee2e2" : "#fff", borderRadius: 8, padding: 12, fontWeight: 700 }}>
-                  {voice.muted ? "Unmute" : "Mute"}
-                </button>
-                <button type="button" onClick={voice.hangup} style={{ flex: 1, border: "none", background: "#dc2626", color: "#fff", borderRadius: 8, padding: 12, fontWeight: 800 }}>
-                  Hang up
-                </button>
-              </div>
-              {voice.error ? <p style={{ margin: 0, fontSize: 12, color: "#dc2626" }}>{voice.error}</p> : null}
-            </div>
+            <InCallControls
+              label={voice.peer?.label ?? "Call"}
+              stateLabel={formatCallStateLabel(voice.callState, voice.seconds)}
+              muted={voice.muted}
+              speakerOn={voice.speakerOn}
+              speakerSupported={voice.speakerSupported}
+              canInteract={voice.callState === "in_call"}
+              error={voice.error}
+              onToggleMute={voice.toggleMute}
+              onToggleSpeaker={voice.toggleSpeaker}
+              onHangup={voice.hangup}
+              onSendDigit={voice.sendDigits}
+            />
           ) : (
             <>
+              {voice.error ? <p style={{ margin: 0, fontSize: 12, color: "#dc2626" }}>{voice.error}</p> : null}
               <p style={{ margin: 0, fontSize: 13, color: "var(--muted)", lineHeight: 1.5 }}>
                 Calls go out from your Tradesman Twilio number. Search a customer or type a number.
               </p>

@@ -1,7 +1,7 @@
 {
   "name": "tradesman",
   "private": true,
-  "version": "2.3.4",
+  "version": "2.3.5",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -28,7 +28,8 @@
     "supabase:deploy:provision-sandbox": "npx --yes supabase@2.92.1 functions deploy provision-sandbox --project-ref othemzceycphhuwojxge --use-api",
     "supabase:deploy:complete-signup": "npx --yes supabase@2.92.1 functions deploy complete-signup --project-ref othemzceycphhuwojxge --use-api",
     "supabase:deploy:send-team-invite": "npx --yes supabase@2.92.1 functions deploy send-team-invite --project-ref othemzceycphhuwojxge --use-api",
-    "supabase:deploy:accept-team-invite": "npx --yes supabase@2.92.1 functions deploy accept-team-invite --project-ref othemzceycphhuwojxge --use-api"
+    "supabase:deploy:accept-team-invite": "npx --yes supabase@2.92.1 functions deploy accept-team-invite --project-ref othemzceycphhuwojxge --use-api",
+    "supabase:deploy:notify-internal-message": "npx --yes supabase@2.92.1 functions deploy notify-internal-message --project-ref othemzceycphhuwojxge --use-api"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.0",

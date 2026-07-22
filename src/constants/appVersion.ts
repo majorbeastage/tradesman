@@ -35,6 +35,7 @@
  * **2.3.1** — Call screening menu builder, live Twilio speech gather, AI lead/spam classification, customer timeline logging; whisper unchanged when screening off.
  * **2.3.3** — E-sign links resilient to SMS truncation/wrong origins (shared token reuse, keep-token-after-sign, public www origin); new modern app icon (orange tile + white "T"), adaptive background #F26A1B.
  * **2.3.4** — Refreshed app icon: soft-raised white "T" (wrench notch + chisel tip) on full-bleed orange with subtle gradient depth; updated web favicon, in-app, iOS/Android launcher, and Google Play listing icons. Android versionCode 25.
+ * **2.3.5** — Softphone in-call controls (mute, keypad/DTMF, speaker/earpiece); Instant messaging tile → Messaging app / Play Store; internal message edit/delete; messenger global + per-chat notification mute; notify-internal-message Edge. Android versionCode 26.
  *
  * @see CopyrightVersionFooter
  */

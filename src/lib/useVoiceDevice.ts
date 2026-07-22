@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
+import { Capacitor } from "@capacitor/core"
 import { supabase } from "./supabase"
+import { resetCallAudioRoute, setCallSpeakerOn } from "./nativeCallAudio"
 import type { Call, Device } from "@twilio/voice-sdk"
 
 /**
@@ -35,12 +37,14 @@ export function useVoiceDevice() {
   const [error, setError] = useState<string | null>(null)
   const [callState, setCallState] = useState<VoiceCallState>("idle")
   const [muted, setMuted] = useState(false)
+  const [speakerOn, setSpeakerOn] = useState(false)
   const [seconds, setSeconds] = useState(0)
   const [peer, setPeer] = useState<VoicePeer | null>(null)
 
   const deviceRef = useRef<Device | null>(null)
   const callRef = useRef<Call | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const speakerSupported = Capacitor.isNativePlatform()
 
   const stopTimer = useCallback(() => {
     if (timerRef.current) {
@@ -63,8 +67,10 @@ export function useVoiceDevice() {
       /* ignore */
     }
     deviceRef.current = null
+    void resetCallAudioRoute()
     setCallState("idle")
     setMuted(false)
+    setSpeakerOn(false)
     setSeconds(0)
     setPeer(null)
   }, [stopTimer])
@@ -99,6 +105,7 @@ export function useVoiceDevice() {
         const call = await device.connect({ params: { To: e164 } })
         callRef.current = call
         setMuted(false)
+        setSpeakerOn(false)
         setSeconds(0)
         setCallState("ringing")
         call.on("accept", () => {
@@ -137,5 +144,38 @@ export function useVoiceDevice() {
     })
   }, [])
 
-  return { error, setError, callState, muted, seconds, peer, placePhoneCall, hangup, toggleMute }
+  const sendDigits = useCallback((digits: string) => {
+    const call = callRef.current
+    if (!call || !digits) return
+    try {
+      call.sendDigits(digits)
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  const toggleSpeaker = useCallback(() => {
+    if (!speakerSupported) return
+    setSpeakerOn((prev) => {
+      const next = !prev
+      void setCallSpeakerOn(next)
+      return next
+    })
+  }, [speakerSupported])
+
+  return {
+    error,
+    setError,
+    callState,
+    muted,
+    speakerOn,
+    speakerSupported,
+    seconds,
+    peer,
+    placePhoneCall,
+    hangup,
+    toggleMute,
+    toggleSpeaker,
+    sendDigits,
+  }
 }

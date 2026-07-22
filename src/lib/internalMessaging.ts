@@ -16,6 +16,8 @@ export type InternalMessage = {
   sender_id: string
   body: string
   customer_ref: CustomerRef | null
+  edited_at: string | null
+  deleted_at: string | null
 }
 
 export type InternalThread = {
@@ -25,6 +27,8 @@ export type InternalThread = {
   created_by: string
   members: string[]
   myLastReadAt: string | null
+  notificationsMuted: boolean
+  mutedUntil: string | null
 }
 
 export type ThreadSummary = InternalThread & {
@@ -32,7 +36,7 @@ export type ThreadSummary = InternalThread & {
   unread: number
 }
 
-const MSG_COLS = "id, created_at, thread_id, sender_id, body, customer_ref"
+const MSG_COLS = "id, created_at, thread_id, sender_id, body, customer_ref, edited_at, deleted_at"
 
 export function isInternalMessagingUnavailable(message: string | null | undefined): boolean {
   // Only treat "table/function truly missing" errors as not-set-up. Do NOT match
@@ -59,6 +63,8 @@ function mapMessage(row: Record<string, unknown>): InternalMessage {
     sender_id: row.sender_id as string,
     body: (row.body as string) ?? "",
     customer_ref: parseCustomerRef(row.customer_ref),
+    edited_at: (row.edited_at as string) ?? null,
+    deleted_at: (row.deleted_at as string) ?? null,
   }
 }
 
@@ -71,14 +77,21 @@ export async function loadThreadsWithMeta(
   try {
     const { data: myMemberRows, error: mErr } = await supabase
       .from("internal_thread_members")
-      .select("thread_id, last_read_at")
+      .select("thread_id, last_read_at, notifications_muted, muted_until")
       .eq("user_id", me)
     if (mErr) return { threads: [], unavailable: isInternalMessagingUnavailable(mErr.message) }
 
     const threadIds = [...new Set((myMemberRows ?? []).map((r) => r.thread_id as string))]
     if (threadIds.length === 0) return { threads: [], unavailable: false }
     const lastReadByThread = new Map<string, string | null>()
-    for (const r of myMemberRows ?? []) lastReadByThread.set(r.thread_id as string, (r.last_read_at as string) ?? null)
+    const muteByThread = new Map<string, { muted: boolean; until: string | null }>()
+    for (const r of myMemberRows ?? []) {
+      lastReadByThread.set(r.thread_id as string, (r.last_read_at as string) ?? null)
+      muteByThread.set(r.thread_id as string, {
+        muted: Boolean((r as { notifications_muted?: boolean }).notifications_muted),
+        until: ((r as { muted_until?: string | null }).muted_until as string) ?? null,
+      })
+    }
 
     const [threadsRes, membersRes, msgsRes] = await Promise.all([
       supabase.from("internal_threads").select("id, is_group, title, created_by").in("id", threadIds),
@@ -105,6 +118,7 @@ export async function loadThreadsWithMeta(
 
     const threads: ThreadSummary[] = ((threadsRes.data ?? []) as Record<string, unknown>[]).map((t) => {
       const id = t.id as string
+      const mute = muteByThread.get(id)
       return {
         id,
         is_group: Boolean(t.is_group),
@@ -112,6 +126,8 @@ export async function loadThreadsWithMeta(
         created_by: t.created_by as string,
         members: membersByThread.get(id) ?? [],
         myLastReadAt: lastReadByThread.get(id) ?? null,
+        notificationsMuted: mute?.muted ?? false,
+        mutedUntil: mute?.until ?? null,
         lastMessage: lastMsgByThread.get(id) ?? null,
         unread: unreadByThread.get(id) ?? 0,
       }
@@ -165,10 +181,99 @@ export async function sendThreadMessage(
       .select(MSG_COLS)
       .single()
     if (error) return { ok: false, error: isInternalMessagingUnavailable(error.message) ? "Messaging is not set up yet." : error.message }
+    const message = mapMessage(data as Record<string, unknown>)
+    void notifyInternalMessagePeers(supabase, threadId, message.id)
+    return { ok: true, message }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+async function notifyInternalMessagePeers(
+  supabase: SupabaseClient,
+  threadId: string,
+  messageId: string,
+): Promise<void> {
+  try {
+    await supabase.functions.invoke("notify-internal-message", {
+      body: { threadId, messageId },
+    })
+  } catch {
+    /* best-effort */
+  }
+}
+
+export async function editThreadMessage(
+  supabase: SupabaseClient | null,
+  me: string | null | undefined,
+  messageId: string,
+  body: string,
+): Promise<{ ok: boolean; message?: InternalMessage; error?: string }> {
+  if (!supabase || !me || !messageId) return { ok: false, error: "Not signed in." }
+  const trimmed = body.trim()
+  if (!trimmed) return { ok: false, error: "Empty message." }
+  try {
+    const { data, error } = await supabase
+      .from("internal_messages")
+      .update({ body: trimmed, edited_at: new Date().toISOString() })
+      .eq("id", messageId)
+      .eq("sender_id", me)
+      .is("deleted_at", null)
+      .select(MSG_COLS)
+      .single()
+    if (error) return { ok: false, error: error.message }
     return { ok: true, message: mapMessage(data as Record<string, unknown>) }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
+}
+
+export async function deleteThreadMessage(
+  supabase: SupabaseClient | null,
+  me: string | null | undefined,
+  messageId: string,
+): Promise<{ ok: boolean; message?: InternalMessage; error?: string }> {
+  if (!supabase || !me || !messageId) return { ok: false, error: "Not signed in." }
+  try {
+    const { data, error } = await supabase
+      .from("internal_messages")
+      .update({ deleted_at: new Date().toISOString(), body: "" })
+      .eq("id", messageId)
+      .eq("sender_id", me)
+      .select(MSG_COLS)
+      .single()
+    if (error) return { ok: false, error: error.message }
+    return { ok: true, message: mapMessage(data as Record<string, unknown>) }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+export async function setThreadNotificationMute(
+  supabase: SupabaseClient | null,
+  me: string | null | undefined,
+  threadId: string | null | undefined,
+  muted: boolean,
+  mutedUntil: string | null = null,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase || !me || !threadId) return { ok: false, error: "Not signed in." }
+  try {
+    const { error } = await supabase
+      .from("internal_thread_members")
+      .update({ notifications_muted: muted, muted_until: muted ? mutedUntil : null })
+      .eq("thread_id", threadId)
+      .eq("user_id", me)
+    if (error) return { ok: false, error: error.message }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+export function isThreadPushMuted(thread: { notificationsMuted?: boolean; mutedUntil?: string | null }): boolean {
+  if (!thread.notificationsMuted) return false
+  if (!thread.mutedUntil) return true
+  return new Date(thread.mutedUntil).getTime() > Date.now()
 }
 
 export async function markThreadRead(

@@ -6,12 +6,16 @@ import { loadOrganizationPeers, type OrganizationPeer } from "../lib/organizatio
 import { queueCustomerFocus } from "../lib/customerNavigation"
 import {
   createGroupThread,
+  deleteThreadMessage,
+  editThreadMessage,
   findOrCreateDirectThread,
   loadThreadMessages,
   loadThreadsWithMeta,
   markThreadRead,
   searchMessengerCustomers,
   sendThreadMessage,
+  setThreadNotificationMute,
+  isThreadPushMuted,
   type CustomerRef,
   type InternalMessage,
   type MessengerCustomer,
@@ -22,6 +26,8 @@ import messagingIcon from "../assets/messaging-app-icon.png"
 import { useVoiceDevice } from "../lib/useVoiceDevice"
 import { useConferenceRoom } from "../lib/useConferenceRoom"
 import ConferenceCallView, { ConferenceCallBody, mountReactInPopup, openConferencePopOut } from "./ConferenceCallView"
+import InCallControls, { formatCallStateLabel } from "./InCallControls"
+import MessageActionTarget from "./MessageActionTarget"
 import {
   AVAILABILITY_COLOR,
   AVAILABILITY_LABEL,
@@ -75,6 +81,8 @@ export default function MessengerWidget({ setPage }: Props) {
   const [messages, setMessages] = useState<InternalMessage[]>([])
   const [input, setInput] = useState("")
   const [sending, setSending] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingBody, setEditingBody] = useState("")
 
   // Customer reference picker
   const [pendingCustomer, setPendingCustomer] = useState<MessengerCustomer | null>(null)
@@ -122,9 +130,13 @@ export default function MessengerWidget({ setPage }: Props) {
           state: voice.callState as string,
           label: voice.peer?.label ?? "Call",
           muted: voice.muted,
+          speakerOn: voice.speakerOn,
+          speakerSupported: voice.speakerSupported,
           seconds: voice.seconds,
           error: voice.error,
           toggleMute: voice.toggleMute,
+          toggleSpeaker: voice.toggleSpeaker,
+          sendDigits: voice.sendDigits,
           hangup: voice.hangup,
         }
       : null
@@ -173,26 +185,38 @@ export default function MessengerWidget({ setPage }: Props) {
     }
   }, [me, refreshThreads])
 
-  // Realtime: new messages in my threads
+  // Realtime: new/updated messages in my threads
   useEffect(() => {
     if (!me || !supabase) return
     const sb = supabase
+    const mapRow = (raw: Record<string, unknown>): InternalMessage => ({
+      id: raw.id as string,
+      created_at: raw.created_at as string,
+      thread_id: raw.thread_id as string,
+      sender_id: raw.sender_id as string,
+      body: (raw.body as string) ?? "",
+      customer_ref: (raw.customer_ref as CustomerRef | null) ?? null,
+      edited_at: (raw.edited_at as string) ?? null,
+      deleted_at: (raw.deleted_at as string) ?? null,
+    })
     const channel = sb
       .channel(`internal-msgs-${me}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "internal_messages" }, (payload) => {
         const raw = payload.new as Record<string, unknown>
         const threadId = raw.thread_id as string
         if (threadId && threadId === selectedThreadIdRef.current) {
-          const m: InternalMessage = {
-            id: raw.id as string,
-            created_at: raw.created_at as string,
-            thread_id: threadId,
-            sender_id: raw.sender_id as string,
-            body: (raw.body as string) ?? "",
-            customer_ref: (raw.customer_ref as CustomerRef | null) ?? null,
-          }
+          const m = mapRow(raw)
           setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]))
           if (m.sender_id !== me) void markThreadRead(sb, me, threadId)
+        }
+        void refreshThreads()
+      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "internal_messages" }, (payload) => {
+        const raw = payload.new as Record<string, unknown>
+        const threadId = raw.thread_id as string
+        if (threadId && threadId === selectedThreadIdRef.current) {
+          const m = mapRow(raw)
+          setMessages((prev) => prev.map((x) => (x.id === m.id ? m : x)))
         }
         void refreshThreads()
       })
@@ -621,6 +645,43 @@ export default function MessengerWidget({ setPage }: Props) {
               <>
                 <button
                   type="button"
+                  onClick={() => {
+                    const muted = isThreadPushMuted(selectedThread)
+                    if (muted) {
+                      void setThreadNotificationMute(supabase, me, selectedThread.id, false, null).then((r) => {
+                        if (r.ok) {
+                          setThreads((prev) =>
+                            prev.map((t) => (t.id === selectedThread.id ? { ...t, notificationsMuted: false, mutedUntil: null } : t)),
+                          )
+                        }
+                      })
+                      return
+                    }
+                    const choice = window.prompt("Mute notifications: forever / 1h / 8h / 24h", "forever")
+                    if (choice == null) return
+                    const c = choice.trim().toLowerCase()
+                    let until: string | null = null
+                    if (c === "1h" || c === "1") until = new Date(Date.now() + 3600_000).toISOString()
+                    else if (c === "8h" || c === "8") until = new Date(Date.now() + 8 * 3600_000).toISOString()
+                    else if (c === "24h" || c === "24") until = new Date(Date.now() + 24 * 3600_000).toISOString()
+                    void setThreadNotificationMute(supabase, me, selectedThread.id, true, until).then((r) => {
+                      if (r.ok) {
+                        setThreads((prev) =>
+                          prev.map((t) =>
+                            t.id === selectedThread.id ? { ...t, notificationsMuted: true, mutedUntil: until } : t,
+                          ),
+                        )
+                      }
+                    })
+                  }}
+                  title={isThreadPushMuted(selectedThread) ? "Unmute notifications" : "Mute notifications"}
+                  aria-label="Chat notifications"
+                  style={{ border: "none", background: "rgba(255,255,255,0.18)", color: "#fff", borderRadius: 6, padding: "4px 8px", cursor: "pointer", fontSize: 14, fontWeight: 700 }}
+                >
+                  {isThreadPushMuted(selectedThread) ? "🔕" : "🔔"}
+                </button>
+                <button
+                  type="button"
                   onClick={() => callThread(false)}
                   title="Audio call"
                   aria-label="Audio call"
@@ -714,23 +775,70 @@ export default function MessengerWidget({ setPage }: Props) {
                   messages.map((m) => {
                     const mine = m.sender_id === me
                     const showSender = !mine && selectedThread?.is_group
+                    const deleted = Boolean(m.deleted_at)
                     return (
                       <div key={m.id} style={{ alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "80%" }}>
                         {showSender ? <div style={{ fontSize: 11, color: "#94a3b8", margin: "0 0 2px 4px", fontWeight: 700 }}>{peerName(m.sender_id)}</div> : null}
-                        <div style={{ padding: "8px 11px", borderRadius: 12, background: mine ? theme.primary : "#fff", color: mine ? "#fff" : theme.text, border: mine ? "none" : `1px solid ${theme.border}`, fontSize: 13, lineHeight: 1.4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                          {m.body}
-                          {m.customer_ref ? (
-                            <button
-                              type="button"
-                              onClick={() => openCustomerRef(m.customer_ref as CustomerRef)}
-                              style={{ display: "flex", alignItems: "center", gap: 6, marginTop: m.body ? 6 : 0, padding: "6px 8px", borderRadius: 8, border: mine ? "1px solid rgba(255,255,255,0.5)" : `1px solid ${theme.border}`, background: mine ? "rgba(255,255,255,0.14)" : "#f8fafc", color: mine ? "#fff" : theme.primary, cursor: "pointer", fontWeight: 700, fontSize: 12, width: "100%", textAlign: "left" }}
-                            >
-                              <span>👤</span>
-                              <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.customer_ref.name}</span>
-                              <span style={{ opacity: 0.7 }}>Open ›</span>
-                            </button>
-                          ) : null}
-                        </div>
+                        <MessageActionTarget
+                          mine={mine && !deleted}
+                          onEdit={() => {
+                            setEditingId(m.id)
+                            setEditingBody(m.body)
+                          }}
+                          onDelete={() => {
+                            if (!confirm("Delete this message?")) return
+                            void deleteThreadMessage(supabase, me, m.id).then((r) => {
+                              if (r.ok && r.message) setMessages((prev) => prev.map((x) => (x.id === r.message!.id ? r.message! : x)))
+                            })
+                          }}
+                        >
+                          <div style={{ padding: "8px 11px", borderRadius: 12, background: mine ? theme.primary : "#fff", color: mine ? "#fff" : theme.text, border: mine ? "none" : `1px solid ${theme.border}`, fontSize: 13, lineHeight: 1.4, whiteSpace: "pre-wrap", wordBreak: "break-word", fontStyle: deleted ? "italic" : undefined, opacity: deleted ? 0.85 : 1 }}>
+                            {deleted ? "Message deleted" : m.body}
+                            {!deleted && m.edited_at ? (
+                              <span style={{ display: "block", marginTop: 4, fontSize: 10, opacity: 0.75 }}>edited</span>
+                            ) : null}
+                            {!deleted && m.customer_ref ? (
+                              <button
+                                type="button"
+                                onClick={() => openCustomerRef(m.customer_ref as CustomerRef)}
+                                style={{ display: "flex", alignItems: "center", gap: 6, marginTop: m.body ? 6 : 0, padding: "6px 8px", borderRadius: 8, border: mine ? "1px solid rgba(255,255,255,0.5)" : `1px solid ${theme.border}`, background: mine ? "rgba(255,255,255,0.14)" : "#f8fafc", color: mine ? "#fff" : theme.primary, cursor: "pointer", fontWeight: 700, fontSize: 12, width: "100%", textAlign: "left" }}
+                              >
+                                <span>👤</span>
+                                <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.customer_ref.name}</span>
+                                <span style={{ opacity: 0.7 }}>Open ›</span>
+                              </button>
+                            ) : null}
+                          </div>
+                        </MessageActionTarget>
+                        {editingId === m.id ? (
+                          <div style={{ marginTop: 6, display: "grid", gap: 6 }}>
+                            <textarea
+                              value={editingBody}
+                              onChange={(e) => setEditingBody(e.target.value)}
+                              rows={2}
+                              style={{ width: "100%", borderRadius: 8, border: `1px solid ${theme.border}`, padding: 8, fontSize: 13, resize: "vertical" }}
+                            />
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void editThreadMessage(supabase, me, m.id, editingBody).then((r) => {
+                                    if (r.ok && r.message) {
+                                      setMessages((prev) => prev.map((x) => (x.id === r.message!.id ? r.message! : x)))
+                                      setEditingId(null)
+                                    } else if (r.error) alert(r.error)
+                                  })
+                                }}
+                                style={{ border: "none", background: theme.primary, color: "#fff", borderRadius: 8, padding: "6px 10px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+                              >
+                                Save
+                              </button>
+                              <button type="button" onClick={() => setEditingId(null)} style={{ border: `1px solid ${theme.border}`, background: "#fff", borderRadius: 8, padding: "6px 10px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
                     )
                   })
@@ -872,40 +980,19 @@ export default function MessengerWidget({ setPage }: Props) {
                   onReturnFromPopOut={handleReturnFromPopOut}
                 />
               ) : callActive && active ? (
-                <div style={{ display: "grid", gap: 12, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 16, background: "#f8fafc" }}>
-                  <div style={{ textAlign: "center" }}>
-                    <div style={{ fontSize: 16, fontWeight: 800, color: "#0f172a" }}>{active.label}</div>
-                    <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700, color: "#475569" }}>
-                      {active.state === "calling"
-                        ? "Calling…"
-                        : active.state === "connecting"
-                          ? "Connecting…"
-                          : active.state === "ringing"
-                            ? "Ringing…"
-                            : active.state === "incoming"
-                              ? "Incoming call…"
-                              : `In call · ${Math.floor(active.seconds / 60)}:${String(active.seconds % 60).padStart(2, "0")}`}
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button
-                      type="button"
-                      onClick={active.toggleMute}
-                      disabled={active.state !== "in_call"}
-                      style={{ flex: 1, border: `1px solid ${theme.border}`, background: active.muted ? "#fee2e2" : "#fff", color: "#0f172a", borderRadius: 8, padding: "10px", fontWeight: 700, cursor: active.state === "in_call" ? "pointer" : "default", opacity: active.state === "in_call" ? 1 : 0.6 }}
-                    >
-                      {active.muted ? "🔇 Unmute" : "🎙 Mute"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={active.hangup}
-                      style={{ flex: 1, border: "none", background: "#dc2626", color: "#fff", borderRadius: 8, padding: "10px", fontWeight: 800, cursor: "pointer" }}
-                    >
-                      ✕ Hang up
-                    </button>
-                  </div>
-                  {active.error ? <p style={{ margin: 0, fontSize: 12, color: "#dc2626", textAlign: "center" }}>{active.error}</p> : null}
-                </div>
+                <InCallControls
+                  label={active.label}
+                  stateLabel={formatCallStateLabel(active.state, active.seconds)}
+                  muted={active.muted}
+                  speakerOn={active.speakerOn}
+                  speakerSupported={active.speakerSupported}
+                  canInteract={active.state === "in_call"}
+                  error={active.error}
+                  onToggleMute={active.toggleMute}
+                  onToggleSpeaker={active.toggleSpeaker}
+                  onHangup={active.hangup}
+                  onSendDigit={active.sendDigits}
+                />
               ) : (
                 <>
                   <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>

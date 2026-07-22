@@ -1,5 +1,50 @@
 apply plugin: 'com.android.application'
 
+// Package for Play Console "Tradesman Messaging" must stay com.tradesmanus.messaging.
+def messagingPackageJson = file("${rootDir}/../package.json")
+def appVersionName = "1.0"
+try {
+    def parsed = new groovy.json.JsonSlurper().parse(messagingPackageJson)
+    if (parsed?.version != null) {
+        appVersionName = parsed.version.toString()
+    }
+} catch (Throwable ignored) {
+    logger.warn("Could not read messaging-app/package.json for versionName; using ${appVersionName}")
+}
+
+// Reuse the main Tradesman upload keystore when present (same org, different applicationId).
+def keystorePropertiesFile = rootProject.file("../../android/keystore.properties")
+if (!keystorePropertiesFile.exists()) {
+    keystorePropertiesFile = rootProject.file("keystore.properties")
+}
+def keystoreProperties = new Properties()
+def messagingReleaseStoreFile = null
+def messagingReleaseStorePassword = ""
+def messagingReleaseKeyAlias = ""
+def messagingReleaseKeyPassword = ""
+if (keystorePropertiesFile.exists()) {
+    def propsRaw = keystorePropertiesFile.getText("UTF-8")
+    if (propsRaw.length() > 0 && propsRaw.charAt(0) == '\uFEFF') {
+        propsRaw = propsRaw.substring(1)
+    }
+    keystoreProperties.load(new java.io.StringReader(propsRaw))
+    def storePath = keystoreProperties.getProperty("storeFile", "").trim()
+    if (storePath) {
+        def candidate = new File(storePath)
+        if (!candidate.isAbsolute()) {
+            candidate = new File(keystorePropertiesFile.parentFile, storePath)
+        }
+        if (candidate.exists()) {
+            messagingReleaseStoreFile = candidate
+            messagingReleaseStorePassword = keystoreProperties.getProperty("storePassword", "").trim()
+            messagingReleaseKeyAlias = keystoreProperties.getProperty("keyAlias", "").trim()
+            messagingReleaseKeyPassword = keystoreProperties.getProperty("keyPassword", "").trim()
+        } else {
+            logger.warn("Messaging release keystore not found at ${candidate.absolutePath}")
+        }
+    }
+}
+
 android {
     namespace = "com.tradesmanus.messaging"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -8,16 +53,27 @@ android {
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
-        versionName "1.0"
+        versionName appVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
-             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
-             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    signingConfigs {
+        release {
+            if (messagingReleaseStoreFile != null) {
+                storeFile messagingReleaseStoreFile
+                storePassword messagingReleaseStorePassword
+                keyAlias messagingReleaseKeyAlias
+                keyPassword messagingReleaseKeyPassword
+            }
         }
     }
     buildTypes {
         release {
+            if (messagingReleaseStoreFile != null) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
