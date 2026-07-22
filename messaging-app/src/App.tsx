@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import type { Session } from "@supabase/supabase-js"
 import { supabase } from "./lib/supabaseClient"
 import { initSharedAuth } from "./lib/sharedAuth"
+import { initMessagingPushTapListener } from "./lib/pushTapHandler"
 import {
   heartbeatAppSession,
   registerAppSession,
@@ -17,8 +18,10 @@ export default function App() {
 
   useEffect(() => {
     let cleanup: (() => void) | undefined
+    let pushCleanup: (() => void) | undefined
     void (async () => {
       cleanup = await initSharedAuth()
+      pushCleanup = await initMessagingPushTapListener()
       const { data } = await supabase.auth.getSession()
       setSession(data.session)
       setReady(true)
@@ -36,6 +39,7 @@ export default function App() {
     return () => {
       sub.subscription.unsubscribe()
       cleanup?.()
+      pushCleanup?.()
     }
   }, [])
 

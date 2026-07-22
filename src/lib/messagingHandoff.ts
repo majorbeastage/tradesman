@@ -68,13 +68,16 @@ export function openMainAppPlayStore(): void {
 
 /**
  * Open Messaging with session when possible; otherwise store listing (via Intent fallback only).
- * Optional `phone` / `label` open the Phone tab with dial prefill:
- *   tradesmanmsg://auth#access_token=…&refresh_token=…&phone=…&label=…
+ * Optional `phone` / `label` open the Phone tab with dial prefill.
+ * Optional `threadId` opens that Instant Messaging thread.
+ *   tradesmanmsg://auth#access_token=…&refresh_token=…&phone=…&thread=…
  */
 export async function openMessagingAppWithSession(opts?: {
   playStoreFallbackMs?: number
   phone?: string | null
   label?: string | null
+  threadId?: string | null
+  messageId?: string | null
 }): Promise<{ ok: boolean; error?: string }> {
   if (!supabase) return { ok: false, error: "Not signed in." }
   const { data } = await supabase.auth.getSession()
@@ -88,6 +91,12 @@ export async function openMessagingAppWithSession(opts?: {
     hash += `&phone=${encodeURIComponent(phone)}`
     const label = opts?.label?.trim()
     if (label) hash += `&label=${encodeURIComponent(label)}`
+  }
+  const threadId = opts?.threadId?.trim()
+  if (threadId) {
+    hash += `&thread=${encodeURIComponent(threadId)}`
+    const messageId = opts?.messageId?.trim()
+    if (messageId) hash += `&messageId=${encodeURIComponent(messageId)}`
   }
   const playFallback = encodeURIComponent(MESSAGING_PLAY_STORE_URL)
   const deepLink = `tradesmanmsg://auth#${hash}`

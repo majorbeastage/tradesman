@@ -43,6 +43,7 @@ import {
 import MessageActionTarget from "../components/MessageActionTarget"
 import { ensureMessagingPush, loadMessagingNotifPrefs, saveMessagingNotifPrefs } from "../lib/messagingNotifications"
 import { PENDING_DIAL_EVENT, takePendingDial, type PendingDial } from "../lib/pendingDial"
+import { PENDING_THREAD_EVENT, takePendingThread, type PendingThread } from "../lib/pendingThread"
 
 type Peer = { id: string; name: string }
 type Tab = "chats" | "new" | "phone" | "calendar" | "settings"
@@ -224,6 +225,24 @@ export default function MessengerScreen({ me }: { me: string }) {
     },
     [me],
   )
+
+  // Open a thread when a push notification (or Main → Messaging handoff) targets it.
+  useEffect(() => {
+    function applyThread(d: PendingThread) {
+      void openThread(d.threadId)
+    }
+    const existing = takePendingThread()
+    if (existing) applyThread(existing)
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent<PendingThread>).detail
+      if (d?.threadId?.trim()) {
+        takePendingThread()
+        applyThread({ threadId: d.threadId.trim(), messageId: d.messageId })
+      }
+    }
+    window.addEventListener(PENDING_THREAD_EVENT, handler)
+    return () => window.removeEventListener(PENDING_THREAD_EVENT, handler)
+  }, [openThread])
 
   async function startSelectedChat() {
     if (newSel.size === 0) return

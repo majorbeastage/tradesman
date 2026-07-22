@@ -49,33 +49,72 @@ async function getGoogleAccessToken(sa: FcmServiceAccount): Promise<string> {
   return json.access_token
 }
 
-export async function sendFcmNotification(params: {
+export type SendFcmNotificationParams = {
   serviceAccountJson: string
   fcmToken: string
   title: string
   body: string
-}): Promise<{ ok: boolean; status: number; detail: string }> {
+  /** All values must be strings (FCM requirement). */
+  data?: Record<string, string>
+  androidChannelId?: string
+  /** Same tag replaces the previous tray item (collapse per thread/sender). */
+  androidTag?: string
+  collapseKey?: string
+  /** iOS notification grouping. */
+  apnsThreadId?: string
+}
+
+export async function sendFcmNotification(
+  params: SendFcmNotificationParams,
+): Promise<{ ok: boolean; status: number; detail: string }> {
   const sa = parseServiceAccountJson(params.serviceAccountJson)
   const accessToken = await getGoogleAccessToken(sa)
   const url = `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(sa.project_id)}/messages:send`
-  const payload = {
-    message: {
-      token: params.fcmToken,
-      notification: {
-        title: params.title,
-        body: params.body,
-      },
-      android: {
-        priority: "HIGH",
-        notification: {
-          channel_id: "tradesman_alerts",
-          // AndroidNotification uses `notification_priority`, not `priority` (invalid → FCM 400).
-          notification_priority: "PRIORITY_HIGH",
-          default_sound: true,
-        },
-      },
+  const channelId = params.androidChannelId?.trim() || "tradesman_alerts"
+  const androidNotification: Record<string, unknown> = {
+    channel_id: channelId,
+    // AndroidNotification uses `notification_priority`, not `priority` (invalid → FCM 400).
+    notification_priority: "PRIORITY_HIGH",
+    default_sound: true,
+  }
+  if (params.androidTag?.trim()) {
+    androidNotification.tag = params.androidTag.trim()
+  }
+
+  const message: Record<string, unknown> = {
+    token: params.fcmToken,
+    notification: {
+      title: params.title,
+      body: params.body,
+    },
+    android: {
+      priority: "HIGH",
+      ...(params.collapseKey?.trim() ? { collapse_key: params.collapseKey.trim() } : {}),
+      notification: androidNotification,
     },
   }
+
+  if (params.data && Object.keys(params.data).length > 0) {
+    const data: Record<string, string> = {}
+    for (const [k, v] of Object.entries(params.data)) {
+      if (v != null) data[k] = String(v)
+    }
+    message.data = data
+  }
+
+  const threadId = params.apnsThreadId?.trim() || params.collapseKey?.trim()
+  if (threadId) {
+    message.apns = {
+      payload: {
+        aps: {
+          "thread-id": threadId,
+          sound: "default",
+        },
+      },
+    }
+  }
+
+  const payload = { message }
   const res = await fetch(url, {
     method: "POST",
     headers: {

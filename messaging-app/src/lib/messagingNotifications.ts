@@ -1,6 +1,7 @@
 import { Capacitor } from "@capacitor/core"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { supabase } from "./supabaseClient"
+import { initMessagingPushTapListener } from "./pushTapHandler"
 
 export type MessagingNotifPrefs = {
   enabled: boolean
@@ -8,6 +9,10 @@ export type MessagingNotifPrefs = {
 }
 
 const DEFAULT_PREFS: MessagingNotifPrefs = { enabled: true, showPreview: true }
+
+/** Matches Android applicationId for Tradesman Messaging. */
+export const MESSAGING_APP_PUSH_ID = "com.tradesmanus.messaging"
+export const MESSAGING_PUSH_CHANNEL_ID = "tradesman_messaging"
 
 export async function loadMessagingNotifPrefs(userId: string): Promise<MessagingNotifPrefs> {
   const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
@@ -51,6 +56,19 @@ export async function ensureMessagingPush(userId: string, client: SupabaseClient
     const perm = await PushNotifications.requestPermissions()
     if (perm.receive !== "granted") return
 
+    try {
+      await PushNotifications.createChannel({
+        id: MESSAGING_PUSH_CHANNEL_ID,
+        name: "Tradesman Messaging",
+        description: "Instant messages from your team",
+        importance: 5,
+        visibility: 1,
+        sound: "default",
+      })
+    } catch (e) {
+      console.warn("[messaging-push] createChannel failed", e)
+    }
+
     await PushNotifications.addListener("registration", async (t) => {
       const platform = Capacitor.getPlatform() === "ios" ? "ios" : "android"
       await client.from("user_push_devices").upsert(
@@ -58,12 +76,14 @@ export async function ensureMessagingPush(userId: string, client: SupabaseClient
           user_id: userId,
           token: t.value,
           platform,
+          app_id: MESSAGING_APP_PUSH_ID,
           updated_at: new Date().toISOString(),
         },
         { onConflict: "user_id,token" },
       )
     })
 
+    await initMessagingPushTapListener()
     await PushNotifications.register()
   } catch (e) {
     console.warn("[messaging-push]", e)

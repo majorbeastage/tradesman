@@ -1,6 +1,7 @@
 // Push teammates when a new internal_messages row is inserted.
 // Deploy: supabase functions deploy notify-internal-message
 // Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, FCM_SERVICE_ACCOUNT_JSON
+// Prefer Tradesman Messaging tokens; fall back to main-app tokens. Collapse per thread.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { sendFcmNotification } from "../_shared/fcm-v1.ts"
@@ -9,6 +10,10 @@ const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 }
+
+const MESSAGING_APP_ID = "com.tradesmanus.messaging"
+const MAIN_APP_ID = "com.tradesmanus.com"
+const MESSAGING_CHANNEL = "tradesman_messaging"
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders })
@@ -127,10 +132,8 @@ Deno.serve(async (req) => {
     })
   }
 
-  const senderName =
-    (profiles ?? []).find((p) => p.id === msg.sender_id)?.display_name ||
-    (await admin.from("profiles").select("display_name").eq("id", msg.sender_id).maybeSingle()).data?.display_name ||
-    "Teammate"
+  const { data: senderProfile } = await admin.from("profiles").select("display_name").eq("id", msg.sender_id).maybeSingle()
+  const senderName = senderProfile?.display_name?.trim() || "Teammate"
 
   const title = thread?.is_group && thread.title ? String(thread.title) : String(senderName)
   const previewPrefs = new Map<string, boolean>()
@@ -140,18 +143,44 @@ Deno.serve(async (req) => {
     previewPrefs.set(p.id as string, prefs.showPreview !== false)
   }
 
+  const collapseKey = `im_${threadId}`
+  const dataPayload = {
+    type: "internal_message",
+    threadId,
+    messageId,
+    senderId: String(msg.sender_id ?? ""),
+  }
+
   let sent = 0
   for (const uid of enabledRecipients) {
-    const { data: devices } = await admin.from("user_push_devices").select("token, platform").eq("user_id", uid)
+    let devices: { token: string; platform: string; app_id?: string | null }[] | null = null
+    const withApp = await admin.from("user_push_devices").select("token, platform, app_id").eq("user_id", uid)
+    if (withApp.error) {
+      const legacy = await admin.from("user_push_devices").select("token, platform").eq("user_id", uid)
+      devices = (legacy.data ?? []) as { token: string; platform: string; app_id?: string | null }[]
+    } else {
+      devices = withApp.data
+    }
     const bodyText = previewPrefs.get(uid) === false ? "New message" : String(msg.body || "New message").slice(0, 160)
-    for (const d of devices ?? []) {
-      if (d.platform === "web") continue
+
+    const native = (devices ?? []).filter((d) => d.platform !== "web" && d.token)
+    const messagingDevices = native.filter((d) => (d.app_id || MAIN_APP_ID) === MESSAGING_APP_ID)
+    const mainDevices = native.filter((d) => (d.app_id || MAIN_APP_ID) !== MESSAGING_APP_ID)
+    // Prefer Messaging tokens so the tap opens Messenger; only fall back to main if none.
+    const targets = messagingDevices.length > 0 ? messagingDevices : mainDevices
+
+    for (const d of targets) {
       try {
         const r = await sendFcmNotification({
           serviceAccountJson: fcmJson,
           fcmToken: d.token,
           title,
           body: bodyText,
+          data: dataPayload,
+          androidChannelId: MESSAGING_CHANNEL,
+          androidTag: collapseKey,
+          collapseKey,
+          apnsThreadId: collapseKey,
         })
         if (r.ok) sent += 1
       } catch {

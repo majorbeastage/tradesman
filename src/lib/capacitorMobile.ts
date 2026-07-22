@@ -12,6 +12,8 @@ let pushRegisterChain: Promise<void> = Promise.resolve()
 const MIN_MS_BETWEEN_PUSH_REGISTER = 2200
 let lastPushRegisterAt = 0
 const ANDROID_PUSH_CHANNEL_ID = "tradesman_alerts"
+/** Matches Android applicationId / iOS bundle for main Tradesman. */
+export const MAIN_APP_PUSH_ID = "com.tradesmanus.com"
 
 /** Remove FCM registration listeners (e.g. on sign-out or before re-attaching for another user). */
 export async function detachPushTokenUpsertListeners(): Promise<void> {
@@ -48,6 +50,7 @@ export async function attachPushTokenUpsertListeners(
           user_id: userId,
           token: t.value,
           platform,
+          app_id: MAIN_APP_PUSH_ID,
           updated_at: new Date().toISOString(),
         },
         { onConflict: "user_id,token" },
