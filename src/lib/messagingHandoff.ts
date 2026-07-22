@@ -78,6 +78,8 @@ export async function openMessagingAppWithSession(opts?: {
   label?: string | null
   threadId?: string | null
   messageId?: string | null
+  /** Open Messenger focused on missed calls. */
+  openMissed?: boolean
 }): Promise<{ ok: boolean; error?: string }> {
   if (!supabase) return { ok: false, error: "Not signed in." }
   const { data } = await supabase.auth.getSession()
@@ -97,6 +99,9 @@ export async function openMessagingAppWithSession(opts?: {
     hash += `&thread=${encodeURIComponent(threadId)}`
     const messageId = opts?.messageId?.trim()
     if (messageId) hash += `&messageId=${encodeURIComponent(messageId)}`
+  }
+  if (opts?.openMissed) {
+    hash += `&missed=1`
   }
   const playFallback = encodeURIComponent(MESSAGING_PLAY_STORE_URL)
   const deepLink = `tradesmanmsg://auth#${hash}`

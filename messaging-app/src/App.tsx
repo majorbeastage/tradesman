@@ -10,6 +10,7 @@ import {
 } from "./lib/appSessions"
 import LoginScreen from "./screens/LoginScreen"
 import MessengerScreen from "./screens/MessengerScreen"
+import { ensureMessagingPush } from "./lib/messagingNotifications"
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null)
@@ -27,6 +28,7 @@ export default function App() {
       setReady(true)
       if (data.session?.user) {
         void registerAppSession(supabase, "messaging")
+        void ensureMessagingPush(data.session.user.id)
       }
     })()
     const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
@@ -34,6 +36,7 @@ export default function App() {
       if (event === "SIGNED_IN" && s?.user) {
         setKicked(false)
         void registerAppSession(supabase, "messaging")
+        void ensureMessagingPush(s.user.id)
       }
     })
     return () => {

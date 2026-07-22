@@ -1,10 +1,26 @@
 /**
- * When a push notification is tapped in Tradesman Messaging, open that thread.
+ * When a push notification is tapped in Tradesman Messaging, open that thread
+ * (or the missed-calls list).
  */
 import { Capacitor } from "@capacitor/core"
-import { setPendingThread, threadFromPushData } from "./pendingThread"
+import {
+  isMissedCallPush,
+  setPendingMissedCalls,
+  setPendingThread,
+  threadFromPushData,
+} from "./pendingThread"
 
 let attached = false
+
+function readData(action: {
+  notification?: { data?: Record<string, unknown>; extra?: Record<string, unknown> }
+}): Record<string, unknown> {
+  const n = action?.notification
+  return {
+    ...(n?.extra && typeof n.extra === "object" ? n.extra : {}),
+    ...(n?.data && typeof n.data === "object" ? n.data : {}),
+  }
+}
 
 export async function initMessagingPushTapListener(): Promise<() => void> {
   if (!Capacitor.isNativePlatform()) return () => {}
@@ -13,7 +29,11 @@ export async function initMessagingPushTapListener(): Promise<() => void> {
     const { PushNotifications } = await import("@capacitor/push-notifications")
     attached = true
     const handle = await PushNotifications.addListener("pushNotificationActionPerformed", (action) => {
-      const data = (action?.notification?.data ?? {}) as Record<string, unknown>
+      const data = readData(action)
+      if (isMissedCallPush(data)) {
+        setPendingMissedCalls(true)
+        return
+      }
       const pending = threadFromPushData(data)
       if (pending) setPendingThread(pending)
     })

@@ -8,7 +8,7 @@ import {
   syncPushTokenIfPermissionGranted,
 } from "../lib/capacitorMobile"
 import { initMessagingHandoffListener } from "../lib/messagingHandoff"
-import { initMainAppPushTapListener } from "../lib/mainAppPushTap"
+import { flushPendingMessagingHandoff, initMainAppPushTapListener } from "../lib/mainAppPushTap"
 
 /**
  * Native only: registers push token rows and (when GPS opt-in) periodically upserts user_last_locations.
@@ -49,6 +49,11 @@ export default function NativeMobilePipeline() {
     })
     return () => cleanup?.()
   }, [])
+
+  useEffect(() => {
+    if (!user?.id) return
+    flushPendingMessagingHandoff()
+  }, [user?.id])
 
   useEffect(() => {
     if (!isNativeApp() || !user?.id || !supabase) return

@@ -10,6 +10,12 @@ import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { LocaleProvider } from './i18n/LocaleContext'
 import NativeMobilePipeline from './components/NativeMobilePipeline'
 import MainAppSessionGuard from './components/MainAppSessionGuard'
+import { Capacitor } from '@capacitor/core'
+
+// Attach IM push-tap → Messaging handoff before React mounts (cold-start taps).
+if (Capacitor.isNativePlatform()) {
+  void import('./lib/mainAppPushTap').then((m) => void m.initMainAppPushTapListener())
+}
 
 function SessionGuardHost() {
   const { user } = useAuth()

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { RealtimeChannel } from "@supabase/supabase-js"
 import { supabase } from "./supabaseClient"
+import { recordMissedCall } from "./missedCalls"
 
 /**
  * Multi-party internal team calls (audio + video) over WebRTC — no Twilio.
@@ -48,6 +49,9 @@ type SignalPayload = {
   candidate?: RTCIceCandidateInit
 }
 type InvitePayload = { roomId: string; fromId: string; fromName: string; members: string[]; video: boolean }
+type InboxControlPayload = { roomId: string; fromId?: string; video?: boolean }
+
+const RING_TIMEOUT_MS = 40_000
 
 export function useConferenceRoom(me: string | null | undefined, resolveName: (id: string) => string) {
   const [state, setState] = useState<RoomState>("idle")
@@ -70,6 +74,11 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map())
   const pendingIceRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map())
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const ringTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const inviteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingInviteesRef = useRef<string[]>([])
+  const callVideoRef = useRef(false)
+  const answeredRef = useRef(false)
   const startedTimerRef = useRef(false)
   const resolveNameRef = useRef(resolveName)
   resolveNameRef.current = resolveName
@@ -112,6 +121,16 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
 
   const cleanup = useCallback(() => {
     stopTimer()
+    if (ringTimerRef.current) {
+      clearTimeout(ringTimerRef.current)
+      ringTimerRef.current = null
+    }
+    if (inviteTimeoutRef.current) {
+      clearTimeout(inviteTimeoutRef.current)
+      inviteTimeoutRef.current = null
+    }
+    pendingInviteesRef.current = []
+    answeredRef.current = false
     for (const pc of pcsRef.current.values()) {
       try {
         pc.close()
@@ -157,10 +176,55 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
   const maybeStartTimer = useCallback(() => {
     if (startedTimerRef.current) return
     startedTimerRef.current = true
+    answeredRef.current = true
+    if (ringTimerRef.current) {
+      clearTimeout(ringTimerRef.current)
+      ringTimerRef.current = null
+    }
     setState("in_call")
     setSeconds(0)
     timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000)
   }, [])
+
+  const broadcastInbox = useCallback(async (userId: string, event: string, payload: unknown) => {
+    if (!supabase) return
+    const inv = supabase.channel(`rtc-inbox-${userId}`)
+    await new Promise<void>((resolve) => {
+      inv.subscribe((status) => {
+        if (status === "SUBSCRIBED") resolve()
+      })
+      setTimeout(resolve, 3000)
+    })
+    await inv.send({ type: "broadcast", event, payload })
+    setTimeout(() => {
+      try {
+        void supabase?.removeChannel(inv)
+      } catch {
+        /* ignore */
+      }
+    }, 800)
+  }, [])
+
+  const recordUnansweredMissed = useCallback(
+    async (calleeIds: string[], roomId: string | null, video: boolean) => {
+      const myId = meRef.current
+      if (!supabase || !myId) return
+      const myName = resolveNameRef.current(myId) || "Teammate"
+      for (const calleeId of calleeIds) {
+        if (!calleeId || calleeId === myId) continue
+        await recordMissedCall(supabase, {
+          calleeId,
+          callerId: myId,
+          callerName: myName,
+          video,
+          roomId,
+          status: "missed",
+          notify: true,
+        })
+      }
+    },
+    [],
+  )
 
   const sendRoom = useCallback((event: string, payload: unknown) => {
     const ch = roomChanRef.current
@@ -428,6 +492,9 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
       if (roomIdRef.current) return
       setError(null)
       setIsVideo(opts.video)
+      callVideoRef.current = opts.video
+      answeredRef.current = false
+      pendingInviteesRef.current = others
       setState("ringing")
       const roomId = `${me}-${Date.now()}`
       try {
@@ -442,29 +509,28 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
           video: opts.video,
         }
         for (const id of others) {
-          const inv = supabase.channel(`rtc-inbox-${id}`)
-          await new Promise<void>((resolve) => {
-            inv.subscribe((status) => {
-              if (status === "SUBSCRIBED") resolve()
-            })
-            setTimeout(resolve, 3000)
-          })
-          await inv.send({ type: "broadcast", event: "invite", payload: invite })
-          setTimeout(() => {
-            try {
-              void supabase?.removeChannel(inv)
-            } catch {
-              /* ignore */
-            }
-          }, 800)
+          await broadcastInbox(id, "invite", invite)
         }
+        if (ringTimerRef.current) clearTimeout(ringTimerRef.current)
+        ringTimerRef.current = setTimeout(() => {
+          ringTimerRef.current = null
+          if (answeredRef.current || roomIdRef.current !== roomId) return
+          const unanswered = [...pendingInviteesRef.current]
+          void (async () => {
+            await recordUnansweredMissed(unanswered, roomId, opts.video)
+            for (const id of unanswered) {
+              await broadcastInbox(id, "cancel", { roomId, fromId: me, video: opts.video } satisfies InboxControlPayload)
+            }
+            cleanup()
+          })()
+        }, RING_TIMEOUT_MS)
       } catch (e) {
         setError(e instanceof Error ? e.message : "Could not start the call (camera/mic blocked?).")
         setState("error")
         cleanup()
       }
     },
-    [acquireMedia, cleanup, joinRoom, me, upsertParticipant],
+    [acquireMedia, broadcastInbox, cleanup, joinRoom, me, recordUnansweredMissed, upsertParticipant],
   )
 
   // Join a stable, pre-agreed room (e.g. a scheduled calendar video call).
@@ -493,6 +559,10 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
   const accept = useCallback(async () => {
     const inv = incoming
     if (!inv) return
+    if (inviteTimeoutRef.current) {
+      clearTimeout(inviteTimeoutRef.current)
+      inviteTimeoutRef.current = null
+    }
     setError(null)
     setIsVideo(inv.video)
     try {
@@ -510,11 +580,37 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
   }, [acquireMedia, cleanup, incoming, joinRoom, maybeStartTimer, me, upsertParticipant])
 
   const decline = useCallback(() => {
+    const inv = incoming
+    if (inviteTimeoutRef.current) {
+      clearTimeout(inviteTimeoutRef.current)
+      inviteTimeoutRef.current = null
+    }
+    if (inv?.fromId) {
+      void broadcastInbox(inv.fromId, "declined", {
+        roomId: inv.roomId,
+        fromId: meRef.current ?? undefined,
+        video: inv.video,
+      } satisfies InboxControlPayload)
+    }
     setIncoming(null)
     setState("idle")
-  }, [])
+  }, [broadcastInbox, incoming])
 
-  const hangup = useCallback(() => cleanup(), [cleanup])
+  const hangup = useCallback(() => {
+    const roomId = roomIdRef.current
+    const invitees = [...pendingInviteesRef.current]
+    const wasRinging = !answeredRef.current && Boolean(roomId)
+    const video = callVideoRef.current
+    const myId = meRef.current
+    if (wasRinging && roomId && myId) {
+      void (async () => {
+        for (const id of invitees) {
+          await broadcastInbox(id, "cancel", { roomId, fromId: myId, video } satisfies InboxControlPayload)
+        }
+      })()
+    }
+    cleanup()
+  }, [broadcastInbox, cleanup])
 
   const toggleMute = useCallback(() => {
     const stream = localStreamRef.current
@@ -538,7 +634,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
     })
   }, [])
 
-  // Personal inbox: listen for incoming invites.
+  // Personal inbox: listen for incoming invites / cancel / declined.
   useEffect(() => {
     if (!supabase || !me) return
     const inbox = supabase.channel(`rtc-inbox-${me}`, { config: { broadcast: { self: false } } })
@@ -554,6 +650,47 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
         video: Boolean(p.video),
       })
       setState("incoming")
+      if (inviteTimeoutRef.current) clearTimeout(inviteTimeoutRef.current)
+      inviteTimeoutRef.current = setTimeout(() => {
+        inviteTimeoutRef.current = null
+        setIncoming((cur) => {
+          if (!cur || cur.roomId !== p.roomId) return cur
+          void recordMissedCall(supabase, {
+            calleeId: me,
+            callerId: p.fromId,
+            callerName: p.fromName || resolveNameRef.current(p.fromId) || "Teammate",
+            video: Boolean(p.video),
+            roomId: p.roomId,
+            status: "missed",
+            notify: false,
+          })
+          setState("idle")
+          return null
+        })
+      }, RING_TIMEOUT_MS + 5_000)
+    })
+    inbox.on("broadcast", { event: "cancel" }, ({ payload }) => {
+      const p = payload as InboxControlPayload
+      if (!p?.roomId) return
+      if (inviteTimeoutRef.current) {
+        clearTimeout(inviteTimeoutRef.current)
+        inviteTimeoutRef.current = null
+      }
+      setIncoming((cur) => {
+        if (!cur || cur.roomId !== p.roomId) return cur
+        setState("idle")
+        return null
+      })
+    })
+    inbox.on("broadcast", { event: "declined" }, ({ payload }) => {
+      const p = payload as InboxControlPayload
+      if (!p?.roomId || !p.fromId) return
+      if (roomIdRef.current !== p.roomId) return
+      pendingInviteesRef.current = pendingInviteesRef.current.filter((id) => id !== p.fromId)
+      removeParticipant(p.fromId)
+      if (!answeredRef.current && pendingInviteesRef.current.length === 0) {
+        cleanup()
+      }
     })
     inbox.subscribe()
     inboxRef.current = inbox

@@ -3,8 +3,45 @@
 export type PendingThread = { threadId: string; messageId?: string }
 
 export const PENDING_THREAD_EVENT = "tradesman-pending-thread"
+export const PENDING_MISSED_EVENT = "tradesman-pending-missed"
 
 let pending: PendingThread | null = null
+let pendingMissed = false
+
+export function setPendingMissedCalls(on = true): void {
+  pendingMissed = on
+  try {
+    if (typeof sessionStorage === "undefined") return
+    if (!on) sessionStorage.removeItem("tradesman_pending_missed")
+    else sessionStorage.setItem("tradesman_pending_missed", "1")
+  } catch {
+    /* ignore */
+  }
+  if (on && typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(PENDING_MISSED_EVENT))
+  }
+}
+
+export function takePendingMissedCalls(): boolean {
+  if (pendingMissed) {
+    pendingMissed = false
+    try {
+      sessionStorage.removeItem("tradesman_pending_missed")
+    } catch {
+      /* ignore */
+    }
+    return true
+  }
+  try {
+    if (sessionStorage.getItem("tradesman_pending_missed") === "1") {
+      sessionStorage.removeItem("tradesman_pending_missed")
+      return true
+    }
+  } catch {
+    /* ignore */
+  }
+  return false
+}
 
 export function setPendingThread(thread: PendingThread | null): void {
   pending = thread
@@ -55,7 +92,6 @@ export function parseThreadFromUrl(url: string): PendingThread | null {
     const qIndex = url.indexOf("?")
     const query = qIndex >= 0 ? url.slice(qIndex + 1, hashIndex >= 0 ? hashIndex : undefined) : ""
     const params = new URLSearchParams(frag || query)
-    // Also support tradesmanmsg://thread/<uuid>
     const pathMatch = url.match(/tradesmanmsg:\/\/thread\/([0-9a-f-]{36})/i)
     const threadId = params.get("thread")?.trim() || pathMatch?.[1] || ""
     if (!threadId) return null
@@ -66,13 +102,31 @@ export function parseThreadFromUrl(url: string): PendingThread | null {
   }
 }
 
+export function parseMissedFromUrl(url: string): boolean {
+  try {
+    const hashIndex = url.indexOf("#")
+    const frag = hashIndex >= 0 ? url.slice(hashIndex + 1) : ""
+    const params = new URLSearchParams(frag)
+    return params.get("missed") === "1"
+  } catch {
+    return false
+  }
+}
+
 /** Extract threadId from Capacitor push notification data. */
 export function threadFromPushData(data: Record<string, unknown> | undefined): PendingThread | null {
   if (!data) return null
   const type = String(data.type ?? data.Type ?? "")
+  if (type === "internal_missed_call") return null
   const threadId = String(data.threadId ?? data.thread_id ?? data.thread ?? "").trim()
   if (!threadId) return null
   if (type && type !== "internal_message") return null
   const messageId = String(data.messageId ?? data.message_id ?? "").trim() || undefined
   return { threadId, messageId }
+}
+
+export function isMissedCallPush(data: Record<string, unknown> | undefined): boolean {
+  if (!data) return false
+  const type = String(data.type ?? data.Type ?? "")
+  return type === "internal_missed_call" || Boolean(data.missedCallId)
 }

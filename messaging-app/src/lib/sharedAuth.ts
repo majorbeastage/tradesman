@@ -1,6 +1,6 @@
 import { supabase } from "./supabaseClient"
 import { parseDialFromUrl, setPendingDial } from "./pendingDial"
-import { parseThreadFromUrl, setPendingThread } from "./pendingThread"
+import { parseMissedFromUrl, parseThreadFromUrl, setPendingMissedCalls, setPendingThread } from "./pendingThread"
 
 /**
  * Shared auto-login: accept a session handed off from the full Tradesman mobile app.
@@ -31,6 +31,7 @@ function captureHandoffExtras(url: string): void {
   if (dial) setPendingDial(dial)
   const thread = parseThreadFromUrl(url)
   if (thread) setPendingThread(thread)
+  if (parseMissedFromUrl(url)) setPendingMissedCalls(true)
 }
 
 export async function applySessionFromUrl(url: string): Promise<boolean> {
@@ -52,7 +53,8 @@ export async function initSharedAuth(): Promise<() => void> {
     typeof window !== "undefined" &&
     (window.location.hash.includes("access_token") ||
       window.location.hash.includes("phone=") ||
-      window.location.hash.includes("thread="))
+      window.location.hash.includes("thread=") ||
+      window.location.hash.includes("missed="))
   ) {
     await applySessionFromUrl(window.location.href)
     history.replaceState(null, "", window.location.pathname + window.location.search)

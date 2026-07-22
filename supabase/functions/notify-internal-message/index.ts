@@ -12,7 +12,6 @@ const corsHeaders = {
 }
 
 const MESSAGING_APP_ID = "com.tradesmanus.messaging"
-const MAIN_APP_ID = "com.tradesmanus.com"
 const MESSAGING_CHANNEL = "tradesman_messaging"
 
 Deno.serve(async (req) => {
@@ -164,10 +163,9 @@ Deno.serve(async (req) => {
     const bodyText = previewPrefs.get(uid) === false ? "New message" : String(msg.body || "New message").slice(0, 160)
 
     const native = (devices ?? []).filter((d) => d.platform !== "web" && d.token)
-    const messagingDevices = native.filter((d) => (d.app_id || MAIN_APP_ID) === MESSAGING_APP_ID)
-    const mainDevices = native.filter((d) => (d.app_id || MAIN_APP_ID) !== MESSAGING_APP_ID)
-    // Prefer Messaging tokens so the tap opens Messenger; only fall back to main if none.
-    const targets = messagingDevices.length > 0 ? messagingDevices : mainDevices
+    // Instant Messaging pushes MUST go only to the Messaging app token.
+    // Falling back to the main Tradesman app makes taps open the wrong package.
+    const targets = native.filter((d) => String(d.app_id || "").trim() === MESSAGING_APP_ID)
 
     for (const d of targets) {
       try {

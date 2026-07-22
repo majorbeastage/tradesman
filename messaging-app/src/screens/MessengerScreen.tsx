@@ -43,7 +43,20 @@ import {
 import MessageActionTarget from "../components/MessageActionTarget"
 import { ensureMessagingPush, loadMessagingNotifPrefs, saveMessagingNotifPrefs } from "../lib/messagingNotifications"
 import { PENDING_DIAL_EVENT, takePendingDial, type PendingDial } from "../lib/pendingDial"
-import { PENDING_THREAD_EVENT, takePendingThread, type PendingThread } from "../lib/pendingThread"
+import {
+  PENDING_MISSED_EVENT,
+  PENDING_THREAD_EVENT,
+  takePendingMissedCalls,
+  takePendingThread,
+  type PendingThread,
+} from "../lib/pendingThread"
+import {
+  dismissMissedCall,
+  formatMissedCallWhen,
+  loadMissedCalls,
+  markMissedCallsSeen,
+  type MissedCallRow,
+} from "../lib/missedCalls"
 
 type Peer = { id: string; name: string }
 type Tab = "chats" | "new" | "phone" | "calendar" | "settings"
@@ -92,6 +105,8 @@ export default function MessengerScreen({ me }: { me: string }) {
   const [dialCustResults, setDialCustResults] = useState<MessengerCustomer[]>([])
   const [dialSelectedName, setDialSelectedName] = useState<string | null>(null)
   const voice = useVoiceDevice()
+  const [missedCalls, setMissedCalls] = useState<MissedCallRow[]>([])
+  const [missedFocus, setMissedFocus] = useState(false)
 
   // Prefill Phone tab when Main app hands off a customer number.
   useEffect(() => {
@@ -132,6 +147,7 @@ export default function MessengerScreen({ me }: { me: string }) {
     setThreads(list)
     const ids = list.flatMap((t) => t.members)
     setNames(await loadPeerNames(supabase, ids))
+    setMissedCalls(await loadMissedCalls(supabase, me))
   }, [me])
 
   useEffect(() => {
@@ -245,6 +261,22 @@ export default function MessengerScreen({ me }: { me: string }) {
     window.addEventListener(PENDING_THREAD_EVENT, handler)
     return () => window.removeEventListener(PENDING_THREAD_EVENT, handler)
   }, [openThread])
+
+  useEffect(() => {
+    function showMissed() {
+      setTab("chats")
+      setSelected(null)
+      setMissedFocus(true)
+      void markMissedCallsSeen(supabase, me).then(() => void refresh())
+    }
+    if (takePendingMissedCalls()) showMissed()
+    const handler = () => {
+      takePendingMissedCalls()
+      showMissed()
+    }
+    window.addEventListener(PENDING_MISSED_EVENT, handler)
+    return () => window.removeEventListener(PENDING_MISSED_EVENT, handler)
+  }, [me, refresh])
 
   async function startSelectedChat() {
     if (newSel.size === 0) return
@@ -1051,6 +1083,89 @@ export default function MessengerScreen({ me }: { me: string }) {
     <div className="app-shell">
       {topNav()}
       <div style={{ flex: 1, overflowY: "auto" }}>
+        {missedCalls.length > 0 ? (
+          <section
+            style={{
+              borderBottom: "1px solid var(--border)",
+              background: missedFocus ? "#fff7ed" : "#fffbeb",
+              padding: "10px 0 6px",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", padding: "0 16px 8px", gap: 8 }}>
+              <strong style={{ flex: 1, fontSize: 13, color: "#9a3412", letterSpacing: 0.02 }}>
+                Missed calls ({missedCalls.length})
+              </strong>
+              <button
+                type="button"
+                onClick={() => {
+                  setMissedFocus(false)
+                  void markMissedCallsSeen(supabase, me).then(() => void refresh())
+                }}
+                style={{ border: "none", background: "transparent", color: "#c2410c", fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+              >
+                Mark seen
+              </button>
+            </div>
+            {missedCalls.map((m) => {
+              const who = m.caller_name?.trim() || peerName(m.caller_id) || "Teammate"
+              const unseen = !m.seen_at
+              return (
+                <div
+                  key={m.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "10px 16px",
+                    borderTop: "1px solid #fed7aa",
+                    background: unseen ? "#fff7ed" : "#fffbeb",
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 800, fontSize: 14, color: "#7c2d12" }}>
+                      {m.video ? "Missed video call" : "Missed call"}
+                    </div>
+                    <div style={{ fontSize: 13, color: "#9a3412", fontWeight: 600 }}>From {who}</div>
+                    <div style={{ fontSize: 11, color: "#b45309" }}>{formatMissedCallWhen(m.created_at)}</div>
+                  </div>
+                  <button
+                    type="button"
+                    title={m.video ? "Video call back" : "Call back"}
+                    onClick={() => void room.startCall([m.caller_id], { video: m.video })}
+                    style={{ border: "none", background: "#ea580c", color: "#fff", borderRadius: 10, padding: "8px 10px", fontWeight: 800, fontSize: 12, cursor: "pointer" }}
+                  >
+                    {m.video ? "Video" : "Call"}
+                  </button>
+                  <button
+                    type="button"
+                    title="Message"
+                    onClick={() => {
+                      void findOrCreateDirectThread(supabase, me, m.caller_id).then(async (r) => {
+                        if (r.threadId) {
+                          await refresh()
+                          await openThread(r.threadId)
+                        }
+                      })
+                    }}
+                    style={{ border: "1px solid #fdba74", background: "#fff", color: "#9a3412", borderRadius: 10, padding: "8px 10px", fontWeight: 800, fontSize: 12, cursor: "pointer" }}
+                  >
+                    Chat
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Dismiss"
+                    onClick={() => {
+                      void dismissMissedCall(supabase, me, m.id).then(() => void refresh())
+                    }}
+                    style={{ border: "none", background: "transparent", color: "#b45309", fontSize: 18, cursor: "pointer", padding: "4px 6px" }}
+                  >
+                    ×
+                  </button>
+                </div>
+              )
+            })}
+          </section>
+        ) : null}
         {threads.length === 0 ? (
           <div style={{ padding: 24, color: "var(--muted)", textAlign: "center", lineHeight: 1.5 }}>
             No conversations yet.
