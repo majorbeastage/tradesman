@@ -76,6 +76,8 @@ export default function MessengerWidget({ setPage }: Props) {
   const [availability, setAvailability] = useState<Availability>("available")
   const [availOpen, setAvailOpen] = useState(false)
   const [callPoppedOut, setCallPoppedOut] = useState(false)
+  /** During a video/audio call in a thread: show the messenger chat under the call UI. */
+  const [callChatOpen, setCallChatOpen] = useState(false)
   const callPopCloseRef = useRef<(() => void) | null>(null)
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null)
   const [messages, setMessages] = useState<InternalMessage[]>([])
@@ -477,6 +479,10 @@ export default function MessengerWidget({ setPage }: Props) {
   }
 
   useEffect(() => {
+    if (room.state === "idle") setCallChatOpen(false)
+  }, [room.state])
+
+  useEffect(() => {
     if (room.state === "idle" && callPoppedOut) handleReturnFromPopOut()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room.state])
@@ -529,12 +535,23 @@ export default function MessengerWidget({ setPage }: Props) {
 
   const callPanel =
     roomActive ? (
-      <div style={{ padding: view === "chat" ? "8px 8px 0" : 0 }}>
+      <div
+        style={{
+          padding: view === "chat" ? (callChatOpen ? "8px 8px 0" : 0) : 0,
+          ...(view === "chat" && !callChatOpen
+            ? { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }
+            : null),
+        }}
+      >
         <ConferenceCallView
           room={room}
           selfName="You"
-          compact={view === "chat"}
+          compact={view === "chat" && callChatOpen}
           chat={inCallChat}
+          chatPanelExternal={view === "chat"}
+          showChat={view === "chat" ? callChatOpen : undefined}
+          onToggleChat={view === "chat" ? () => setCallChatOpen((v) => !v) : undefined}
+          fillHeight={view === "chat" && !callChatOpen}
           onPopOut={() => void handlePopOut()}
           poppedOut={callPoppedOut}
           onReturnFromPopOut={handleReturnFromPopOut}
@@ -776,6 +793,8 @@ export default function MessengerWidget({ setPage }: Props) {
           ) : view === "chat" ? (
             <>
               {callPanel}
+              {!roomActive || callChatOpen ? (
+                <>
               <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 8, background: "#f8fafc" }}>
                 {messages.length === 0 ? (
                   <div style={{ margin: "auto", color: "#94a3b8", fontSize: 13 }}>No messages yet. Say hello 👋</div>
@@ -927,6 +946,8 @@ export default function MessengerWidget({ setPage }: Props) {
                   Send
                 </button>
               </div>
+                </>
+              ) : null}
             </>
           ) : view === "new_group" ? (
             <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>

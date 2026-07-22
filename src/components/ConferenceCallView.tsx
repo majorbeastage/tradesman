@@ -18,14 +18,20 @@ function initials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
 }
 
-function VideoTile({ stream, label, muted, screen }: { stream: MediaStream | null; label: string; muted?: boolean; screen?: boolean }) {
+function VideoTile({ stream, label, muted, screen, fill }: { stream: MediaStream | null; label: string; muted?: boolean; screen?: boolean; fill?: boolean }) {
   const ref = useRef<HTMLVideoElement | null>(null)
   useEffect(() => {
     const el = ref.current
     if (el && stream && el.srcObject !== stream) el.srcObject = stream
   }, [stream])
   return (
-    <div style={{ ...tile, aspectRatio: screen ? "16 / 9" : "4 / 3" }}>
+    <div
+      style={{
+        ...tile,
+        aspectRatio: fill ? undefined : screen ? "16 / 9" : "4 / 3",
+        ...(fill ? { minHeight: 0, height: "100%" } : null),
+      }}
+    >
       {stream ? (
         <video ref={ref} autoPlay playsInline muted={muted} style={{ width: "100%", height: "100%", objectFit: screen ? "contain" : "cover", background: "#000" }} />
       ) : (
@@ -118,15 +124,43 @@ type Props = {
   /** Compact strip when chat is primary underneath. */
   compact?: boolean
   chat?: ChatProps | null
+  /**
+   * When true, Chat toggles the messenger thread below (parent-owned).
+   * Do not render a second in-call chat panel here.
+   */
+  chatPanelExternal?: boolean
+  /** Controlled visibility for Chat highlight / external panel. */
+  showChat?: boolean
+  onToggleChat?: () => void
+  /** Grow to fill the messenger panel when thread chat is hidden. */
+  fillHeight?: boolean
   /** Desktop: open video in a separate popup / PiP window. */
   onPopOut?: () => void
   poppedOut?: boolean
   onReturnFromPopOut?: () => void
 }
 
-export function ConferenceCallBody({ room, selfName, compact, chat, onPopOut, poppedOut, onReturnFromPopOut }: Props) {
+export function ConferenceCallBody({
+  room,
+  selfName,
+  compact,
+  chat,
+  chatPanelExternal,
+  showChat: showChatProp,
+  onToggleChat,
+  fillHeight,
+  onPopOut,
+  poppedOut,
+  onReturnFromPopOut,
+}: Props) {
   const { state, participants, incoming, muted, cameraOn, isVideo, sharingScreen, seconds, error, selfStream } = room
-  const [showChat, setShowChat] = useState(Boolean(chat))
+  const [showChatLocal, setShowChatLocal] = useState(false)
+  const showChat = showChatProp ?? showChatLocal
+
+  function toggleChat() {
+    if (onToggleChat) onToggleChat()
+    else setShowChatLocal((v) => !v)
+  }
 
   if (state === "incoming" && incoming) {
     return (
@@ -166,7 +200,7 @@ export function ConferenceCallBody({ room, selfName, compact, chat, onPopOut, po
             Leave
           </button>
         </div>
-        {chat ? (
+        {chat && showChat && !chatPanelExternal ? (
           <div style={{ marginTop: 8 }}>
             <InCallChat chat={chat} />
           </div>
@@ -179,10 +213,27 @@ export function ConferenceCallBody({ room, selfName, compact, chat, onPopOut, po
   const title = participants.length === 1 ? participants[0].name : `Team call · ${connectedCount}`
   const stateText =
     state === "ringing" ? "Ringing…" : state === "error" ? "Call error" : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
+  const showInlineChat = Boolean(chat) && showChat && !chatPanelExternal
 
   return (
-    <div style={{ ...wrap, padding: compact ? 10 : 14, gap: compact ? 8 : 12 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+    <div
+      style={{
+        ...wrap,
+        padding: compact ? 10 : 14,
+        gap: compact ? 8 : 12,
+        ...(fillHeight
+          ? {
+              flex: 1,
+              minHeight: 0,
+              alignSelf: "stretch",
+              boxSizing: "border-box" as const,
+              display: "flex",
+              flexDirection: "column" as const,
+            }
+          : null),
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: compact ? 13 : 16, fontWeight: 800, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{title}</div>
           <div style={{ marginTop: 1, fontSize: 12, fontWeight: 700, color: "#475569" }}>
@@ -191,22 +242,40 @@ export function ConferenceCallBody({ room, selfName, compact, chat, onPopOut, po
           </div>
         </div>
         {onPopOut ? (
-          <button type="button" onClick={onPopOut} title="Pop out video" style={{ ...ctrlBtn, padding: "6px 8px", background: "#fff", border: `1px solid ${theme.border}`, color: "#0f172a", flex: "0 0 auto" }}>
-            ⧉
+          <button
+            type="button"
+            onClick={onPopOut}
+            title="Pop out video into a separate window"
+            style={{ ...ctrlBtn, padding: "6px 10px", background: "#fff", border: `1px solid ${theme.border}`, color: "#0f172a", flex: "0 0 auto", whiteSpace: "nowrap" }}
+          >
+            Pop out
           </button>
         ) : null}
       </div>
 
       {!compact || isVideo || sharingScreen ? (
         isVideo || sharingScreen ? (
-          <div style={{ display: "grid", gridTemplateColumns: participants.length > 1 ? "1fr 1fr" : "1fr", gap: 8 }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: participants.length > 1 ? "1fr 1fr" : "1fr",
+              gap: 8,
+              ...(fillHeight ? { flex: 1, minHeight: 0, alignContent: "stretch", overflow: "hidden" } : null),
+            }}
+          >
             {participants.map((p) => (
-              <VideoTile key={p.id} stream={p.stream} label={p.name} />
+              <VideoTile key={p.id} stream={p.stream} label={p.name} fill={fillHeight} />
             ))}
-            <VideoTile stream={selfStream} label={sharingScreen ? `${selfName} (screen)` : selfName} muted screen={sharingScreen} />
+            <VideoTile
+              stream={selfStream}
+              label={sharingScreen ? `${selfName} (screen)` : selfName}
+              muted
+              screen={sharingScreen}
+              fill={fillHeight}
+            />
           </div>
         ) : (
-          <div style={{ display: "grid", gap: 8 }}>
+          <div style={{ display: "grid", gap: 8, ...(fillHeight ? { flex: 1, minHeight: 0, overflow: "auto" } : null) }}>
             {participants.map((p) => (
               <AudioTile key={p.id} name={p.name} connected={p.connected} />
             ))}
@@ -214,7 +283,7 @@ export function ConferenceCallBody({ room, selfName, compact, chat, onPopOut, po
         )
       ) : null}
 
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", flexShrink: 0 }}>
         <button
           type="button"
           onClick={room.toggleMute}
@@ -238,13 +307,13 @@ export function ConferenceCallBody({ room, selfName, compact, chat, onPopOut, po
         >
           {sharingScreen ? "Stop share" : "Share"}
         </button>
-        {chat ? (
+        {chat || chatPanelExternal ? (
           <button
             type="button"
-            onClick={() => setShowChat((v) => !v)}
+            onClick={toggleChat}
             style={{ ...ctrlBtn, flex: 1, minWidth: 70, background: showChat ? "#fff7ed" : "#fff", color: "#0f172a", border: `1px solid ${theme.border}`, padding: "8px" }}
           >
-            Chat
+            {showChat ? "Hide chat" : "Chat"}
           </button>
         ) : null}
         <button type="button" onClick={room.hangup} style={{ ...ctrlBtn, flex: 1, minWidth: 70, background: "#dc2626", color: "#fff", border: "none", padding: "8px" }}>
@@ -252,8 +321,8 @@ export function ConferenceCallBody({ room, selfName, compact, chat, onPopOut, po
         </button>
       </div>
 
-      {showChat && chat ? <InCallChat chat={chat} /> : null}
-      {error ? <p style={{ margin: 0, fontSize: 12, color: "#dc2626", textAlign: "center" }}>{error}</p> : null}
+      {showInlineChat && chat ? <InCallChat chat={chat} /> : null}
+      {error ? <p style={{ margin: 0, fontSize: 12, color: "#dc2626", textAlign: "center", flexShrink: 0 }}>{error}</p> : null}
     </div>
   )
 }
