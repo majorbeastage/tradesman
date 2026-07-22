@@ -3,6 +3,7 @@ import type { Session } from "@supabase/supabase-js"
 import { supabase } from "./lib/supabaseClient"
 import { initSharedAuth } from "./lib/sharedAuth"
 import { initMessagingPushTapListener } from "./lib/pushTapHandler"
+import { initAndroidBackListener } from "./lib/androidBack"
 import {
   heartbeatAppSession,
   registerAppSession,
@@ -20,9 +21,11 @@ export default function App() {
   useEffect(() => {
     let cleanup: (() => void) | undefined
     let pushCleanup: (() => void) | undefined
+    let backCleanup: (() => void) | undefined
     void (async () => {
       cleanup = await initSharedAuth()
       pushCleanup = await initMessagingPushTapListener()
+      backCleanup = await initAndroidBackListener()
       const { data } = await supabase.auth.getSession()
       setSession(data.session)
       setReady(true)
@@ -43,6 +46,7 @@ export default function App() {
       sub.subscription.unsubscribe()
       cleanup?.()
       pushCleanup?.()
+      backCleanup?.()
     }
   }, [])
 

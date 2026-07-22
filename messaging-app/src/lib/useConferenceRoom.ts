@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import type { RealtimeChannel } from "@supabase/supabase-js"
 import { supabase } from "./supabaseClient"
 import { recordMissedCall } from "./missedCalls"
+import { prepareCallAudio, resetCallAudioRoute, setCallSpeakerOn } from "./nativeCallAudio"
+import { startCallRingtone, stopCallRingtone } from "./callRingtone"
 
 /**
  * Multi-party internal team calls (audio + video) over WebRTC — no Twilio.
@@ -64,6 +66,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
   const [error, setError] = useState<string | null>(null)
   const [selfStream, setSelfStream] = useState<MediaStream | null>(null)
   const [sharingScreen, setSharingScreen] = useState(false)
+  const [speakerOn, setSpeakerOn] = useState(true)
 
   const roomIdRef = useRef<string | null>(null)
   const roomChanRef = useRef<RealtimeChannel | null>(null)
@@ -121,6 +124,8 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
 
   const cleanup = useCallback(() => {
     stopTimer()
+    stopCallRingtone()
+    void resetCallAudioRoute()
     if (ringTimerRef.current) {
       clearTimeout(ringTimerRef.current)
       ringTimerRef.current = null
@@ -155,6 +160,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
     cameraTrackRef.current = null
     setSelfStream(null)
     setSharingScreen(false)
+    setSpeakerOn(true)
     if (roomChanRef.current) {
       try {
         void supabase?.removeChannel(roomChanRef.current)
@@ -177,6 +183,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
     if (startedTimerRef.current) return
     startedTimerRef.current = true
     answeredRef.current = true
+    stopCallRingtone()
     if (ringTimerRef.current) {
       clearTimeout(ringTimerRef.current)
       ringTimerRef.current = null
@@ -184,6 +191,12 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
     setState("in_call")
     setSeconds(0)
     timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000)
+  }, [])
+
+  const armCallAudio = useCallback(async (preferSpeaker = true) => {
+    await prepareCallAudio()
+    setSpeakerOn(preferSpeaker)
+    await setCallSpeakerOn(preferSpeaker)
   }, [])
 
   const broadcastInbox = useCallback(async (userId: string, event: string, payload: unknown) => {
@@ -498,6 +511,8 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
       setState("ringing")
       const roomId = `${me}-${Date.now()}`
       try {
+        await armCallAudio(true)
+        startCallRingtone()
         await acquireMedia(opts.video)
         for (const id of others) upsertParticipant(id, {})
         await joinRoom(roomId)
@@ -530,7 +545,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
         cleanup()
       }
     },
-    [acquireMedia, broadcastInbox, cleanup, joinRoom, me, recordUnansweredMissed, upsertParticipant],
+    [acquireMedia, armCallAudio, broadcastInbox, cleanup, joinRoom, me, recordUnansweredMissed, upsertParticipant],
   )
 
   // Join a stable, pre-agreed room (e.g. a scheduled calendar video call).
@@ -544,6 +559,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
       setIsVideo(opts.video)
       setState("ringing")
       try {
+        await armCallAudio(true)
         await acquireMedia(opts.video)
         await joinRoom(roomId)
         maybeStartTimer()
@@ -553,7 +569,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
         cleanup()
       }
     },
-    [acquireMedia, cleanup, joinRoom, maybeStartTimer, me],
+    [acquireMedia, armCallAudio, cleanup, joinRoom, maybeStartTimer, me],
   )
 
   const accept = useCallback(async () => {
@@ -566,6 +582,8 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
     setError(null)
     setIsVideo(inv.video)
     try {
+      stopCallRingtone()
+      await armCallAudio(true)
       await acquireMedia(inv.video)
       // Pre-populate other invited members so tiles show while connecting.
       for (const id of inv.members) if (id !== me) upsertParticipant(id, {})
@@ -577,7 +595,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
       setState("error")
       cleanup()
     }
-  }, [acquireMedia, cleanup, incoming, joinRoom, maybeStartTimer, me, upsertParticipant])
+  }, [acquireMedia, armCallAudio, cleanup, incoming, joinRoom, maybeStartTimer, me, upsertParticipant])
 
   const decline = useCallback(() => {
     const inv = incoming
@@ -585,6 +603,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
       clearTimeout(inviteTimeoutRef.current)
       inviteTimeoutRef.current = null
     }
+    stopCallRingtone()
     if (inv?.fromId) {
       void broadcastInbox(inv.fromId, "declined", {
         roomId: inv.roomId,
@@ -634,6 +653,14 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
     })
   }, [])
 
+  const toggleSpeaker = useCallback(() => {
+    setSpeakerOn((prev) => {
+      const next = !prev
+      void setCallSpeakerOn(next)
+      return next
+    })
+  }, [])
+
   // Personal inbox: listen for incoming invites / cancel / declined.
   useEffect(() => {
     if (!supabase || !me) return
@@ -650,6 +677,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
         video: Boolean(p.video),
       })
       setState("incoming")
+      startCallRingtone()
       if (inviteTimeoutRef.current) clearTimeout(inviteTimeoutRef.current)
       inviteTimeoutRef.current = setTimeout(() => {
         inviteTimeoutRef.current = null
@@ -678,6 +706,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
       }
       setIncoming((cur) => {
         if (!cur || cur.roomId !== p.roomId) return cur
+        stopCallRingtone()
         setState("idle")
         return null
       })
@@ -715,6 +744,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
     cameraOn,
     isVideo,
     sharingScreen,
+    speakerOn,
     seconds,
     error,
     setError,
@@ -726,6 +756,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
     hangup,
     toggleMute,
     toggleCamera,
+    toggleSpeaker,
     startScreenShare,
     stopScreenShare,
   }

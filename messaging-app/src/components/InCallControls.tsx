@@ -88,17 +88,22 @@ export default function InCallControls({
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button type="button" onClick={onToggleMute} disabled={!canInteract} style={{ ...btn, background: muted ? "#fee2e2" : "#fff" }}>
-          {muted ? "Unmute" : "Mute"}
+          {muted ? "Unmute mic" : "Mute mic"}
         </button>
         <button type="button" onClick={() => setShowKeypad((v) => !v)} disabled={!canInteract} style={{ ...btn, background: showKeypad ? "#e0f2fe" : "#fff" }}>
-          {showKeypad ? "Hide pad" : "Keypad"}
+          {showKeypad ? "Hide keypad" : "Keypad"}
         </button>
         {speakerSupported ? (
           <button type="button" onClick={onToggleSpeaker} disabled={!canInteract} style={{ ...btn, background: speakerOn ? "#dbeafe" : "#fff" }}>
-            {speakerOn ? "Speaker" : "Phone"}
+            {speakerOn ? "Loudspeaker" : "Earpiece"}
           </button>
         ) : null}
       </div>
+      {speakerSupported ? (
+        <p style={{ margin: 0, fontSize: 11, color: "#64748b", textAlign: "center", lineHeight: 1.35 }}>
+          {speakerOn ? "Using loudspeaker — tap Earpiece for handset." : "Using phone earpiece — tap Loudspeaker to hear on speaker."}
+        </p>
+      ) : null}
 
       <button type="button" onClick={onHangup} style={{ border: "none", background: "#dc2626", color: "#fff", borderRadius: 10, padding: "12px 14px", fontWeight: 800, cursor: "pointer" }}>
         Hang up
