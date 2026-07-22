@@ -3,21 +3,31 @@
   --border: #e5e7eb;
   --text: #111827;
   --muted: #94a3b8;
-  --safe-top: env(safe-area-inset-top, 0px);
-  --safe-bottom: env(safe-area-inset-bottom, 0px);
-  --header-extra: 12px; /* extra cushion under status bar */
-  --footer-extra: 10px; /* extra cushion above gesture/nav bar */
+  /*
+   * When Android uses decorFitsSystemWindows, CSS env(safe-area-*) is often 0.
+   * Keep a floor so gesture / 3-button nav never covers the composer or footer.
+   * iOS notches still get the larger env() value via max().
+   */
+  --safe-top: max(0px, env(safe-area-inset-top, 0px));
+  --safe-bottom: max(12px, env(safe-area-inset-bottom, 0px));
+  --header-extra: 8px;
+  --footer-extra: 12px;
 }
+
+/* Native shell: system bars already inset the WebView — don't double-pad the top. */
+html.native-inset {
+  --safe-top: 0px;
+  --safe-bottom: max(16px, env(safe-area-inset-bottom, 0px));
+  --header-extra: 6px;
+  --footer-extra: 14px;
+}
+
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
-html {
-  /* Let CSS env(safe-area-inset-*) work on notched / gesture devices */
-}
 body {
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
   color: var(--text);
   background: #f8fafc;
-  /* Avoid rubber-band scrolling under system bars on some WebViews */
   overscroll-behavior: none;
 }
 button { font-family: inherit; }
@@ -26,8 +36,11 @@ input, textarea { font-family: inherit; }
 .app-shell {
   min-height: 100%;
   min-height: 100dvh;
+  height: 100%;
+  max-height: 100dvh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .app-header {
@@ -35,6 +48,10 @@ input, textarea { font-family: inherit; }
   background: var(--orange);
   color: #fff;
   flex-shrink: 0;
+}
+
+.app-header--compact {
+  padding-bottom: 6px;
 }
 
 .app-footer {

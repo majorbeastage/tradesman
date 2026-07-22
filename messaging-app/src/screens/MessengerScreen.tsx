@@ -201,12 +201,14 @@ export default function MessengerScreen({ me }: { me: string }) {
       .finally(() => setCalLoading(false))
   }, [tab, me, weekAnchor])
 
-  // Soft status bar: don't draw under the system clock/battery strip.
+  // Soft status bar: keep system chrome out of the WebView (does not overlay buttons).
   useEffect(() => {
     void (async () => {
       try {
+        document.documentElement.classList.add("native-inset")
         const { StatusBar, Style } = await import("@capacitor/status-bar")
         await StatusBar.setOverlaysWebView({ overlay: false })
+        await StatusBar.show()
         await StatusBar.setStyle({ style: Style.Light })
         await StatusBar.setBackgroundColor({ color: "#f97316" })
       } catch {
@@ -389,9 +391,9 @@ export default function MessengerScreen({ me }: { me: string }) {
     return <ConferenceCallView room={room} selfName={myName} chat={inCallChat} />
   }
 
-  const topNav = (
-    <div className="app-header">
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px 6px" }}>
+  const topNav = (compact?: boolean) => (
+    <div className={compact ? "app-header app-header--compact" : "app-header"}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: compact ? "8px 12px 4px" : "10px 12px 6px" }}>
         <button
           type="button"
           onClick={() => {
@@ -431,47 +433,49 @@ export default function MessengerScreen({ me }: { me: string }) {
           ))}
         </div>
       ) : null}
-      <div style={{ display: "flex", gap: 4, padding: "0 8px 10px" }}>
-        {(
-          [
-            { id: "chats" as const, label: selected && tab === "chats" ? "Chats" : tab === "chats" ? "Chats" : "Chats" },
-            { id: "new" as const, label: "New Chat" },
-            { id: "phone" as const, label: "Phone" },
-            { id: "calendar" as const, label: "Calendar" },
-          ] as const
-        ).map((b) => {
-          const active = tab === b.id && !(b.id === "chats" && selected)
-          const chatsActive = b.id === "chats" && tab === "chats" && !selected
-          return (
-            <button
-              key={b.id}
-              type="button"
-              onClick={() => {
-                if (b.id === "chats") {
+      {!compact ? (
+        <div style={{ display: "flex", gap: 4, padding: "0 8px 10px" }}>
+          {(
+            [
+              { id: "chats" as const, label: "Chats" },
+              { id: "new" as const, label: "New Chat" },
+              { id: "phone" as const, label: "Phone" },
+              { id: "calendar" as const, label: "Calendar" },
+            ] as const
+          ).map((b) => {
+            const active = tab === b.id && !(b.id === "chats" && selected)
+            const chatsActive = b.id === "chats" && tab === "chats" && !selected
+            return (
+              <button
+                key={b.id}
+                type="button"
+                onClick={() => {
+                  if (b.id === "chats") {
+                    setSelected(null)
+                    setTab("chats")
+                    return
+                  }
                   setSelected(null)
-                  setTab("chats")
-                  return
-                }
-                setSelected(null)
-                setTab(b.id)
-              }}
-              style={{
-                flex: 1,
-                border: "none",
-                background: active || chatsActive ? "#fff" : "rgba(255,255,255,0.16)",
-                color: active || chatsActive ? "#c2410c" : "#fff",
-                borderRadius: 10,
-                padding: "9px 4px",
-                fontWeight: 800,
-                fontSize: 12,
-                cursor: "pointer",
-              }}
-            >
-              {b.label}
-            </button>
-          )
-        })}
-      </div>
+                  setTab(b.id)
+                }}
+                style={{
+                  flex: 1,
+                  border: "none",
+                  background: active || chatsActive ? "#fff" : "rgba(255,255,255,0.16)",
+                  color: active || chatsActive ? "#c2410c" : "#fff",
+                  borderRadius: 10,
+                  padding: "9px 4px",
+                  fontWeight: 800,
+                  fontSize: 12,
+                  cursor: "pointer",
+                }}
+              >
+                {b.label}
+              </button>
+            )
+          })}
+        </div>
+      ) : null}
     </div>
   )
 
@@ -479,7 +483,7 @@ export default function MessengerScreen({ me }: { me: string }) {
   if (tab === "settings" && !selected) {
     return (
       <div className="app-shell">
-        {topNav}
+        {topNav()}
         <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "grid", gap: 14 }}>
           <h2 style={{ margin: 0, fontSize: 18 }}>Messenger settings</h2>
           <section style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 14, background: "#fff" }}>
@@ -536,7 +540,7 @@ export default function MessengerScreen({ me }: { me: string }) {
   if (selected && selectedThread) {
     return (
       <div className="app-shell">
-        {topNav}
+        {topNav(true)}
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid var(--border)", background: "#fff", position: "relative" }}>
           <button type="button" onClick={() => setSelected(null)} style={{ border: "none", background: "transparent", fontSize: 22, cursor: "pointer", color: "var(--text)" }}>
             ‹
@@ -781,7 +785,7 @@ export default function MessengerScreen({ me }: { me: string }) {
   if (tab === "new") {
     return (
       <div className="app-shell">
-        {topNav}
+        {topNav()}
         <div style={{ padding: 12, fontSize: 13, color: "var(--muted)", lineHeight: 1.45 }}>
           Select one teammate for a direct chat, or several to start a group — then tap Start chat.
         </div>
@@ -856,7 +860,7 @@ export default function MessengerScreen({ me }: { me: string }) {
     const callActive = voice.callState !== "idle"
     return (
       <div className="app-shell">
-        {topNav}
+        {topNav()}
         <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "grid", gap: 12, alignContent: "start" }}>
           <p style={{ margin: 0, fontSize: 13, color: "var(--muted)", lineHeight: 1.5 }}>
             Calls go out from your Tradesman Twilio number through this app (mic + speaker). Your personal phone is not dialed first.
@@ -953,7 +957,7 @@ export default function MessengerScreen({ me }: { me: string }) {
   if (tab === "calendar") {
     return (
       <div className="app-shell">
-        {topNav}
+        {topNav()}
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderBottom: "1px solid var(--border)", background: "#fff" }}>
           <button
             type="button"
@@ -1045,7 +1049,7 @@ export default function MessengerScreen({ me }: { me: string }) {
   // ── Chats list (default) ──────────────────────────────────────────────────
   return (
     <div className="app-shell">
-      {topNav}
+      {topNav()}
       <div style={{ flex: 1, overflowY: "auto" }}>
         {threads.length === 0 ? (
           <div style={{ padding: 24, color: "var(--muted)", textAlign: "center", lineHeight: 1.5 }}>
@@ -1127,7 +1131,7 @@ const sheet: CSSProperties = {
   background: "#fff",
   borderTopLeftRadius: 16,
   borderTopRightRadius: 16,
-  padding: "calc(12px + env(safe-area-inset-top, 0px)) 16px calc(16px + env(safe-area-inset-bottom))",
+  padding: "12px 16px calc(16px + max(16px, env(safe-area-inset-bottom, 0px)))",
   maxHeight: "75vh",
   boxSizing: "border-box",
 }
