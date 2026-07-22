@@ -179,6 +179,8 @@ Deno.serve(async (req) => {
           androidTag: collapseKey,
           collapseKey,
           apnsThreadId: collapseKey,
+          // Data-only on Android → Messaging posts one stable notification per thread (no expandable stack).
+          androidDataOnly: d.platform === "android",
         })
         if (r.ok) sent += 1
       } catch {

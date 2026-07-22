@@ -119,6 +119,7 @@ Deno.serve(async (req) => {
         androidTag: collapseKey,
         collapseKey,
         apnsThreadId: collapseKey,
+        androidDataOnly: d.platform === "android",
       })
       if (r.ok) sent += 1
     } catch {
