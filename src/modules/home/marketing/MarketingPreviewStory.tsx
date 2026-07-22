@@ -897,6 +897,49 @@ function AboutUsStorySlide({
             Read our full story →
           </button>
           <MarketingPreviewCtas onPrimary={onLogin} onSignup={onSignup} onTrial={onTrial} onPricing={onPricing} compact />
+          <div style={{ marginTop: 18, display: "grid", gap: 10, maxWidth: 420 }}>
+            <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: "#64748b", letterSpacing: "0.06em" }}>GET THE APPS</p>
+            <a
+              href="https://play.google.com/store/apps/details?id=com.tradesmanus.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "12px 16px",
+                borderRadius: 10,
+                border: `1px solid ${theme.border}`,
+                background: theme.charcoal,
+                color: "#fff",
+                fontWeight: 800,
+                fontSize: 14,
+                textDecoration: "none",
+              }}
+            >
+              Tradesman on Google Play
+            </a>
+            <a
+              href="https://play.google.com/store/apps/details?id=com.tradesmanus.messaging"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "12px 16px",
+                borderRadius: 10,
+                border: `2px solid ${ABOUT_SLIDE_ACCENT}`,
+                background: "transparent",
+                color: ABOUT_SLIDE_ACCENT,
+                fontWeight: 800,
+                fontSize: 14,
+                textDecoration: "none",
+              }}
+            >
+              Tradesman Messaging on Google Play
+            </a>
+          </div>
         </div>
         <div className="marketing-story-slide-shot marketing-story-about-photos">
           {images.length > 0 ? (

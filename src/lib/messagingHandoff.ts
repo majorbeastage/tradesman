@@ -3,7 +3,9 @@
  * so the user does not re-enter email/password.
  *
  * Deep link: tradesmanmsg://auth#access_token=...&refresh_token=...
- * If Messaging is not installed (Android), falls through to the Play Store listing.
+ * If Messaging is not installed (Android), Intent browser_fallback goes to Play Store.
+ * We deliberately do NOT force Play Store after a short timer — Capacitor WebViews often
+ * stay "visible" after a successful launch, which was wrongly opening Play Store every time.
  */
 import { Capacitor } from "@capacitor/core"
 import { supabase } from "./supabase"
@@ -11,6 +13,9 @@ import { supabase } from "./supabase"
 export const MESSAGING_ANDROID_PACKAGE = "com.tradesmanus.messaging"
 export const MESSAGING_PLAY_STORE_URL = `https://play.google.com/store/apps/details?id=${MESSAGING_ANDROID_PACKAGE}`
 export const MESSAGING_PLAY_STORE_MARKET_URL = `market://details?id=${MESSAGING_ANDROID_PACKAGE}`
+
+export const MAIN_ANDROID_PACKAGE = "com.tradesmanus.com"
+export const MAIN_PLAY_STORE_URL = `https://play.google.com/store/apps/details?id=${MAIN_ANDROID_PACKAGE}`
 
 /** Set when the iOS Messaging app is live on the App Store. */
 export const MESSAGING_IOS_APP_STORE_URL =
@@ -48,12 +53,23 @@ export function openMessagingPlayStore(): void {
   window.open(MESSAGING_PLAY_STORE_URL, "_blank", "noopener,noreferrer")
 }
 
+export function openMainAppPlayStore(): void {
+  if (typeof window === "undefined") return
+  try {
+    if (isAndroidUa() || (Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android")) {
+      window.location.href = `market://details?id=${MAIN_ANDROID_PACKAGE}`
+      return
+    }
+  } catch {
+    /* fall through */
+  }
+  window.open(MAIN_PLAY_STORE_URL, "_blank", "noopener,noreferrer")
+}
+
 /**
- * Open Messaging with session when possible; otherwise store listing.
- * Prefer this on any phone / Capacitor shell (including wide native layouts).
+ * Open Messaging with session when possible; otherwise store listing (via Intent fallback only).
  */
-export async function openMessagingAppWithSession(opts?: {
-  /** After this many ms without leaving the page, open Play Store (Android/native). */
+export async function openMessagingAppWithSession(_opts?: {
   playStoreFallbackMs?: number
 }): Promise<{ ok: boolean; error?: string }> {
   if (!supabase) return { ok: false, error: "Not signed in." }
@@ -64,44 +80,31 @@ export async function openMessagingAppWithSession(opts?: {
   }
   const hash = `access_token=${encodeURIComponent(session.access_token)}&refresh_token=${encodeURIComponent(session.refresh_token)}`
   const playFallback = encodeURIComponent(MESSAGING_PLAY_STORE_URL)
+  const deepLink = `tradesmanmsg://auth#${hash}`
 
   try {
     const nativeAndroid = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android"
-    const nativeIos = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "ios"
     const android = nativeAndroid || isAndroidUa()
-    const ios = nativeIos || isIosUa()
 
     if (android) {
-      // Intent with Play Store browser_fallback when the package is missing.
-      window.location.href =
+      // Prefer opening the installed package. browser_fallback_url only if package missing.
+      const intent =
         `intent://auth#${hash}#Intent;scheme=tradesmanmsg;package=${MESSAGING_ANDROID_PACKAGE};` +
         `S.browser_fallback_url=${playFallback};end`
-
-      const ms = opts?.playStoreFallbackMs ?? 1600
-      window.setTimeout(() => {
+      if (nativeAndroid) {
         try {
-          if (document.visibilityState === "visible") openMessagingPlayStore()
+          const { TradesmanNative } = await import("../plugins/tradesman-native")
+          await TradesmanNative.openExternalUrl({ url: intent })
+          return { ok: true }
         } catch {
-          /* ignore */
+          /* fall through */
         }
-      }, ms)
+      }
+      window.location.href = intent
       return { ok: true }
     }
 
-    // iOS / desktop: custom scheme; store fallback if still visible (iOS only when URL configured).
-    window.location.href = `tradesmanmsg://auth#${hash}`
-    if (ios) {
-      const ms = opts?.playStoreFallbackMs ?? 1600
-      window.setTimeout(() => {
-        try {
-          if (document.visibilityState === "visible" && MESSAGING_IOS_APP_STORE_URL) {
-            openMessagingPlayStore()
-          }
-        } catch {
-          /* ignore */
-        }
-      }, ms)
-    }
+    window.location.href = deepLink
     return { ok: true }
   } catch (e) {
     openMessagingPlayStore()
@@ -112,7 +115,22 @@ export async function openMessagingAppWithSession(opts?: {
 type CapAppMod = {
   App?: {
     addListener: (event: string, cb: (data: { url: string }) => void) => Promise<{ remove: () => void }>
+    getLaunchUrl?: () => Promise<{ url?: string } | undefined>
+    openUrl?: (opts: { url: string }) => Promise<void>
   }
+}
+
+function handleHandoffUrl(u: string): void {
+  if (!u.includes("messaging-handoff") && !u.includes("tradesman://messaging")) return
+  void openMessagingAppWithSession().then((r) => {
+    if (!r.ok && r.error) {
+      try {
+        window.alert(r.error)
+      } catch {
+        /* ignore */
+      }
+    }
+  })
 }
 
 /** Listen for tradesman://messaging-handoff and open the messaging app with tokens. */
@@ -122,11 +140,19 @@ export async function initMessagingHandoffListener(): Promise<() => void> {
     const mod = await importer("@capacitor/app")
     const App = mod.App
     if (!App?.addListener) return () => {}
-    const handle = await App.addListener("appUrlOpen", (data) => {
-      const u = data?.url ?? ""
-      if (u.includes("messaging-handoff") || u.includes("tradesman://messaging")) {
-        void openMessagingAppWithSession()
+
+    // Cold start: URL that launched the app (mirror messaging sharedAuth).
+    try {
+      if (typeof App.getLaunchUrl === "function") {
+        const launch = await App.getLaunchUrl()
+        if (launch?.url) handleHandoffUrl(launch.url)
       }
+    } catch {
+      /* ignore */
+    }
+
+    const handle = await App.addListener("appUrlOpen", (data) => {
+      handleHandoffUrl(data?.url ?? "")
     })
     return () => handle.remove()
   } catch {

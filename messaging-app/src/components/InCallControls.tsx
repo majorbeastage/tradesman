@@ -93,14 +93,11 @@ export default function InCallControls({
         <button type="button" onClick={() => setShowKeypad((v) => !v)} disabled={!canInteract} style={{ ...btn, background: showKeypad ? "#e0f2fe" : "#fff" }}>
           {showKeypad ? "Hide pad" : "Keypad"}
         </button>
-        <button
-          type="button"
-          onClick={onToggleSpeaker}
-          disabled={!canInteract || !speakerSupported}
-          style={{ ...btn, background: speakerOn ? "#dbeafe" : "#fff" }}
-        >
-          {speakerOn ? "Speaker" : "Earpiece"}
-        </button>
+        {speakerSupported ? (
+          <button type="button" onClick={onToggleSpeaker} disabled={!canInteract} style={{ ...btn, background: speakerOn ? "#dbeafe" : "#fff" }}>
+            {speakerOn ? "Speaker" : "Phone"}
+          </button>
+        ) : null}
       </div>
 
       <button type="button" onClick={onHangup} style={{ border: "none", background: "#dc2626", color: "#fff", borderRadius: 10, padding: "12px 14px", fontWeight: 800, cursor: "pointer" }}>

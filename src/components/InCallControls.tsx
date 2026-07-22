@@ -103,15 +103,16 @@ export default function InCallControls({
         >
           {showKeypad ? "Hide pad" : "Keypad"}
         </button>
-        <button
-          type="button"
-          onClick={onToggleSpeaker}
-          disabled={!canInteract || !speakerSupported}
-          title={speakerSupported ? undefined : "Speaker routing is available in the mobile app"}
-          style={{ ...btn, background: speakerOn ? "#dbeafe" : "#fff" }}
-        >
-          {speakerOn ? "Speaker" : "Earpiece"}
-        </button>
+        {speakerSupported ? (
+          <button
+            type="button"
+            onClick={onToggleSpeaker}
+            disabled={!canInteract}
+            style={{ ...btn, background: speakerOn ? "#dbeafe" : "#fff" }}
+          >
+            {speakerOn ? "Speaker" : "Phone"}
+          </button>
+        ) : null}
       </div>
 
       <button

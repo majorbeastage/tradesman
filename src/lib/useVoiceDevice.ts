@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Capacitor } from "@capacitor/core"
 import { supabase } from "./supabase"
-import { resetCallAudioRoute, setCallSpeakerOn } from "./nativeCallAudio"
+import { resetCallAudioRoute, setCallSpeakerOn, prepareCallAudio } from "./nativeCallAudio"
 import type { Call, Device } from "@twilio/voice-sdk"
 
 /**
@@ -108,8 +108,10 @@ export function useVoiceDevice() {
         setSpeakerOn(false)
         setSeconds(0)
         setCallState("ringing")
+        void prepareCallAudio()
         call.on("accept", () => {
           setCallState("in_call")
+          void prepareCallAudio()
           stopTimer()
           timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000)
         })

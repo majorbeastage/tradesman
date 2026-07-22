@@ -37,6 +37,7 @@
  * **2.3.4** — Refreshed app icon: soft-raised white "T" (wrench notch + chisel tip) on full-bleed orange with subtle gradient depth; updated web favicon, in-app, iOS/Android launcher, and Google Play listing icons. Android versionCode 25.
  * **2.3.5** — Softphone in-call controls (mute, keypad/DTMF, speaker/earpiece); Instant messaging tile → Messaging app / Play Store; internal message edit/delete; messenger global + per-chat notification mute; notify-internal-message Edge. Android versionCode 26.
  * **2.3.6** — Android versionCode 27 for Play upload of softphone / messenger enhancements build.
+ * **2.3.7** — Softphone Phone/Speaker labels + louder native call audio; Messaging deep-link opens installed app (no false Play Store); homepage About slide Play Store links; login-via-Tradesman handoff cold-start fix. Android versionCode 28.
  *
  * @see CopyrightVersionFooter
  */

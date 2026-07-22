@@ -31,6 +31,21 @@ async function setCallSpeakerOn(on: boolean): Promise<void> {
   try {
     const { MessagingNative } = await import("../plugins/messaging-native")
     await MessagingNative.setSpeakerOn({ enabled: on })
+    window.setTimeout(() => {
+      void MessagingNative.setSpeakerOn({ enabled: on }).catch(() => undefined)
+    }, 250)
+  } catch {
+    /* ignore */
+  }
+}
+
+async function prepareCallAudio(): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return
+  try {
+    const { MessagingNative } = await import("../plugins/messaging-native")
+    if (typeof MessagingNative.prepareCallAudio === "function") {
+      await MessagingNative.prepareCallAudio()
+    }
   } catch {
     /* ignore */
   }
@@ -144,8 +159,10 @@ export function useVoiceDevice() {
         setSpeakerOn(false)
         setSeconds(0)
         setCallState("ringing")
+        void prepareCallAudio()
         call.on("accept", () => {
           setCallState("in_call")
+          void prepareCallAudio()
           stopTimer()
           timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000)
         })
