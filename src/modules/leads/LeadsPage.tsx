@@ -28,6 +28,7 @@ import { sandboxTrainingAlert, useSandboxTrainingMode } from "../../lib/sandboxT
 import TabNotificationAlertsButton from "../../components/TabNotificationAlertsButton"
 import LeadFilterPreferencesModal from "../../components/LeadFilterPreferencesModal"
 import CustomerCallButton from "../../components/CustomerCallButton"
+import { callFromTradesmanMessenger } from "../../lib/callFromMessenger"
 import AiConsumerReplyApprovalCard from "../../components/AiConsumerReplyApprovalCard"
 import { useSandboxTrafficRefresh } from "../../components/SandboxControlPanel"
 import { PENDING_AI_CONSUMER_REPLY_KEY, parsePendingAiConsumerReply } from "../../types/aiOutboundApproval"
@@ -2765,20 +2766,31 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
                               </button>
                               <button
                                 type="button"
-                                disabled
-                                title="Call from app — coming soon"
+                                disabled={!detailForm.phone.trim()}
+                                onClick={() => {
+                                  const phone = detailForm.phone.trim()
+                                  if (!phone) return
+                                  void callFromTradesmanMessenger({
+                                    phone,
+                                    label: detailForm.customerName?.trim() || undefined,
+                                    preferMessagingApp: isMobile,
+                                  }).then((r) => {
+                                    if (!r.ok && r.error) alert(r.error)
+                                  })
+                                }}
                                 style={{
                                   alignSelf: "flex-start",
                                   padding: "8px 14px",
-                                  border: `1px solid ${theme.border}`,
+                                  border: `1px solid ${theme.primary}`,
                                   borderRadius: "6px",
-                                  background: "#f3f4f6",
-                                  color: "#9ca3af",
-                                  cursor: "not-allowed",
+                                  background: theme.primary,
+                                  color: "#fff",
+                                  cursor: detailForm.phone.trim() ? "pointer" : "not-allowed",
                                   fontWeight: 600,
+                                  opacity: detailForm.phone.trim() ? 1 : 0.5,
                                 }}
                               >
-                                Call from app (soon)
+                                Call from Tradesman Messenger
                               </button>
                             </div>
                           </div>

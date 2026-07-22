@@ -271,10 +271,18 @@ export default function MessengerWidget({ setPage }: Props) {
     [me, openThread, refreshThreads],
   )
 
-  // Open from the dashboard tile
+  // Open from the dashboard tile or "Call from Tradesman Messenger"
   useEffect(() => {
     return onOpenMessenger((detail) => {
       setOpen(true)
+      if (detail.dialPhone?.trim()) {
+        setView("dial")
+        setDialNumber(detail.dialPhone.trim())
+        setDialSelectedName(detail.dialLabel?.trim() || null)
+        setDialCustQuery(detail.dialLabel?.trim() || "")
+        setDialMsg(null)
+        return
+      }
       if (detail.otherUserId) void openDirect(detail.otherUserId)
       else setView("list")
     })

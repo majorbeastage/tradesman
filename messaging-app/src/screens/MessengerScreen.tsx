@@ -42,6 +42,7 @@ import {
 } from "../lib/internalMessaging"
 import MessageActionTarget from "../components/MessageActionTarget"
 import { ensureMessagingPush, loadMessagingNotifPrefs, saveMessagingNotifPrefs } from "../lib/messagingNotifications"
+import { PENDING_DIAL_EVENT, takePendingDial, type PendingDial } from "../lib/pendingDial"
 
 type Peer = { id: string; name: string }
 type Tab = "chats" | "new" | "phone" | "calendar" | "settings"
@@ -90,6 +91,27 @@ export default function MessengerScreen({ me }: { me: string }) {
   const [dialCustResults, setDialCustResults] = useState<MessengerCustomer[]>([])
   const [dialSelectedName, setDialSelectedName] = useState<string | null>(null)
   const voice = useVoiceDevice()
+
+  // Prefill Phone tab when Main app hands off a customer number.
+  useEffect(() => {
+    function applyDial(d: PendingDial) {
+      setTab("phone")
+      setDialNumber(d.phone)
+      setDialSelectedName(d.label ?? null)
+      setDialCustQuery(d.label ?? "")
+    }
+    const existing = takePendingDial()
+    if (existing) applyDial(existing)
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent<PendingDial>).detail
+      if (d?.phone?.trim()) {
+        takePendingDial()
+        applyDial({ phone: d.phone.trim(), label: d.label?.trim() || undefined })
+      }
+    }
+    window.addEventListener(PENDING_DIAL_EVENT, handler)
+    return () => window.removeEventListener(PENDING_DIAL_EVENT, handler)
+  }, [])
 
   // Calendar
   const [calEvents, setCalEvents] = useState<MobileCalendarEvent[]>([])

@@ -6,6 +6,7 @@ import { useVoiceDevice } from "../lib/useVoiceDevice"
 import InCallControls, { formatCallStateLabel } from "./InCallControls"
 import TwilioBridgeCallButton from "./TwilioBridgeCallButton"
 import { openPhoneDialer } from "../lib/telDial"
+import { callFromTradesmanMessenger } from "../lib/callFromMessenger"
 
 type Props = {
   phone: string
@@ -25,8 +26,8 @@ function toE164(raw: string): string | null {
 }
 
 /**
- * Customer call entry: on native, softphone (in-app mute/keypad/speaker) is primary;
- * cell-bridge and personal dialer remain secondary.
+ * Customer call entry on native: Tradesman Messenger first, then softphone in this app,
+ * then cell-bridge and personal dialer.
  */
 export default function SoftphonePrimaryCallButton({ phone, hint, compact, bridgeOwnerUserId, label }: Props) {
   const { session } = useAuth()
@@ -36,11 +37,26 @@ export default function SoftphonePrimaryCallButton({ phone, hint, compact, bridg
   const e164 = toE164(trimmed)
   const showBridge = Boolean(bridgeOwnerUserId?.trim() && session?.access_token)
   const [busy, setBusy] = useState(false)
+  const [messengerBusy, setMessengerBusy] = useState(false)
 
   if (!trimmed) return null
 
   const callActive = voice.callState !== "idle"
   const displayLabel = label?.trim() || trimmed
+
+  async function openMessengerCall() {
+    setMessengerBusy(true)
+    try {
+      const r = await callFromTradesmanMessenger({
+        phone: trimmed,
+        label: displayLabel,
+        preferMessagingApp: true,
+      })
+      if (!r.ok && r.error) alert(r.error)
+    } finally {
+      setMessengerBusy(false)
+    }
+  }
 
   async function startSoftphone() {
     if (!e164) {
@@ -77,8 +93,8 @@ export default function SoftphonePrimaryCallButton({ phone, hint, compact, bridg
         <>
           <button
             type="button"
-            disabled={busy}
-            onClick={() => void startSoftphone()}
+            disabled={messengerBusy}
+            onClick={() => void openMessengerCall()}
             style={{
               padding: compact ? "6px 12px" : "8px 14px",
               borderRadius: 8,
@@ -86,15 +102,37 @@ export default function SoftphonePrimaryCallButton({ phone, hint, compact, bridg
               background: theme.primary,
               color: "#fff",
               fontWeight: 700,
+              cursor: messengerBusy ? "default" : "pointer",
+              fontSize: compact ? 12 : 14,
+              opacity: messengerBusy ? 0.7 : 1,
+            }}
+          >
+            {messengerBusy ? "Opening Messenger…" : "Call from Tradesman Messenger"}
+          </button>
+          <span style={{ fontSize: 11, color: "#047857", maxWidth: 340, lineHeight: 1.35, fontWeight: 600 }}>
+            Opens the Tradesman Messenger app to call with mute, keypad, and business caller ID.
+          </span>
+
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void startSoftphone()}
+            style={{
+              padding: compact ? "6px 12px" : "8px 14px",
+              borderRadius: 8,
+              border: `1px solid ${theme.border}`,
+              background: "#f9fafb",
+              color: theme.text,
+              fontWeight: 700,
               cursor: busy ? "default" : "pointer",
               fontSize: compact ? 12 : 14,
               opacity: busy ? 0.7 : 1,
             }}
           >
-            {busy ? "Connecting…" : native ? "Call" : "Call from business line (in-app)"}
+            {busy ? "Connecting…" : native ? "Call in this app" : "Call from business line (in-app)"}
           </button>
-          <span style={{ fontSize: 11, color: "#047857", maxWidth: 340, lineHeight: 1.35, fontWeight: 600 }}>
-            In-app call with mute, keypad, and speaker. Customer sees your business caller ID.
+          <span style={{ fontSize: 11, color: "#6b7280", maxWidth: 340, lineHeight: 1.35 }}>
+            Softphone stays in Tradesman (mute / keypad / speaker). Customer still sees your business caller ID.
           </span>
         </>
       )}
