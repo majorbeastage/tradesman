@@ -27,14 +27,14 @@ export const PRODUCT_PACKAGES: {
   title: string
   priceLine: string
 }[] = [
-  { id: "base", title: "Base Package · 1 User", priceLine: "$124.99/month + applicable taxes and fees*" },
-  { id: "office_manager_entry", title: "Office Manager Entry Level", priceLine: "$159.99/month + applicable taxes and fees*" },
+  { id: "base", title: "Base Package · 1 User", priceLine: "$89.99/month + applicable taxes and fees*" },
+  { id: "office_manager_entry", title: "Office Manager Entry Level", priceLine: "$149.99/month + applicable taxes and fees*" },
   { id: "office_manager_pro", title: "Office Manager Pro", priceLine: "$199.99/month + applicable taxes and fees*" },
   { id: "office_manager_elite", title: "Office Manager Elite", priceLine: "$369.99/month + applicable taxes and fees*" },
   {
     id: "corporate",
     title: "Corporate",
-    priceLine: "$649.99/month + applicable taxes and fees*",
+    priceLine: "$599.99/month + applicable taxes and fees*",
   },
   {
     id: "estimate_tools_only",
@@ -45,11 +45,11 @@ export const PRODUCT_PACKAGES: {
 
 const LABEL_BY_ID: Record<ProductPackageId, string> = {
   estimate_tools_only: "1 Tool - 1 User — $49.99/mo",
-  base: "Base Package — $124.99/mo",
-  office_manager_entry: "Office Manager Entry Level — $159.99/mo",
+  base: "Base Package — $89.99/mo",
+  office_manager_entry: "Office Manager Entry Level — $149.99/mo",
   office_manager_pro: "Office Manager Pro — $199.99/mo",
   office_manager_elite: "Office Manager Elite — $369.99/mo",
-  corporate: "Corporate — $649.99/mo",
+  corporate: "Corporate — $599.99/mo",
 }
 
 export function labelForProductPackageId(id: string | null | undefined): string {

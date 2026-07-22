@@ -133,10 +133,11 @@ export async function handleNotifyAdminVerifiedSignup(req: VercelRequest, res: V
       : {}
   const productPackageRaw = typeof signupExtras.product_package === "string" ? signupExtras.product_package.trim() : ""
   const productPackageLabel: Record<string, string> = {
-    base: "Base Package — $124.99/mo",
-    office_manager_entry: "Office Manager Entry Level — $159.99/mo",
+    base: "Base Package — $89.99/mo",
+    office_manager_entry: "Office Manager Entry Level — $149.99/mo",
     office_manager_pro: "Office Manager Pro — $199.99/mo",
     office_manager_elite: "Office Manager Elite — $369.99/mo",
+    corporate: "Corporate — $599.99/mo",
   }
   const productPackageLine = productPackageRaw
     ? productPackageLabel[productPackageRaw] ?? productPackageRaw

@@ -34,7 +34,7 @@ export const PACKAGE_ENTITLEMENTS: Record<ProductPackageId, PackageEntitlements>
     smsMessagesPerUser: 0,
   },
   base: {
-    monthlyUsd: 124.99,
+    monthlyUsd: 89.99,
     maxUsers: 1,
     maxOfficeManagers: 0,
     maxLeadsPerMonth: 5,
@@ -42,7 +42,7 @@ export const PACKAGE_ENTITLEMENTS: Record<ProductPackageId, PackageEntitlements>
     smsMessagesPerUser: 200,
   },
   office_manager_entry: {
-    monthlyUsd: 159.99,
+    monthlyUsd: 149.99,
     maxUsers: 2,
     maxOfficeManagers: 1,
     maxLeadsPerMonth: 10,
@@ -66,7 +66,7 @@ export const PACKAGE_ENTITLEMENTS: Record<ProductPackageId, PackageEntitlements>
     smsMessagesPerUser: 200,
   },
   corporate: {
-    monthlyUsd: 649.99,
+    monthlyUsd: 599.99,
     maxUsers: 23,
     maxOfficeManagers: 3,
     maxLeadsPerMonth: 50,

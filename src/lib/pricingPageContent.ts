@@ -62,7 +62,7 @@ export const PRICING_TIERS: PricingTierContent[] = [
   {
     id: "base",
     title: "Base Package · 1 User",
-    priceMonthly: 124.99,
+    priceMonthly: 89.99,
     seats: "1 user sign-in",
     tagline: "Full customer communications, estimates, scheduling, and payments for a solo operator or owner-operator.",
     usageDisclaimer:
@@ -107,7 +107,7 @@ export const PRICING_TIERS: PricingTierContent[] = [
   {
     id: "office_manager_entry",
     title: "Office Manager Entry Level",
-    priceMonthly: 159.99,
+    priceMonthly: 149.99,
     seats: "1 Office Manager + 1 User",
     tagline: "Add team visibility, permissions, and schedule control on top of the Base Package.",
     buildsOnLowerTiers: true,
@@ -169,7 +169,7 @@ export const PRICING_TIERS: PricingTierContent[] = [
   {
     id: "corporate",
     title: "Corporate",
-    priceMonthly: 649.99,
+    priceMonthly: 599.99,
     seats: "3 Office Managers · 10 External · 10 Internal",
     tagline: "Multi-department operations with internal-only users and first access to upcoming platform tools.",
     buildsOnLowerTiers: true,

@@ -8,10 +8,11 @@ import { notifyAdminOps } from "./_adminOpsNotify.js"
 import { recordAdminOpsCustomerEvent } from "./_adminOpsCustomerEvent.js"
 
 const PRODUCT_PACKAGE_LABEL: Record<string, string> = {
-  base: "Base Package — $124.99/mo",
-  office_manager_entry: "Office Manager Entry Level — $159.99/mo",
+  base: "Base Package — $89.99/mo",
+  office_manager_entry: "Office Manager Entry Level — $149.99/mo",
   office_manager_pro: "Office Manager Pro — $199.99/mo",
   office_manager_elite: "Office Manager Elite — $369.99/mo",
+  corporate: "Corporate — $599.99/mo",
   estimate_tools_only: "Estimate Tools only — $49.99/mo",
 }
 

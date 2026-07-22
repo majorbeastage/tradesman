@@ -116,11 +116,11 @@ export function validatePromoForSignup(
 
 const PACKAGE_MONTHLY_USD: Record<string, number> = {
   estimate_tools_only: 49.99,
-  base: 124.99,
-  office_manager_entry: 159.99,
+  base: 89.99,
+  office_manager_entry: 149.99,
   office_manager_pro: 199.99,
   office_manager_elite: 369.99,
-  corporate: 649.99,
+  corporate: 599.99,
 }
 
 const PRORATION_CYCLE_DAYS = 30
