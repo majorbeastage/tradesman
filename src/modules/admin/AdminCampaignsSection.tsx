@@ -20,6 +20,7 @@ import {
 } from "../../lib/adCampaigns"
 import { GROWTH_METADATA_KEY, type GrowthModuleDoc } from "../../lib/growthModule"
 import { mergeBillingIntoProfileMetadata, parseBillingMetadata } from "../../lib/billingProfileMetadata"
+import SocialBannerBuilder from "./SocialBannerBuilder"
 
 type ClientOpt = { id: string; label: string; email: string | null }
 
@@ -598,6 +599,18 @@ export default function AdminCampaignsSection() {
           Create request
         </button>
       </div>
+
+      <SocialBannerBuilder
+        seed={
+          selected
+            ? {
+                clientName: clients.find((c) => c.id === selected.profile_id)?.label.split(" · ")[0]?.replace(/\s*\(.*\)\s*$/, "").trim() || selected.name,
+                headline: selected.name,
+                subhead: selected.request_details?.trim().split("\n")[0]?.slice(0, 120) || "Licensed · Local · Fast response",
+              }
+            : null
+        }
+      />
     </div>
   )
 }
