@@ -637,6 +637,7 @@ export const ACCOUNT_PORTAL_SECTIONS: { id: string; label: string }[] = [
   { id: "call_screening", label: "Optional call screening / auto-attendant (AI or recorded menu)" },
   { id: "mobile_app", label: "Mobile App and Notifications — push, GPS, alerts" },
   { id: "app_scheme", label: "Appearance — color scheme & custom logo" },
+  { id: "google_reserve", label: "Google Reserve — booking calendar" },
   { id: "ai_automations", label: "AI automations (master toggle for AI options on other tabs)" },
   { id: "password_reset", label: "Password reset button" },
   { id: "help_desk", label: "Help desk & toll-free greeting line (user-friendly copy)" },

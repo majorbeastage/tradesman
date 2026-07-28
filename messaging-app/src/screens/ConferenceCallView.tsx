@@ -1,5 +1,5 @@
 import { Capacitor } from "@capacitor/core"
-import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react"
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react"
 import type { useConferenceRoom } from "../lib/useConferenceRoom"
 
 type RoomApi = ReturnType<typeof useConferenceRoom>
@@ -16,8 +16,25 @@ function initials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
 }
 
+function streamHasLiveVideo(stream: MediaStream | null | undefined): boolean {
+  if (!stream) return false
+  return stream.getVideoTracks().some((t) => t.readyState === "live")
+}
+
 /** Attach a remote WebRTC stream so audio (and optional video) actually plays. */
-function RemoteMedia({ stream, video, muted, label, screen }: { stream: MediaStream | null; video?: boolean; muted?: boolean; label: string; screen?: boolean }) {
+function RemoteMedia({
+  stream,
+  video,
+  muted,
+  label,
+  screen,
+}: {
+  stream: MediaStream | null
+  video?: boolean
+  muted?: boolean
+  label: string
+  screen?: boolean
+}) {
   const ref = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
   useEffect(() => {
     const el = ref.current
@@ -30,9 +47,17 @@ function RemoteMedia({ stream, video, muted, label, screen }: { stream: MediaStr
     return (
       <div style={{ ...tile, aspectRatio: screen ? "16 / 9" : "3 / 4" }}>
         {stream ? (
-          <video ref={ref as RefObject<HTMLVideoElement>} autoPlay playsInline muted={muted} style={{ width: "100%", height: "100%", objectFit: screen ? "contain" : "cover" }} />
+          <video
+            ref={ref as RefObject<HTMLVideoElement>}
+            autoPlay
+            playsInline
+            muted={muted}
+            style={{ width: "100%", height: "100%", objectFit: screen ? "contain" : "cover" }}
+          />
         ) : (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#94a3b8", fontSize: 13 }}>connecting…</div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#94a3b8", fontSize: 13 }}>
+            connecting…
+          </div>
         )}
         <span style={tileLabel}>{label}</span>
       </div>
@@ -42,7 +67,19 @@ function RemoteMedia({ stream, video, muted, label, screen }: { stream: MediaStr
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 12, background: "rgba(255,255,255,0.08)" }}>
       {stream ? <audio ref={ref as RefObject<HTMLAudioElement>} autoPlay playsInline /> : null}
-      <span style={{ width: 44, height: 44, borderRadius: "50%", background: "#334155", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800 }}>
+      <span
+        style={{
+          width: 44,
+          height: 44,
+          borderRadius: "50%",
+          background: "#334155",
+          color: "#fff",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontWeight: 800,
+        }}
+      >
         {initials(label)}
       </span>
       <span style={{ fontSize: 16, fontWeight: 700, color: "#fff", flex: 1 }}>{label}</span>
@@ -96,26 +133,57 @@ export default function ConferenceCallView({
   room,
   selfName,
   chat,
+  teamPeers,
+  onInvitePeople,
 }: {
   room: RoomApi
   selfName: string
   chat?: ChatProps | null
+  teamPeers?: { id: string; name: string }[]
+  onInvitePeople?: (ids: string[]) => void
 }) {
   const { state, participants, incoming, muted, cameraOn, isVideo, sharingScreen, speakerOn, seconds, error, selfStream } = room
   const [showChat, setShowChat] = useState(false)
   const [text, setText] = useState("")
+  const [addOpen, setAddOpen] = useState(false)
+  const [addSel, setAddSel] = useState<Set<string>>(new Set())
   const endRef = useRef<HTMLDivElement | null>(null)
-  const canScreenShare = Capacitor.getPlatform() !== "android"
+  // Mobile WebViews cannot reliably getDisplayMedia — hide Share; still show remote video/screens.
+  const canScreenShare = !Capacitor.isNativePlatform()
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [chat?.messages.length, showChat])
 
+  const remoteHasVideo = useMemo(
+    () => participants.some((p) => streamHasLiveVideo(p.stream)),
+    [participants],
+  )
+  const showVideoLayout = isVideo || sharingScreen || remoteHasVideo || streamHasLiveVideo(selfStream)
+
+  const addablePeers = useMemo(() => {
+    const inCall = new Set(participants.map((p) => p.id))
+    return (teamPeers ?? []).filter((p) => !inCall.has(p.id))
+  }, [teamPeers, participants])
+
   if (state === "incoming" && incoming) {
     return (
       <div style={fullscreen}>
         <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, padding: 24 }}>
-          <div style={{ width: 88, height: 88, borderRadius: "50%", background: "#334155", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 28 }}>
+          <div
+            style={{
+              width: 88,
+              height: 88,
+              borderRadius: "50%",
+              background: "#334155",
+              color: "#fff",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontWeight: 900,
+              fontSize: 28,
+            }}
+          >
             {initials(incoming.fromName)}
           </div>
           <div style={{ fontSize: 24, fontWeight: 800, color: "#fff", textAlign: "center" }}>{incoming.fromName}</div>
@@ -146,6 +214,25 @@ export default function ConferenceCallView({
     setText("")
   }
 
+  function toggleAdd(id: string) {
+    setAddSel((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function confirmAdd() {
+    if (!onInvitePeople || addSel.size === 0) {
+      setAddOpen(false)
+      return
+    }
+    onInvitePeople([...addSel])
+    setAddSel(new Set())
+    setAddOpen(false)
+  }
+
   return (
     <div style={fullscreen}>
       <div style={{ textAlign: "center", padding: "16px 12px 4px" }}>
@@ -153,16 +240,33 @@ export default function ConferenceCallView({
         <div style={{ marginTop: 2, fontSize: 14, fontWeight: 600, color: "#cbd5e1" }}>
           {stateText}
           {sharingScreen ? " · Sharing screen" : ""}
+          {remoteHasVideo && !sharingScreen && !isVideo ? " · Screen / video incoming" : ""}
         </div>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
-        {isVideo || sharingScreen ? (
+        {showVideoLayout ? (
           <div style={{ display: "grid", gridTemplateColumns: participants.length > 0 ? "1fr 1fr" : "1fr", gap: 8 }}>
-            {participants.map((p) => (
-              <RemoteMedia key={p.id} stream={p.stream} video label={p.name} />
-            ))}
-            <RemoteMedia stream={selfStream} video muted label={sharingScreen ? `${selfName} (screen)` : selfName} screen={sharingScreen} />
+            {participants.map((p) => {
+              const peerVideo = streamHasLiveVideo(p.stream)
+              const looksLikeScreen = peerVideo && (p.stream?.getVideoTracks()[0]?.getSettings?.().displaySurface != null || p.stream?.getVideoTracks()[0]?.label?.toLowerCase().includes("screen"))
+              return (
+                <RemoteMedia
+                  key={p.id}
+                  stream={p.stream}
+                  video={peerVideo || isVideo || sharingScreen}
+                  label={looksLikeScreen ? `${p.name} (screen)` : p.name}
+                  screen={Boolean(looksLikeScreen)}
+                />
+              )
+            })}
+            <RemoteMedia
+              stream={selfStream}
+              video
+              muted
+              label={sharingScreen ? `${selfName} (screen)` : selfName}
+              screen={sharingScreen}
+            />
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -176,7 +280,17 @@ export default function ConferenceCallView({
         )}
 
         {showChat && chat ? (
-          <div style={{ marginTop: 12, borderRadius: 12, background: "rgba(255,255,255,0.08)", overflow: "hidden", maxHeight: 220, display: "flex", flexDirection: "column" }}>
+          <div
+            style={{
+              marginTop: 12,
+              borderRadius: 12,
+              background: "rgba(255,255,255,0.08)",
+              overflow: "hidden",
+              maxHeight: 220,
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
             <div style={{ flex: 1, overflowY: "auto", padding: 10, display: "flex", flexDirection: "column", gap: 6 }}>
               {chat.messages.length === 0 ? (
                 <div style={{ color: "#94a3b8", fontSize: 13, textAlign: "center" }}>Message while you talk</div>
@@ -184,7 +298,18 @@ export default function ConferenceCallView({
                 chat.messages.map((m) => (
                   <div key={m.id} style={{ alignSelf: m.mine ? "flex-end" : "flex-start", maxWidth: "85%" }}>
                     {!m.mine ? <div style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>{m.senderLabel}</div> : null}
-                    <div style={{ padding: "7px 10px", borderRadius: 10, background: m.mine ? "#f97316" : "#1e293b", color: "#fff", fontSize: 14, whiteSpace: "pre-wrap" }}>{m.body}</div>
+                    <div
+                      style={{
+                        padding: "7px 10px",
+                        borderRadius: 10,
+                        background: m.mine ? "#f97316" : "#1e293b",
+                        color: "#fff",
+                        fontSize: 14,
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {m.body}
+                    </div>
                   </div>
                 ))
               )}
@@ -207,13 +332,98 @@ export default function ConferenceCallView({
         {error ? <p style={{ margin: "12px 0 0", fontSize: 13, color: "#fca5a5", textAlign: "center" }}>{error}</p> : null}
       </div>
 
+      {addOpen ? (
+        <div
+          style={{
+            position: "absolute",
+            left: 12,
+            right: 12,
+            bottom: 110,
+            maxHeight: "45%",
+            overflow: "auto",
+            background: "#1e293b",
+            border: "1px solid #334155",
+            borderRadius: 14,
+            padding: 12,
+            zIndex: 20,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
+            <strong style={{ flex: 1, color: "#fff", fontSize: 14 }}>Add to call</strong>
+            <button type="button" onClick={() => setAddOpen(false)} style={{ border: "none", background: "transparent", color: "#94a3b8", fontSize: 18, cursor: "pointer" }}>
+              ×
+            </button>
+          </div>
+          {addablePeers.length === 0 ? (
+            <div style={{ color: "#94a3b8", fontSize: 13, padding: 8 }}>Everyone on your team is already on this call (or no teammates loaded).</div>
+          ) : (
+            addablePeers.map((p) => {
+              const on = addSel.has(p.id)
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => toggleAdd(p.id)}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "10px 8px",
+                    border: "none",
+                    borderBottom: "1px solid #334155",
+                    background: on ? "#1d4ed8" : "transparent",
+                    color: "#fff",
+                    cursor: "pointer",
+                    textAlign: "left",
+                    fontWeight: 700,
+                    fontSize: 14,
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 18,
+                      height: 18,
+                      borderRadius: 4,
+                      border: `2px solid ${on ? "#fff" : "#64748b"}`,
+                      background: on ? "#fff" : "transparent",
+                      color: "#1d4ed8",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: 12,
+                    }}
+                  >
+                    {on ? "✓" : ""}
+                  </span>
+                  {p.name}
+                </button>
+              )
+            })
+          )}
+          <button
+            type="button"
+            onClick={confirmAdd}
+            disabled={addSel.size === 0}
+            style={{
+              marginTop: 10,
+              width: "100%",
+              border: "none",
+              borderRadius: 10,
+              padding: "12px",
+              background: addSel.size ? "#f97316" : "#334155",
+              color: "#fff",
+              fontWeight: 800,
+              cursor: addSel.size ? "pointer" : "default",
+            }}
+          >
+            {addSel.size ? `Add (${addSel.size})` : "Select people"}
+          </button>
+        </div>
+      ) : null}
+
       <div style={{ display: "flex", gap: 8, padding: "10px 12px calc(14px + env(safe-area-inset-bottom))", justifyContent: "center", flexWrap: "wrap" }}>
-        <ControlBtn
-          label={muted ? "Unmute" : "Mute"}
-          sub="Microphone"
-          onClick={room.toggleMute}
-          mutedLook={muted}
-        />
+        <ControlBtn label={muted ? "Unmute" : "Mute"} sub="Microphone" onClick={room.toggleMute} mutedLook={muted} />
         <ControlBtn
           label={speakerOn ? "Loudspeaker" : "Earpiece"}
           sub={speakerOn ? "Tap for phone" : "Tap for speaker"}
@@ -230,6 +440,9 @@ export default function ConferenceCallView({
             onClick={() => void (sharingScreen ? room.stopScreenShare() : room.startScreenShare())}
             active={sharingScreen}
           />
+        ) : null}
+        {onInvitePeople && (teamPeers?.length ?? 0) > 0 ? (
+          <ControlBtn label="Add" sub="Teammate" onClick={() => setAddOpen((v) => !v)} active={addOpen} />
         ) : null}
         {chat ? <ControlBtn label={showChat ? "Hide chat" : "Chat"} onClick={() => setShowChat((v) => !v)} active={showChat} /> : null}
         <ControlBtn label="Hang up" onClick={room.hangup} danger />

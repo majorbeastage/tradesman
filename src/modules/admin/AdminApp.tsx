@@ -24,6 +24,7 @@ import AdminOnboardingMaterialsSection from "./AdminOnboardingMaterialsSection"
 import AdminTroubleTicketsSection from "./AdminTroubleTicketsSection"
 import AdminOpsInboxSection from "./AdminOpsInboxSection"
 import AdminTrafficSection from "./AdminTrafficSection"
+import AdminCampaignsSection from "./AdminCampaignsSection"
 import type { PortalConfig, PortalCustomItem, PageControl, PortalSettingItem, CustomActionButton } from "../../types/portal-builder"
 import {
   TAB_ID_LABELS,
@@ -559,7 +560,7 @@ function AdminAppInner() {
   /** When false, control items with hideFromAdmin are omitted from this list (toggle to edit them). */
   const [showPortalItemsHiddenFromAdmin, setShowPortalItemsHiddenFromAdmin] = useState(false)
   const [adminPanel, setAdminPanel] = useState<
-    "ops" | "traffic" | "signup" | "communications" | "users" | "billing" | "portal" | "tickets" | "about"
+    "ops" | "traffic" | "campaigns" | "signup" | "communications" | "users" | "billing" | "portal" | "tickets" | "about"
   >("ops")
 
   useEffect(() => {
@@ -572,6 +573,7 @@ function AdminAppInner() {
       if (
         pending === "ops" ||
         pending === "traffic" ||
+        pending === "campaigns" ||
         pending === "signup" ||
         pending === "communications" ||
         pending === "users" ||
@@ -1170,6 +1172,23 @@ function AdminAppInner() {
           </button>
           <button
             type="button"
+            onClick={() => setAdminPanel("campaigns")}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 6,
+              border: `1px solid rgba(255,255,255,0.35)`,
+              background: adminPanel === "campaigns" ? "rgba(249,115,22,0.45)" : "rgba(0,0,0,0.2)",
+              color: "white",
+              fontSize: 13,
+              cursor: "pointer",
+              fontWeight: adminPanel === "campaigns" ? 600 : 400,
+              textAlign: "left",
+            }}
+          >
+            Ads &amp; campaigns
+          </button>
+          <button
+            type="button"
             onClick={() => setAdminPanel("signup")}
             style={{
               padding: "8px 12px",
@@ -1471,6 +1490,8 @@ function AdminAppInner() {
           <AdminOpsInboxSection onOpenTickets={() => setAdminPanel("tickets")} onOpenUsers={() => setAdminPanel("users")} />
         ) : adminPanel === "traffic" ? (
           <AdminTrafficSection />
+        ) : adminPanel === "campaigns" ? (
+          <AdminCampaignsSection />
         ) : adminPanel === "users" ? (
           <div>
             <AdminSettingBlock id="admin:users:page_intro">

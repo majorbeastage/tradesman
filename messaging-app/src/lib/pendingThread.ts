@@ -88,10 +88,17 @@ export function takePendingThread(): PendingThread | null {
 export function parseThreadFromUrl(url: string): PendingThread | null {
   try {
     const hashIndex = url.indexOf("#")
+    const withoutHash = hashIndex >= 0 ? url.slice(0, hashIndex) : url
+    const qIndex = withoutHash.indexOf("?")
+    const query = qIndex >= 0 ? withoutHash.slice(qIndex + 1) : ""
     const frag = hashIndex >= 0 ? url.slice(hashIndex + 1) : ""
-    const qIndex = url.indexOf("?")
-    const query = qIndex >= 0 ? url.slice(qIndex + 1, hashIndex >= 0 ? hashIndex : undefined) : ""
-    const params = new URLSearchParams(frag || query)
+    const params = new URLSearchParams(query)
+    if (frag) {
+      const fp = new URLSearchParams(frag.includes("=") ? frag : "")
+      fp.forEach((v, k) => {
+        if (!params.has(k)) params.set(k, v)
+      })
+    }
     const pathMatch = url.match(/tradesmanmsg:\/\/thread\/([0-9a-f-]{36})/i)
     const threadId = params.get("thread")?.trim() || pathMatch?.[1] || ""
     if (!threadId) return null
@@ -105,8 +112,11 @@ export function parseThreadFromUrl(url: string): PendingThread | null {
 export function parseMissedFromUrl(url: string): boolean {
   try {
     const hashIndex = url.indexOf("#")
+    const withoutHash = hashIndex >= 0 ? url.slice(0, hashIndex) : url
+    const qIndex = withoutHash.indexOf("?")
+    const query = qIndex >= 0 ? withoutHash.slice(qIndex + 1) : ""
     const frag = hashIndex >= 0 ? url.slice(hashIndex + 1) : ""
-    const params = new URLSearchParams(frag)
+    const params = new URLSearchParams(query || frag)
     return params.get("missed") === "1"
   } catch {
     return false

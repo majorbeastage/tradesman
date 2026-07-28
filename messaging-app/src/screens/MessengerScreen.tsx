@@ -280,14 +280,27 @@ export default function MessengerScreen({ me }: { me: string }) {
   }, [me, refresh])
 
   // Android back: close thread / leave nested screens before exiting the app.
+  // Depend on room.state (and stable callbacks via refs) — NOT the whole `room` object,
+  // which is a new reference every render and was clearing the handler constantly.
+  const roomStateRef = useRef(room.state)
+  roomStateRef.current = room.state
+  const roomHangupRef = useRef(room.hangup)
+  roomHangupRef.current = room.hangup
+  const roomDeclineRef = useRef(room.decline)
+  roomDeclineRef.current = room.decline
+
   useEffect(() => {
     setAndroidBackHandler(() => {
-      if (room.state === "incoming") {
-        room.decline()
+      if (roomStateRef.current === "incoming") {
+        roomDeclineRef.current()
         return true
       }
-      if (room.state !== "idle") {
-        room.hangup()
+      if (roomStateRef.current !== "idle") {
+        roomHangupRef.current()
+        return true
+      }
+      if (availOpen) {
+        setAvailOpen(false)
         return true
       }
       if (custPickerOpen) {
@@ -314,7 +327,7 @@ export default function MessengerScreen({ me }: { me: string }) {
       return false
     })
     return () => setAndroidBackHandler(null)
-  }, [room, custPickerOpen, emojiOpen, muteMenuOpen, selected, tab])
+  }, [availOpen, custPickerOpen, emojiOpen, muteMenuOpen, selected, tab])
 
   async function startSelectedChat() {
     if (newSel.size === 0) return
@@ -458,7 +471,15 @@ export default function MessengerScreen({ me }: { me: string }) {
       : null
 
   if (room.state !== "idle") {
-    return <ConferenceCallView room={room} selfName={myName} chat={inCallChat} />
+    return (
+      <ConferenceCallView
+        room={room}
+        selfName={myName}
+        chat={inCallChat}
+        teamPeers={peers.filter((p) => p.id !== me).map((p) => ({ id: p.id, name: p.name || peerName(p.id) }))}
+        onInvitePeople={(ids) => void room.inviteMore(ids)}
+      />
+    )
   }
 
   const topNav = (compact?: boolean) => (
@@ -608,12 +629,40 @@ export default function MessengerScreen({ me }: { me: string }) {
   }
 
   // ── Open chat ─────────────────────────────────────────────────────────────
-  if (selected && selectedThread) {
+  if (selected) {
+    if (!selectedThread) {
+      return (
+        <div className="app-shell">
+          {topNav(true)}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid var(--border)", background: "#fff" }}>
+            <button
+              type="button"
+              onClick={() => {
+                setSelected(null)
+                setTab("chats")
+              }}
+              style={{ border: "none", background: "transparent", fontSize: 22, cursor: "pointer", color: "var(--text)" }}
+            >
+              ‹
+            </button>
+            <strong style={{ flex: 1, fontSize: 15 }}>Conversation</strong>
+          </div>
+          <div style={{ flex: 1, padding: 24, color: "var(--muted)", textAlign: "center" }}>Loading conversation…</div>
+        </div>
+      )
+    }
     return (
       <div className="app-shell">
         {topNav(true)}
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid var(--border)", background: "#fff", position: "relative" }}>
-          <button type="button" onClick={() => setSelected(null)} style={{ border: "none", background: "transparent", fontSize: 22, cursor: "pointer", color: "var(--text)" }}>
+          <button
+            type="button"
+            onClick={() => {
+              setSelected(null)
+              setTab("chats")
+            }}
+            style={{ border: "none", background: "transparent", fontSize: 22, cursor: "pointer", color: "var(--text)" }}
+          >
             ‹
           </button>
           <strong style={{ flex: 1, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{threadTitle(selectedThread)}</strong>
@@ -1009,13 +1058,34 @@ export default function MessengerScreen({ me }: { me: string }) {
                 placeholder="(555) 123-4567"
                 style={{ padding: "14px", borderRadius: 10, border: "1px solid var(--border)", fontSize: 18, color: "#0f172a", background: "#fff" }}
               />
-              <button
-                type="button"
-                onClick={() => void voice.placePhoneCall(dialNumber)}
-                style={{ border: "none", background: "#059669", color: "#fff", borderRadius: 10, padding: "14px", fontWeight: 800, fontSize: 15, cursor: "pointer" }}
-              >
-                Call from app
-              </button>
+              <div style={{ display: "grid", gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => void voice.placePhoneCall(dialNumber)}
+                  style={{ border: "none", background: "#059669", color: "#fff", borderRadius: 10, padding: "14px", fontWeight: 800, fontSize: 15, cursor: "pointer" }}
+                >
+                  Call with Tradesman Messenger
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const digits = dialNumber.replace(/[^\d+]/g, "")
+                    if (!digits) return
+                    const tel = `tel:${digits}`
+                    try {
+                      window.location.href = tel
+                    } catch {
+                      window.open(tel, "_system")
+                    }
+                  }}
+                  style={{ border: "1px solid var(--border)", background: "#fff", color: "#0f172a", borderRadius: 10, padding: "14px", fontWeight: 800, fontSize: 15, cursor: "pointer" }}
+                >
+                  Call with Phone app
+                </button>
+                <p style={{ margin: 0, fontSize: 12, color: "var(--muted)", lineHeight: 1.45 }}>
+                  Messenger uses your Tradesman business number (Twilio). Phone app uses your personal cell line — like choosing Teams vs the regular dialer.
+                </p>
+              </div>
               {voice.error ? <p style={{ margin: 0, fontSize: 13, color: "#dc2626" }}>{voice.error}</p> : null}
             </>
           )}

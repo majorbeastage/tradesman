@@ -49,9 +49,17 @@ export function takePendingDial(): PendingDial | null {
 export function parseDialFromUrl(url: string): PendingDial | null {
   try {
     const hashIndex = url.indexOf("#")
+    const withoutHash = hashIndex >= 0 ? url.slice(0, hashIndex) : url
+    const qIndex = withoutHash.indexOf("?")
+    const query = qIndex >= 0 ? withoutHash.slice(qIndex + 1) : ""
     const frag = hashIndex >= 0 ? url.slice(hashIndex + 1) : ""
-    if (!frag) return null
-    const params = new URLSearchParams(frag)
+    const params = new URLSearchParams(query || frag)
+    if (query && frag) {
+      const fp = new URLSearchParams(frag)
+      fp.forEach((v, k) => {
+        if (!params.has(k)) params.set(k, v)
+      })
+    }
     const phone = params.get("phone")?.trim()
     if (!phone) return null
     const label = params.get("label")?.trim() || undefined

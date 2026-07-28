@@ -87,33 +87,33 @@ export async function openMessagingAppWithSession(opts?: {
   if (!session?.access_token || !session.refresh_token) {
     return { ok: false, error: "No active session. Sign in to Tradesman first." }
   }
-  let hash = `access_token=${encodeURIComponent(session.access_token)}&refresh_token=${encodeURIComponent(session.refresh_token)}`
+  let qs = `access_token=${encodeURIComponent(session.access_token)}&refresh_token=${encodeURIComponent(session.refresh_token)}`
   const phone = opts?.phone?.trim()
   if (phone) {
-    hash += `&phone=${encodeURIComponent(phone)}`
+    qs += `&phone=${encodeURIComponent(phone)}`
     const label = opts?.label?.trim()
-    if (label) hash += `&label=${encodeURIComponent(label)}`
+    if (label) qs += `&label=${encodeURIComponent(label)}`
   }
   const threadId = opts?.threadId?.trim()
   if (threadId) {
-    hash += `&thread=${encodeURIComponent(threadId)}`
+    qs += `&thread=${encodeURIComponent(threadId)}`
     const messageId = opts?.messageId?.trim()
-    if (messageId) hash += `&messageId=${encodeURIComponent(messageId)}`
+    if (messageId) qs += `&messageId=${encodeURIComponent(messageId)}`
   }
   if (opts?.openMissed) {
-    hash += `&missed=1`
+    qs += `&missed=1`
   }
   const playFallback = encodeURIComponent(MESSAGING_PLAY_STORE_URL)
-  const deepLink = `tradesmanmsg://auth#${hash}`
+  // Query string (not #fragment) — Android Intent / getLaunchUrl often drops fragments.
+  const deepLink = `tradesmanmsg://auth?${qs}`
 
   try {
     const nativeAndroid = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android"
     const android = nativeAndroid || isAndroidUa()
 
     if (android) {
-      // Prefer opening the installed package. browser_fallback_url only if package missing.
       const intent =
-        `intent://auth#${hash}#Intent;scheme=tradesmanmsg;package=${MESSAGING_ANDROID_PACKAGE};` +
+        `intent://auth?${qs}#Intent;scheme=tradesmanmsg;package=${MESSAGING_ANDROID_PACKAGE};` +
         `S.browser_fallback_url=${playFallback};end`
       if (nativeAndroid) {
         try {

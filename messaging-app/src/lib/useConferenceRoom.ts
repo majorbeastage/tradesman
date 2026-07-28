@@ -572,6 +572,38 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
     [acquireMedia, armCallAudio, cleanup, joinRoom, maybeStartTimer, me],
   )
 
+  // Invite additional teammates into the current call (same room id).
+  const inviteMore = useCallback(
+    async (memberIds: string[]) => {
+      const roomId = roomIdRef.current
+      const myId = meRef.current
+      if (!roomId || !myId || !supabase) return
+      const already = new Set([
+        myId,
+        ...participants.map((p) => p.id),
+        ...pendingInviteesRef.current,
+      ])
+      const toInvite = [...new Set(memberIds.filter((id) => id && id !== myId && !already.has(id)))]
+      if (toInvite.length === 0) return
+      for (const id of toInvite) {
+        pendingInviteesRef.current.push(id)
+        upsertParticipant(id, {})
+      }
+      const members = [myId, ...participants.map((p) => p.id), ...toInvite]
+      const invite: InvitePayload = {
+        roomId,
+        fromId: myId,
+        fromName: resolveNameRef.current(myId),
+        members,
+        video: callVideoRef.current,
+      }
+      for (const id of toInvite) {
+        await broadcastInbox(id, "invite", invite)
+      }
+    },
+    [broadcastInbox, participants, upsertParticipant],
+  )
+
   const accept = useCallback(async () => {
     const inv = incoming
     if (!inv) return
@@ -668,7 +700,10 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
     inbox.on("broadcast", { event: "invite" }, ({ payload }) => {
       const p = payload as InvitePayload
       if (!p?.roomId) return
-      if (roomIdRef.current || state !== "idle") return // busy
+      // Already in this room (e.g. mid-call re-invite) — ignore.
+      if (roomIdRef.current === p.roomId) return
+      // Busy on a different call — ignore for now.
+      if (roomIdRef.current || state !== "idle") return
       setIncoming({
         roomId: p.roomId,
         fromId: p.fromId,
@@ -750,6 +785,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
     setError,
     selfStream,
     startCall,
+    inviteMore,
     joinNamedRoom,
     accept,
     decline,

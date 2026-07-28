@@ -25,6 +25,7 @@ import { useLocale } from "../../i18n/LocaleContext"
 import MobileAppPreferencesCard from "../../components/MobileAppPreferencesCard"
 import NotificationSettingsCard from "../../components/NotificationSettingsCard"
 import AppSchemePicker from "../../components/AppSchemePicker"
+import GoogleReserveSettingsCard from "./GoogleReserveSettingsCard"
 import { TeamMemberInvitesPanel } from "../../components/TeamMemberInvitesPanel"
 import { TradesmanEmailSettingsPanel } from "../../components/TradesmanEmailSettingsPanel"
 import { BusinessWebProfilePanel } from "../../components/BusinessWebProfilePanel"
@@ -326,6 +327,7 @@ export function AccountProfilePanel({
     service_area: false,
     mobile_app: false,
     app_scheme: false,
+    google_reserve: false,
     business_hours: false,
     call_forwarding: false,
     call_screening: false,
@@ -1302,6 +1304,21 @@ export function AccountProfilePanel({
                     category={cat}
                   >
                     <AppSchemePicker profileUserId={profileUserId} canEdit={profileUserId === user?.id || !portalReadOnly} />
+                  </AccountFold>
+                </Fragment>
+              )
+              if (sectionId === "google_reserve") return (
+                <Fragment key={sectionId}>
+                  <AccountFold
+                    title="Google Reserve — booking calendar"
+                    open={foldOpen.google_reserve}
+                    onToggle={toggleFold("google_reserve")}
+                    category={cat}
+                  >
+                    <GoogleReserveSettingsCard
+                      profileUserId={profileUserId}
+                      canEdit={profileUserId === user?.id || !portalReadOnly}
+                    />
                   </AccountFold>
                 </Fragment>
               )
