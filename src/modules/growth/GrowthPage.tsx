@@ -509,7 +509,7 @@ function BudgetSection({
           marginBottom: 14,
         }}
       >
-        Status: {budget?.paymentWiringStatus === "connected" ? "Connected" : "Not connected — budget is planning only"}
+        Status: {budget?.paymentWiringStatus === "connected" ? "Connected to Payments" : "Not connected — Admin Ads & campaigns syncs spend to Payments"}
       </div>
       <label style={labelStyle}>
         Monthly cap (USD)

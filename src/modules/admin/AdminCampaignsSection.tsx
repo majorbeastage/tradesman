@@ -1,217 +1,633 @@
 /**
- * Client ad / campaign creatives for Growth (managed lead ops).
- * Simple banner builder — export PNG preview or copy share text for social.
+ * Admin — Ads & campaigns: client requests, budgets, spend, sync into Payments.
  */
-import { useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react"
+import { useAuth } from "../../contexts/AuthContext"
+import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
+import {
+  AD_CHANNEL_OPTIONS,
+  AD_STATUS_OPTIONS,
+  adBalanceDueCents,
+  centsToUsd,
+  formatUsdFromCents,
+  mergeAdBillingIntoMetadata,
+  sumAdBalanceDueCents,
+  usdToCents,
+  type AdCampaignRow,
+  type AdCampaignStatus,
+  type AdSpendEntry,
+} from "../../lib/adCampaigns"
+import { GROWTH_METADATA_KEY, type GrowthModuleDoc } from "../../lib/growthModule"
+import { mergeBillingIntoProfileMetadata, parseBillingMetadata } from "../../lib/billingProfileMetadata"
 
-type BannerDraft = {
-  clientName: string
-  headline: string
-  subhead: string
-  ctaLabel: string
-  linkUrl: string
-  phone: string
-  bg: string
-  accent: string
-}
+type ClientOpt = { id: string; label: string; email: string | null }
 
-const DEFAULTS: BannerDraft = {
-  clientName: "Your Business",
-  headline: "Need a pro this week?",
-  subhead: "Licensed · Local · Fast response",
-  ctaLabel: "Book now",
-  linkUrl: "https://",
-  phone: "",
-  bg: "#0f172a",
-  accent: "#f97316",
+function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10)
 }
 
 export default function AdminCampaignsSection() {
-  const [draft, setDraft] = useState<BannerDraft>(DEFAULTS)
-  const [copied, setCopied] = useState(false)
-  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const { user } = useAuth()
+  const [clients, setClients] = useState<ClientOpt[]>([])
+  const [campaigns, setCampaigns] = useState<AdCampaignRow[]>([])
+  const [selectedId, setSelectedId] = useState<string>("")
+  const [spendLog, setSpendLog] = useState<AdSpendEntry[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
+  const [msg, setMsg] = useState("")
+  const [busy, setBusy] = useState(false)
 
-  const shareText = useMemo(() => {
-    const lines = [
-      draft.headline.trim(),
-      draft.subhead.trim(),
-      draft.phone.trim() ? `Call ${draft.phone.trim()}` : "",
-      draft.linkUrl.trim() && draft.linkUrl !== "https://" ? draft.linkUrl.trim() : "",
-    ].filter(Boolean)
-    return lines.join("\n")
-  }, [draft])
+  // New campaign form
+  const [newProfileId, setNewProfileId] = useState("")
+  const [newName, setNewName] = useState("Ad campaign")
+  const [newBudgetUsd, setNewBudgetUsd] = useState("")
+  const [newDetails, setNewDetails] = useState("")
+  const [newChannels, setNewChannels] = useState<string[]>(["google"])
 
-  function paintBanner() {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const w = 1200
-    const h = 628
-    canvas.width = w
-    canvas.height = h
-    const ctx = canvas.getContext("2d")
-    if (!ctx) return
-    ctx.fillStyle = draft.bg
-    ctx.fillRect(0, 0, w, h)
-    ctx.fillStyle = draft.accent
-    ctx.fillRect(0, 0, 18, h)
-    ctx.fillStyle = "#ffffff"
-    ctx.font = "700 28px Segoe UI, system-ui, sans-serif"
-    ctx.fillText(draft.clientName.slice(0, 48), 56, 72)
-    ctx.font = "800 64px Segoe UI, system-ui, sans-serif"
-    wrapText(ctx, draft.headline, 56, 180, w - 112, 72)
-    ctx.font = "600 32px Segoe UI, system-ui, sans-serif"
-    ctx.fillStyle = "#cbd5e1"
-    wrapText(ctx, draft.subhead, 56, 340, w - 112, 40)
-    const btnW = 280
-    const btnH = 64
-    const btnX = 56
-    const btnY = h - 120
-    roundRect(ctx, btnX, btnY, btnW, btnH, 14, draft.accent)
-    ctx.fillStyle = "#fff"
-    ctx.font = "800 28px Segoe UI, system-ui, sans-serif"
-    ctx.fillText(draft.ctaLabel.slice(0, 24), btnX + 28, btnY + 42)
-    if (draft.phone.trim()) {
-      ctx.fillStyle = "#e2e8f0"
-      ctx.font = "600 24px Segoe UI, system-ui, sans-serif"
-      ctx.fillText(draft.phone.trim(), btnX + btnW + 28, btnY + 40)
+  // Edit / spend
+  const [editName, setEditName] = useState("")
+  const [editStatus, setEditStatus] = useState<AdCampaignStatus>("requested")
+  const [editBudgetUsd, setEditBudgetUsd] = useState("")
+  const [editDetails, setEditDetails] = useState("")
+  const [editChannels, setEditChannels] = useState<string[]>([])
+  const [spendUsd, setSpendUsd] = useState("")
+  const [spendVendor, setSpendVendor] = useState("google_ads")
+  const [spendNotes, setSpendNotes] = useState("")
+  const [spendDate, setSpendDate] = useState(todayIsoDate())
+
+  const selected = useMemo(() => campaigns.find((c) => c.id === selectedId) ?? null, [campaigns, selectedId])
+
+  const clientCampaignOptions = useMemo(() => {
+    return campaigns.map((c) => {
+      const client = clients.find((x) => x.id === c.profile_id)
+      const due = adBalanceDueCents(c)
+      return {
+        id: c.id,
+        label: `${client?.label ?? c.profile_id.slice(0, 8)} — ${c.name} (req ${formatUsdFromCents(c.requested_budget_cents)}, spent ${formatUsdFromCents(c.spent_cents)}${due ? `, due ${formatUsdFromCents(due)}` : ""})`,
+      }
+    })
+  }, [campaigns, clients])
+
+  const load = useCallback(async () => {
+    if (!supabase) {
+      setLoading(false)
+      return
     }
-  }
-
-  function downloadPng() {
-    paintBanner()
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const a = document.createElement("a")
-    a.href = canvas.toDataURL("image/png")
-    a.download = `${(draft.clientName || "campaign").replace(/\s+/g, "-").toLowerCase()}-banner.png`
-    a.click()
-  }
-
-  async function copyShare() {
+    setLoading(true)
+    setError("")
     try {
-      await navigator.clipboard.writeText(shareText)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      window.prompt("Copy this text:", shareText)
+      const { data: list } = await supabase.from("admin_users_list").select("id, email")
+      const { data: profiles, error: pErr } = await supabase
+        .from("profiles")
+        .select("id, display_name, role, account_disabled")
+        .order("display_name", { ascending: true })
+      if (pErr) throw pErr
+      const emailById = new Map((list ?? []).map((r: { id: string; email?: string }) => [r.id, r.email ?? null]))
+      const opts: ClientOpt[] = (profiles ?? [])
+        .filter((p) => !p.account_disabled)
+        .map((p) => ({
+          id: p.id,
+          email: emailById.get(p.id) ?? null,
+          label: `${p.display_name?.trim() || "Unnamed"}${p.role ? ` (${String(p.role).replace(/_/g, " ")})` : ""}${emailById.get(p.id) ? ` · ${emailById.get(p.id)}` : ""}`,
+        }))
+      setClients(opts)
+
+      const { data: camps, error: cErr } = await supabase
+        .from("ad_campaigns")
+        .select("*")
+        .order("updated_at", { ascending: false })
+      if (cErr) throw cErr
+      setCampaigns((camps ?? []) as AdCampaignRow[])
+      if (!selectedId && (camps ?? []).length > 0) {
+        setSelectedId(String((camps as AdCampaignRow[])[0].id))
+      }
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? e.message
+          : "Could not load campaigns. Run supabase/ad-campaigns.sql in the Supabase SQL editor if tables are missing.",
+      )
+    } finally {
+      setLoading(false)
     }
+  }, [selectedId])
+
+  useEffect(() => {
+    void load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (!selected) return
+    setEditName(selected.name)
+    setEditStatus(selected.status)
+    setEditBudgetUsd(String(centsToUsd(selected.requested_budget_cents)))
+    setEditDetails(selected.request_details || "")
+    setEditChannels(selected.channels?.length ? [...selected.channels] : [])
+  }, [selected])
+
+  useEffect(() => {
+    if (!supabase || !selectedId) {
+      setSpendLog([])
+      return
+    }
+    void (async () => {
+      const { data } = await supabase
+        .from("ad_spend_entries")
+        .select("*")
+        .eq("campaign_id", selectedId)
+        .order("spend_date", { ascending: false })
+        .limit(40)
+      setSpendLog((data ?? []) as AdSpendEntry[])
+    })()
+  }, [selectedId])
+
+  async function createCampaign() {
+    if (!supabase || !newProfileId) {
+      setError("Pick a client.")
+      return
+    }
+    setBusy(true)
+    setError("")
+    setMsg("")
+    try {
+      const { data, error: insErr } = await supabase
+        .from("ad_campaigns")
+        .insert({
+          profile_id: newProfileId,
+          created_by: user?.id ?? null,
+          name: newName.trim() || "Ad campaign",
+          status: "requested",
+          channels: newChannels,
+          request_details: newDetails.trim(),
+          requested_budget_cents: usdToCents(Number(newBudgetUsd) || 0),
+        })
+        .select("*")
+        .single()
+      if (insErr) throw insErr
+      setMsg("Campaign request created.")
+      setNewDetails("")
+      setNewBudgetUsd("")
+      await load()
+      if (data?.id) setSelectedId(String(data.id))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Create failed.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function saveCampaign() {
+    if (!supabase || !selected) return
+    setBusy(true)
+    setError("")
+    setMsg("")
+    try {
+      const { error: upErr } = await supabase
+        .from("ad_campaigns")
+        .update({
+          name: editName.trim() || selected.name,
+          status: editStatus,
+          request_details: editDetails,
+          requested_budget_cents: usdToCents(Number(editBudgetUsd) || 0),
+          channels: editChannels,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", selected.id)
+      if (upErr) throw upErr
+      setMsg("Campaign saved.")
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Save failed.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function addSpend() {
+    if (!supabase || !selected) return
+    const cents = usdToCents(Number(spendUsd) || 0)
+    if (cents <= 0) {
+      setError("Enter a spend amount greater than zero.")
+      return
+    }
+    setBusy(true)
+    setError("")
+    setMsg("")
+    try {
+      const { error: insErr } = await supabase.from("ad_spend_entries").insert({
+        campaign_id: selected.id,
+        profile_id: selected.profile_id,
+        recorded_by: user?.id ?? null,
+        spend_date: spendDate || todayIsoDate(),
+        amount_cents: cents,
+        vendor: spendVendor.trim() || null,
+        kind: "media",
+        notes: spendNotes.trim() || null,
+      })
+      if (insErr) throw insErr
+      const nextSpent = (selected.spent_cents || 0) + cents
+      const { error: upErr } = await supabase
+        .from("ad_campaigns")
+        .update({ spent_cents: nextSpent, updated_at: new Date().toISOString(), status: selected.status === "requested" ? "active" : selected.status })
+        .eq("id", selected.id)
+      if (upErr) throw upErr
+      setSpendUsd("")
+      setSpendNotes("")
+      setMsg(`Logged ${formatUsdFromCents(cents)} spend.`)
+      await load()
+      const { data } = await supabase
+        .from("ad_spend_entries")
+        .select("*")
+        .eq("campaign_id", selected.id)
+        .order("spend_date", { ascending: false })
+        .limit(40)
+      setSpendLog((data ?? []) as AdSpendEntry[])
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Spend log failed.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** Push open ad balance into profile metadata + billing due date so Payments hub shows it. */
+  async function syncToPayments() {
+    if (!supabase || !selected) return
+    setBusy(true)
+    setError("")
+    setMsg("")
+    try {
+      const { data: allForClient, error: qErr } = await supabase
+        .from("ad_campaigns")
+        .select("id, spent_cents, billed_cents")
+        .eq("profile_id", selected.profile_id)
+      if (qErr) throw qErr
+      const rows = (allForClient ?? []) as Pick<AdCampaignRow, "id" | "spent_cents" | "billed_cents">[]
+      const balance = sumAdBalanceDueCents(rows)
+
+      const { data: prof, error: pErr } = await supabase
+        .from("profiles")
+        .select("metadata")
+        .eq("id", selected.profile_id)
+        .maybeSingle()
+      if (pErr) throw pErr
+
+      let nextMeta = mergeAdBillingIntoMetadata(prof?.metadata, {
+        balance_due_cents: balance,
+        updated_at: new Date().toISOString(),
+        campaign_ids: rows.map((r) => r.id),
+        notes: `Ads balance from Admin campaigns (${formatUsdFromCents(balance)} due).`,
+      })
+
+      const billing = parseBillingMetadata(nextMeta)
+      if (balance > 0 && !billing.billing_payment_due_date) {
+        nextMeta = mergeBillingIntoProfileMetadata(nextMeta, {
+          billing_payment_due_date: todayIsoDate(),
+        }) as Record<string, unknown>
+      }
+
+      // Mark growth marketing budget as connected when we sync.
+      const growthRaw = nextMeta[GROWTH_METADATA_KEY]
+      if (growthRaw && typeof growthRaw === "object" && !Array.isArray(growthRaw)) {
+        const g = { ...(growthRaw as GrowthModuleDoc) }
+        g.marketingBudget = {
+          ...(g.marketingBudget ?? {}),
+          paymentWiringStatus: "connected",
+          notes: g.marketingBudget?.notes || "Linked to Tradesman Payments via Admin Ads & campaigns.",
+        }
+        g.updatedAt = new Date().toISOString()
+        nextMeta[GROWTH_METADATA_KEY] = g
+      }
+
+      const { error: upErr } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", selected.profile_id)
+      if (upErr) throw upErr
+
+      setMsg(
+        balance > 0
+          ? `Synced ${formatUsdFromCents(balance)} open ad balance to client Payments. They will see it under Payments → Advertising (pay via Helcim with subscription).`
+          : "Synced — no open ad balance (spent ≤ billed) for this client.",
+      )
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Payments sync failed.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function markCampaignBilled() {
+    if (!supabase || !selected) return
+    const due = adBalanceDueCents(selected)
+    if (due <= 0) {
+      setMsg("Nothing to mark billed on this campaign.")
+      return
+    }
+    setBusy(true)
+    setError("")
+    setMsg("")
+    try {
+      const { error: billErr } = await supabase
+        .from("ad_campaigns")
+        .update({
+          billed_cents: (selected.billed_cents || 0) + due,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", selected.id)
+      if (billErr) throw billErr
+
+      const { data: allForClient } = await supabase
+        .from("ad_campaigns")
+        .select("id, spent_cents, billed_cents")
+        .eq("profile_id", selected.profile_id)
+      const rows = (allForClient ?? []) as Pick<AdCampaignRow, "id" | "spent_cents" | "billed_cents">[]
+      // Recompute after this row's local billed bump
+      const balance = sumAdBalanceDueCents(
+        rows.map((r) => (r.id === selected.id ? { ...r, billed_cents: (selected.billed_cents || 0) + due } : r)),
+      )
+
+      const { data: prof } = await supabase.from("profiles").select("metadata").eq("id", selected.profile_id).maybeSingle()
+      const nextMeta = mergeAdBillingIntoMetadata(prof?.metadata, {
+        balance_due_cents: balance,
+        updated_at: new Date().toISOString(),
+        campaign_ids: rows.map((r) => r.id),
+        notes: balance > 0 ? "Partial ad balance remaining." : "Ad balance cleared after billing.",
+      })
+      await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", selected.profile_id)
+
+      setMsg(`Marked ${formatUsdFromCents(due)} billed on this campaign. Payments balance updated.`)
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Mark billed failed.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function importGrowthSubmitted() {
+    if (!supabase) return
+    setBusy(true)
+    setError("")
+    setMsg("")
+    try {
+      const { data: profiles, error: pErr } = await supabase.from("profiles").select("id, display_name, metadata").limit(8000)
+      if (pErr) throw pErr
+      let imported = 0
+      for (const p of profiles ?? []) {
+        const meta =
+          p.metadata && typeof p.metadata === "object" && !Array.isArray(p.metadata)
+            ? (p.metadata as Record<string, unknown>)
+            : {}
+        const growth = meta[GROWTH_METADATA_KEY]
+        if (!growth || typeof growth !== "object" || Array.isArray(growth)) continue
+        const doc = growth as GrowthModuleDoc
+        for (const c of doc.campaigns ?? []) {
+          if (c.status !== "submitted" && c.status !== "active") continue
+          const { data: existing } = await supabase
+            .from("ad_campaigns")
+            .select("id")
+            .eq("profile_id", p.id)
+            .eq("growth_campaign_id", c.id)
+            .maybeSingle()
+          if (existing?.id) continue
+          const { error: insErr } = await supabase.from("ad_campaigns").insert({
+            profile_id: p.id,
+            created_by: user?.id ?? null,
+            name: c.name || "Growth campaign",
+            status: c.status === "active" ? "active" : "requested",
+            channels: ["google"],
+            request_details: [c.description, c.dataCollectionBrief, c.notes].filter(Boolean).join("\n\n"),
+            requested_budget_cents: usdToCents(Number(c.budget) || 0),
+            growth_campaign_id: c.id,
+          })
+          if (!insErr) imported += 1
+        }
+      }
+      setMsg(imported ? `Imported ${imported} Growth campaign request(s).` : "No new submitted Growth campaigns to import.")
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Import failed.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function toggleChannel(list: string[], id: string, setter: (v: string[]) => void) {
+    setter(list.includes(id) ? list.filter((x) => x !== id) : [...list, id])
+  }
+
+  if (loading) {
+    return <p style={{ color: "#64748b" }}>Loading ads &amp; campaigns…</p>
   }
 
   return (
-    <div style={{ display: "grid", gap: 16, maxWidth: 960 }}>
+    <div style={{ display: "grid", gap: 18, maxWidth: 980 }}>
       <div>
         <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: theme.text }}>Ads &amp; campaigns</h2>
         <p style={{ margin: "8px 0 0", fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
-          Build a simple social banner for a client, then download the image or copy caption text. Link to their website or Google Business Profile. Full ad-account automation comes later — this is the creative starter for managed Growth work.
+          Track what each client requested (budget + details), log what we spent, then sync the open balance into their{" "}
+          <strong>Payments</strong> tab so it shows with Helcim billing.
+        </p>
+        <p style={{ margin: "6px 0 0", fontSize: 12, color: "#94a3b8" }}>
+          First time: run <code>supabase/ad-campaigns.sql</code> in the Supabase SQL editor.
         </p>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 340px) 1fr", gap: 16, alignItems: "start" }}>
-        <div style={{ display: "grid", gap: 10, padding: 14, border: `1px solid ${theme.border}`, borderRadius: 12, background: "#fff" }}>
-          {(
-            [
-              ["clientName", "Client / brand name"],
-              ["headline", "Headline"],
-              ["subhead", "Supporting line"],
-              ["ctaLabel", "Button label"],
-              ["linkUrl", "Link (website or GBP)"],
-              ["phone", "Phone (optional)"],
-            ] as const
-          ).map(([key, label]) => (
-            <label key={key} style={{ display: "grid", gap: 4 }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{label}</span>
-              <input
-                value={draft[key]}
-                onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
-                style={{ ...theme.formInput, padding: "8px 10px" }}
-              />
-            </label>
-          ))}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            <label style={{ display: "grid", gap: 4 }}>
-              <span style={{ fontSize: 12, fontWeight: 700 }}>Background</span>
-              <input type="color" value={draft.bg} onChange={(e) => setDraft((d) => ({ ...d, bg: e.target.value }))} />
-            </label>
-            <label style={{ display: "grid", gap: 4 }}>
-              <span style={{ fontSize: 12, fontWeight: 700 }}>Accent</span>
-              <input type="color" value={draft.accent} onChange={(e) => setDraft((d) => ({ ...d, accent: e.target.value }))} />
-            </label>
-          </div>
-          <button type="button" onClick={downloadPng} style={{ border: "none", background: theme.primary, color: "#fff", borderRadius: 8, padding: "10px 12px", fontWeight: 800, cursor: "pointer" }}>
-            Download banner PNG
-          </button>
-          <button type="button" onClick={() => void copyShare()} style={{ border: `1px solid ${theme.border}`, background: "#fff", color: theme.text, borderRadius: 8, padding: "10px 12px", fontWeight: 700, cursor: "pointer" }}>
-            {copied ? "Copied caption" : "Copy social caption"}
-          </button>
-        </div>
+      {error ? <p style={{ margin: 0, color: "#b91c1c", fontSize: 13 }}>{error}</p> : null}
+      {msg ? <p style={{ margin: 0, color: "#059669", fontSize: 13, fontWeight: 700 }}>{msg}</p> : null}
 
-        <div style={{ display: "grid", gap: 10 }}>
-          <div
-            style={{
-              borderRadius: 12,
-              overflow: "hidden",
-              border: `1px solid ${theme.border}`,
-              background: draft.bg,
-              color: "#fff",
-              padding: "28px 28px 24px",
-              minHeight: 220,
-              position: "relative",
-            }}
-          >
-            <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 8, background: draft.accent }} />
-            <div style={{ fontSize: 13, fontWeight: 700, opacity: 0.9 }}>{draft.clientName || "Client"}</div>
-            <div style={{ marginTop: 14, fontSize: 28, fontWeight: 900, lineHeight: 1.2 }}>{draft.headline || "Headline"}</div>
-            <div style={{ marginTop: 10, fontSize: 15, color: "#cbd5e1", fontWeight: 600 }}>{draft.subhead}</div>
-            <div style={{ marginTop: 22, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-              <span style={{ background: draft.accent, color: "#fff", borderRadius: 10, padding: "10px 16px", fontWeight: 800, fontSize: 14 }}>{draft.ctaLabel || "CTA"}</span>
-              {draft.phone ? <span style={{ fontWeight: 700, fontSize: 14 }}>{draft.phone}</span> : null}
-            </div>
-            {draft.linkUrl && draft.linkUrl !== "https://" ? (
-              <div style={{ marginTop: 14, fontSize: 12, color: "#94a3b8", wordBreak: "break-all" }}>{draft.linkUrl}</div>
-            ) : null}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button type="button" onClick={() => void load()} disabled={busy} style={secondaryBtn}>
+          Refresh
+        </button>
+        <button type="button" onClick={() => void importGrowthSubmitted()} disabled={busy} style={secondaryBtn}>
+          Import submitted Growth campaigns
+        </button>
+      </div>
+
+      {/* Client / campaign dropdown */}
+      <label style={{ display: "grid", gap: 6 }}>
+        <span style={{ fontSize: 13, fontWeight: 800, color: theme.text }}>Client campaign requests</span>
+        <select
+          value={selectedId}
+          onChange={(e) => setSelectedId(e.target.value)}
+          style={{ ...theme.formInput, maxWidth: 720 }}
+        >
+          <option value="">Select a campaign…</option>
+          {clientCampaignOptions.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {selected ? (
+        <div style={{ display: "grid", gap: 14, padding: 16, border: `1px solid ${theme.border}`, borderRadius: 12, background: "#fff" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
+            <Stat label="Requested" value={formatUsdFromCents(selected.requested_budget_cents)} />
+            <Stat label="Spent" value={formatUsdFromCents(selected.spent_cents)} />
+            <Stat label="Billed" value={formatUsdFromCents(selected.billed_cents)} />
+            <Stat label="Due (Payments)" value={formatUsdFromCents(adBalanceDueCents(selected))} accent />
           </div>
-          <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>Live preview (1200×628 PNG on download — Meta/LinkedIn friendly).</p>
-          <canvas ref={canvasRef} style={{ display: "none" }} />
+
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={labelStyle}>Campaign name</span>
+            <input value={editName} onChange={(e) => setEditName(e.target.value)} style={theme.formInput} />
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={labelStyle}>Status</span>
+            <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as AdCampaignStatus)} style={theme.formInput}>
+              {AD_STATUS_OPTIONS.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={labelStyle}>Amount client requested (USD)</span>
+            <input type="number" min={0} step="0.01" value={editBudgetUsd} onChange={(e) => setEditBudgetUsd(e.target.value)} style={theme.formInput} />
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={labelStyle}>Request details</span>
+            <textarea value={editDetails} onChange={(e) => setEditDetails(e.target.value)} rows={5} style={{ ...theme.formInput, resize: "vertical" }} placeholder="Channels, creatives, geo, landing page, notes…" />
+          </label>
+          <div>
+            <div style={{ ...labelStyle, marginBottom: 6 }}>Channels</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {AD_CHANNEL_OPTIONS.map((ch) => (
+                <label key={ch.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600 }}>
+                  <input type="checkbox" checked={editChannels.includes(ch.id)} onChange={() => toggleChannel(editChannels, ch.id, setEditChannels)} />
+                  {ch.label}
+                </label>
+              ))}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" onClick={() => void saveCampaign()} disabled={busy} style={primaryBtn}>
+              Save campaign
+            </button>
+            <button type="button" onClick={() => void syncToPayments()} disabled={busy} style={primaryBtn}>
+              Sync open balance → Payments
+            </button>
+            <button type="button" onClick={() => void markCampaignBilled()} disabled={busy} style={secondaryBtn}>
+              Mark this campaign paid / billed
+            </button>
+          </div>
+
+          <hr style={{ border: "none", borderTop: `1px solid ${theme.border}`, margin: "4px 0" }} />
+
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>Log spend</h3>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
+            <label style={{ display: "grid", gap: 4 }}>
+              <span style={labelStyle}>Amount (USD)</span>
+              <input type="number" min={0} step="0.01" value={spendUsd} onChange={(e) => setSpendUsd(e.target.value)} style={theme.formInput} />
+            </label>
+            <label style={{ display: "grid", gap: 4 }}>
+              <span style={labelStyle}>Date</span>
+              <input type="date" value={spendDate} onChange={(e) => setSpendDate(e.target.value)} style={theme.formInput} />
+            </label>
+            <label style={{ display: "grid", gap: 4 }}>
+              <span style={labelStyle}>Vendor</span>
+              <input value={spendVendor} onChange={(e) => setSpendVendor(e.target.value)} style={theme.formInput} />
+            </label>
+          </div>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={labelStyle}>Spend notes</span>
+            <input value={spendNotes} onChange={(e) => setSpendNotes(e.target.value)} style={theme.formInput} />
+          </label>
+          <button type="button" onClick={() => void addSpend()} disabled={busy} style={primaryBtn}>
+            Add spend entry
+          </button>
+
+          {spendLog.length > 0 ? (
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#64748b" }}>Recent spend</div>
+              {spendLog.map((s) => (
+                <div key={s.id} style={{ display: "flex", gap: 10, fontSize: 13, borderBottom: `1px solid ${theme.border}`, padding: "6px 0" }}>
+                  <span style={{ fontWeight: 700 }}>{formatUsdFromCents(s.amount_cents)}</span>
+                  <span style={{ color: "#64748b" }}>{s.spend_date}</span>
+                  <span style={{ flex: 1 }}>{s.vendor || s.kind}</span>
+                  <span style={{ color: "#94a3b8" }}>{s.notes}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
+      ) : null}
+
+      {/* Create new */}
+      <div style={{ display: "grid", gap: 10, padding: 16, border: `1px dashed ${theme.border}`, borderRadius: 12, background: "#f8fafc" }}>
+        <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>New client request</h3>
+        <label style={{ display: "grid", gap: 4 }}>
+          <span style={labelStyle}>Client</span>
+          <select value={newProfileId} onChange={(e) => setNewProfileId(e.target.value)} style={theme.formInput}>
+            <option value="">Select client…</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label style={{ display: "grid", gap: 4 }}>
+          <span style={labelStyle}>Campaign name</span>
+          <input value={newName} onChange={(e) => setNewName(e.target.value)} style={theme.formInput} />
+        </label>
+        <label style={{ display: "grid", gap: 4 }}>
+          <span style={labelStyle}>Amount requested (USD)</span>
+          <input type="number" min={0} step="0.01" value={newBudgetUsd} onChange={(e) => setNewBudgetUsd(e.target.value)} style={theme.formInput} />
+        </label>
+        <label style={{ display: "grid", gap: 4 }}>
+          <span style={labelStyle}>Details</span>
+          <textarea value={newDetails} onChange={(e) => setNewDetails(e.target.value)} rows={4} style={{ ...theme.formInput, resize: "vertical" }} />
+        </label>
+        <div>
+          <div style={{ ...labelStyle, marginBottom: 6 }}>Channels</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {AD_CHANNEL_OPTIONS.map((ch) => (
+              <label key={ch.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600 }}>
+                <input type="checkbox" checked={newChannels.includes(ch.id)} onChange={() => toggleChannel(newChannels, ch.id, setNewChannels)} />
+                {ch.label}
+              </label>
+            ))}
+          </div>
+        </div>
+        <button type="button" onClick={() => void createCampaign()} disabled={busy || !newProfileId} style={primaryBtn}>
+          Create request
+        </button>
       </div>
     </div>
   )
 }
 
-function wrapText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxWidth: number, lineHeight: number) {
-  const words = text.split(/\s+/).filter(Boolean)
-  let line = ""
-  let yy = y
-  for (const word of words) {
-    const test = line ? `${line} ${word}` : word
-    if (ctx.measureText(test).width > maxWidth && line) {
-      ctx.fillText(line, x, yy)
-      line = word
-      yy += lineHeight
-    } else {
-      line = test
-    }
-  }
-  if (line) ctx.fillText(line, x, yy)
+function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div style={{ padding: 10, borderRadius: 10, background: accent ? "#fff7ed" : "#f8fafc", border: `1px solid ${accent ? "#fed7aa" : theme.border}` }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b" }}>{label}</div>
+      <div style={{ fontSize: 18, fontWeight: 900, color: accent ? "#c2410c" : theme.text }}>{value}</div>
+    </div>
+  )
 }
 
-function roundRect(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  r: number,
-  fill: string,
-) {
-  ctx.beginPath()
-  ctx.moveTo(x + r, y)
-  ctx.arcTo(x + w, y, x + w, y + h, r)
-  ctx.arcTo(x + w, y + h, x, y + h, r)
-  ctx.arcTo(x, y + h, x, y, r)
-  ctx.arcTo(x, y, x + w, y, r)
-  ctx.closePath()
-  ctx.fillStyle = fill
-  ctx.fill()
+const labelStyle: CSSProperties = { fontSize: 12, fontWeight: 700, color: theme.text }
+const primaryBtn: CSSProperties = {
+  border: "none",
+  background: theme.primary,
+  color: "#fff",
+  borderRadius: 8,
+  padding: "10px 14px",
+  fontWeight: 800,
+  cursor: "pointer",
+  width: "fit-content",
+}
+const secondaryBtn: CSSProperties = {
+  border: `1px solid ${theme.border}`,
+  background: "#fff",
+  color: theme.text,
+  borderRadius: 8,
+  padding: "8px 12px",
+  fontWeight: 700,
+  cursor: "pointer",
 }

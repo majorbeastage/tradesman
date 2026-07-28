@@ -17,6 +17,7 @@ export type BillingProductTypeId =
   | "additional_external_user"
   | "additional_office_manager"
   | "additional_internal_user"
+  | "managed_ads"
 
 export const BILLING_PRODUCT_OPTIONS: { id: BillingProductTypeId; label: string; monthlyUsd: number }[] = [
   { id: "inactive", label: "Inactive", monthlyUsd: 0 },
@@ -32,6 +33,7 @@ export const BILLING_PRODUCT_OPTIONS: { id: BillingProductTypeId; label: string;
   { id: "additional_external_user", label: "Additional External User", monthlyUsd: 49.99 },
   { id: "additional_office_manager", label: "Additional Office Manager", monthlyUsd: 59.99 },
   { id: "additional_internal_user", label: "Additional Internal User (no phone traffic)", monthlyUsd: 29.99 },
+  { id: "managed_ads", label: "Managed ads (management fee)", monthlyUsd: 99.0 },
 ]
 
 const MONTHLY_BY_ID: Record<BillingProductTypeId, number> = BILLING_PRODUCT_OPTIONS.reduce(

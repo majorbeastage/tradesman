@@ -12,6 +12,12 @@ import {
   type BillingProfileMetadata,
 } from "../../lib/billingProfileMetadata"
 import { formatUsdMonthly, sumMonthlyBillingUsd } from "../../lib/billingProductTypes"
+import {
+  adBalanceDueCents,
+  formatUsdFromCents,
+  parseAdBillingMetadata,
+  type AdCampaignRow,
+} from "../../lib/adCampaigns"
 import { isHelcimJsReturnMessage, type HelcimJsReturnMessage } from "../../lib/helcimJsReturnMessage"
 import { platformToolsFetchOrigins, platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
 import {
@@ -87,6 +93,8 @@ export default function PaymentsPage() {
   const [scriptReady, setScriptReady] = useState(false)
   const [lastResult, setLastResult] = useState<HelcimJsReturnMessage | null>(null)
   const [billingForPayments, setBillingForPayments] = useState<BillingProfileMetadata>({})
+  const [adCampaigns, setAdCampaigns] = useState<AdCampaignRow[]>([])
+  const [adBalanceFromMetaCents, setAdBalanceFromMetaCents] = useState(0)
   /** Set when `billing-portal-config` fails (deploy, secret, or network) so we can explain beyond “missing Vite env”. */
   const [billingPortalConfigError, setBillingPortalConfigError] = useState<string | null>(null)
   const [paymentsHubTab, setPaymentsHubTab] = useState<PaymentsHubTab>("subscription")
@@ -97,10 +105,18 @@ export default function PaymentsPage() {
 
   const useHelcimJs = Boolean(ENV_JS_TOKEN)
 
+  const adBalanceFromCampaignsCents = useMemo(
+    () => adCampaigns.reduce((sum, c) => sum + adBalanceDueCents(c), 0),
+    [adCampaigns],
+  )
+  const adBalanceDueCentsTotal = Math.max(adBalanceFromCampaignsCents, adBalanceFromMetaCents)
+
   const suggestedPaymentAmount = useMemo(() => {
-    const s = sumMonthlyBillingUsd(billingForPayments.billing_product_type, billingForPayments.billing_additional_products)
-    return s > 0 ? s.toFixed(2) : ""
-  }, [billingForPayments.billing_product_type, billingForPayments.billing_additional_products])
+    const plan = sumMonthlyBillingUsd(billingForPayments.billing_product_type, billingForPayments.billing_additional_products)
+    const ads = adBalanceDueCentsTotal / 100
+    const total = plan + ads
+    return total > 0 ? total.toFixed(2) : ""
+  }, [billingForPayments.billing_product_type, billingForPayments.billing_additional_products, adBalanceDueCentsTotal])
 
   const monthlyPlanTotal = useMemo(
     () => sumMonthlyBillingUsd(billingForPayments.billing_product_type, billingForPayments.billing_additional_products),
@@ -108,6 +124,7 @@ export default function PaymentsPage() {
   )
   const hasBillingPlanSignals =
     monthlyPlanTotal > 0 ||
+    adBalanceDueCentsTotal > 0 ||
     Boolean(billingForPayments.billing_helcim_customer_code?.trim()) ||
     Boolean(billingForPayments.billing_payment_due_date?.trim())
 
@@ -243,11 +260,20 @@ export default function PaymentsPage() {
           : {}
       const billing = parseBillingMetadata(meta)
       setBillingForPayments(billing)
+      const adMeta = parseAdBillingMetadata(meta)
+      setAdBalanceFromMetaCents(adMeta?.balance_due_cents ?? 0)
       const envOrEdge = (ENV_PORTAL.trim() || portalFromEdge || "").trim() || null
       const resolvedPortal = resolveHelcimPayPortalBaseUrl(envOrEdge, billing.helcim_pay_portal_url ?? null)
       setPortalBaseUrl(resolvedPortal)
       if (!cancelled && resolvedPortal) setBillingPortalConfigError(null)
       setCustomerCode(billing.billing_helcim_customer_code?.trim() || null)
+
+      const { data: camps } = await sb
+        .from("ad_campaigns")
+        .select("*")
+        .eq("profile_id", profileUserId)
+        .order("updated_at", { ascending: false })
+      if (!cancelled) setAdCampaigns((camps ?? []) as AdCampaignRow[])
     })()
     return () => {
       cancelled = true
@@ -388,6 +414,64 @@ export default function PaymentsPage() {
       <h2 style={{ fontSize: "1rem", fontWeight: 800, color: "#94a3b8", letterSpacing: 0.03, margin: "0 0 14px", textTransform: "uppercase" }}>
         Subscription &amp; Tradesman billing
       </h2>
+
+      {adCampaigns.length > 0 || adBalanceDueCentsTotal > 0 ? (
+        <div
+          style={{
+            marginBottom: 16,
+            padding: 16,
+            borderRadius: 12,
+            border: "1px solid #fed7aa",
+            background: "#fff7ed",
+            color: "#0f172a",
+          }}
+        >
+          <div style={{ fontWeight: 800, fontSize: 15, color: "#9a3412" }}>Advertising &amp; campaigns</div>
+          <p style={{ margin: "6px 0 12px", fontSize: 13, color: "#9a3412", lineHeight: 1.45 }}>
+            Managed ads budget and spend from Tradesman Growth. Open balance is included in the suggested Helcim payment amount below.
+          </p>
+          {adCampaigns.length === 0 ? (
+            <p style={{ margin: 0, fontSize: 13, color: "#c2410c" }}>
+              Open advertising balance: <strong>{formatUsdFromCents(adBalanceDueCentsTotal)}</strong>
+            </p>
+          ) : (
+            <div style={{ display: "grid", gap: 8 }}>
+              {adCampaigns.map((c) => (
+                <div
+                  key={c.id}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr auto",
+                    gap: 8,
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    background: "#fff",
+                    border: "1px solid #fdba74",
+                    fontSize: 13,
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 800 }}>{c.name}</div>
+                    <div style={{ color: "#9a3412", marginTop: 2 }}>
+                      Requested {formatUsdFromCents(c.requested_budget_cents)} · Spent {formatUsdFromCents(c.spent_cents)} · Billed{" "}
+                      {formatUsdFromCents(c.billed_cents)}
+                    </div>
+                    {c.request_details?.trim() ? (
+                      <div style={{ marginTop: 4, color: "#78716c", whiteSpace: "pre-wrap" }}>{c.request_details.slice(0, 220)}</div>
+                    ) : null}
+                  </div>
+                  <div style={{ textAlign: "right", fontWeight: 900, color: adBalanceDueCents(c) > 0 ? "#c2410c" : "#15803d" }}>
+                    {adBalanceDueCents(c) > 0 ? `Due ${formatUsdFromCents(adBalanceDueCents(c))}` : "Paid up"}
+                  </div>
+                </div>
+              ))}
+              <div style={{ fontWeight: 800, fontSize: 14, color: "#9a3412" }}>
+                Total advertising due: {formatUsdFromCents(adBalanceDueCentsTotal)}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : null}
 
       {useHelcimJs ? (
         <>
