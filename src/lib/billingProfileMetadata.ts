@@ -20,7 +20,7 @@ export type BillingProfileMetadata = {
   billing_product_type?: BillingProductTypeId | string
   /** Extra product lines (same catalog as primary). */
   billing_additional_products?: string[]
-  /** Promo code redeemed at signup (e.g. JULY250). */
+  /** Promo code redeemed at signup (if any). */
   billing_promo_code?: string
   /** Percent off applied at signup when benefit window covered signup day. */
   billing_promo_percent_off?: number

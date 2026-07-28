@@ -2,11 +2,14 @@
 
 export const BILLING_PROMO_CODES_KEY = "tradesman_billing_promo_codes"
 
+/** sessionStorage key when a homepage CTA pre-fills signup promo (generic). */
+export const SIGNUP_PROMO_CODE_STORAGE_KEY = "tradesman_signup_promo_code"
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 export type BillingPromoCode = {
   id: string
-  /** Uppercase code entered at signup (e.g. JULY250). */
+  /** Uppercase code entered at signup. */
   code: string
   description: string
   active: boolean
@@ -26,7 +29,7 @@ export type BillingPromoCode = {
   redeemable_until?: string
   /**
    * When set with `max_credit_usd`: plans with monthly price at or below this cap get `percent_off`;
-   * plans above the cap receive a dollar credit up to `max_credit_usd` (July-style promos).
+   * plans above the cap receive a dollar credit up to `max_credit_usd`.
    */
   monthly_price_cap_usd?: number
   /** Max dollar credit for plans above `monthly_price_cap_usd`. */
@@ -43,27 +46,9 @@ export type BillingPromoCodesStore = {
   codes: BillingPromoCode[]
 }
 
-export const DEFAULT_JULY250_PROMO: BillingPromoCode = {
-  id: "promo-july250",
-  code: "JULY250",
-  description:
-    "July 2026 only — use JULY250 at signup. Plans $250/mo or less: no billing in July. Plans over $250/mo: up to $250 July credit. Billing resumes August 1, 2026.",
-  active: true,
-  percent_off: 100,
-  benefit_start: "2026-07-01",
-  benefit_end: "2026-07-31",
-  billing_resume_date: "2026-08-01",
-  new_signups_only: true,
-  redeemable_from: "2026-06-01",
-  redeemable_until: "2026-07-31",
-  monthly_price_cap_usd: 250,
-  max_credit_usd: 250,
-  show_homepage_banner: true,
-  show_on_signup: true,
-}
-
+/** No active campaign by default (JULY250 removed). */
 export const DEFAULT_BILLING_PROMO_CODES_STORE: BillingPromoCodesStore = {
-  codes: [DEFAULT_JULY250_PROMO],
+  codes: [],
 }
 
 export function normalizePromoCodeInput(raw: string): string {
@@ -90,6 +75,8 @@ function parseOnePromo(raw: unknown): BillingPromoCode | null {
   const benefit_start = parseDateField(o.benefit_start)
   const benefit_end = parseDateField(o.benefit_end)
   if (!id || !code || !benefit_start || !benefit_end) return null
+  // Retired July 2026 campaign — ignore even if still present in platform_settings.
+  if (code === "JULY250") return null
   const billing_resume_date = parseDateField(o.billing_resume_date)
   const redeemable_from = parseDateField(o.redeemable_from)
   const redeemable_until = parseDateField(o.redeemable_until)
@@ -113,12 +100,7 @@ function parseOnePromo(raw: unknown): BillingPromoCode | null {
     redeemable_until: redeemable_until || undefined,
     monthly_price_cap_usd,
     max_credit_usd,
-    show_homepage_banner:
-      o.show_homepage_banner === true
-        ? true
-        : o.show_homepage_banner === false
-          ? false
-          : code === "JULY250",
+    show_homepage_banner: o.show_homepage_banner === true,
     show_on_signup: o.show_on_signup === false ? false : true,
     created_at: typeof o.created_at === "string" ? o.created_at : undefined,
     updated_at: typeof o.updated_at === "string" ? o.updated_at : undefined,
@@ -127,33 +109,15 @@ function parseOnePromo(raw: unknown): BillingPromoCode | null {
 
 export function parseBillingPromoCodesStore(raw: unknown): BillingPromoCodesStore {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return { codes: [...DEFAULT_BILLING_PROMO_CODES_STORE.codes] }
+    return { codes: [] }
   }
   const o = raw as Record<string, unknown>
   const list = o.codes
   if (!Array.isArray(list) || list.length === 0) {
-    return { codes: [...DEFAULT_BILLING_PROMO_CODES_STORE.codes] }
+    return { codes: [] }
   }
   const codes = list.map(parseOnePromo).filter(Boolean) as BillingPromoCode[]
-  if (!codes.length) return { codes: [...DEFAULT_BILLING_PROMO_CODES_STORE.codes] }
-  return { codes: codes.map(mergePromoWithDefaults) }
-}
-
-/** Fill newer JULY250 fields when platform_settings predates banner/tier columns. */
-function mergePromoWithDefaults(promo: BillingPromoCode): BillingPromoCode {
-  if (normalizePromoCodeInput(promo.code) !== DEFAULT_JULY250_PROMO.code) return promo
-  const d = DEFAULT_JULY250_PROMO
-  return {
-    ...promo,
-    description: promo.description || d.description,
-    monthly_price_cap_usd: promo.monthly_price_cap_usd ?? d.monthly_price_cap_usd,
-    max_credit_usd: promo.max_credit_usd ?? d.max_credit_usd,
-    show_homepage_banner: promo.show_homepage_banner !== false,
-    show_on_signup: promo.show_on_signup !== false,
-    billing_resume_date: promo.billing_resume_date ?? d.billing_resume_date,
-    redeemable_from: promo.redeemable_from ?? d.redeemable_from,
-    redeemable_until: promo.redeemable_until ?? d.redeemable_until,
-  }
+  return { codes }
 }
 
 export function newPromoCodeDraft(): BillingPromoCode {

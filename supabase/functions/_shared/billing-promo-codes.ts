@@ -45,6 +45,7 @@ function parseOnePromo(raw: unknown): BillingPromoCode | null {
   const benefit_start = parseDateField(o.benefit_start)
   const benefit_end = parseDateField(o.benefit_end)
   if (!id || !code || !benefit_start || !benefit_end) return null
+  if (code === "JULY250") return null
   const billing_resume_date = parseDateField(o.billing_resume_date)
   const redeemable_from = parseDateField(o.redeemable_from)
   const redeemable_until = parseDateField(o.redeemable_until)

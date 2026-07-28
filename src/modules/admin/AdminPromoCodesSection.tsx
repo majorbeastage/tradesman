@@ -229,7 +229,7 @@ export default function AdminPromoCodesSection() {
             <input
               value={draft.code}
               onChange={(e) => setDraft({ ...draft, code: e.target.value.toUpperCase() })}
-              placeholder="JULY250"
+              placeholder="PROMOCODE"
               style={inputStyle}
             />
           </label>

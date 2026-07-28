@@ -24,9 +24,8 @@ import {
   signupPromoHint,
   validatePromoForSignup,
 } from "../../lib/billingPromoCodes"
-import { BILLING_PROMO_CODES_KEY, type BillingPromoCodesStore } from "../../types/billing-promo-codes"
+import { BILLING_PROMO_CODES_KEY, SIGNUP_PROMO_CODE_STORAGE_KEY, type BillingPromoCodesStore } from "../../types/billing-promo-codes"
 import type { BillingPromoCode } from "../../types/billing-promo-codes"
-import { SIGNUP_PROMO_CODE_STORAGE_KEY } from "../../lib/july250Promo"
 import { SignupHelcimPaymentStep } from "../../components/SignupHelcimPaymentStep"
 import SignupProductAdvisorPanel from "../../components/SignupProductAdvisorPanel"
 import SignupSupportCallout from "../../components/SignupSupportCallout"
@@ -996,7 +995,7 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
                         handleApplyPromoCode()
                       }
                     }}
-                    placeholder="e.g. JULY250"
+                    placeholder="Promo code"
                     autoComplete="off"
                     style={{ ...inputStyle, marginTop: 0, maxWidth: "none" }}
                   />

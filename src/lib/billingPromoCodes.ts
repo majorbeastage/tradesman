@@ -1,14 +1,18 @@
 import type { ProductPackageId } from "./productPackages"
 import { computeSignupProrationUsd } from "./subscriptionEntitlements"
-import { describeJuly250ForMonthlyPrice, isJuly250CampaignVisible, JULY250_PROMO_CODE } from "./july250Promo"
 import {
   normalizePromoCodeInput,
   parseBillingPromoCodesStore,
+  SIGNUP_PROMO_CODE_STORAGE_KEY,
   type BillingPromoCode,
   type BillingPromoCodesStore,
 } from "../types/billing-promo-codes"
 
-export { normalizePromoCodeInput, parseBillingPromoCodesStore, isJuly250CampaignVisible, JULY250_PROMO_CODE }
+export {
+  normalizePromoCodeInput,
+  parseBillingPromoCodesStore,
+  SIGNUP_PROMO_CODE_STORAGE_KEY,
+}
 export type { BillingPromoCode, BillingPromoCodesStore }
 
 function localDateYmd(d: Date): string {
@@ -46,15 +50,14 @@ export function validatePromoForSignup(
   return { ok: true }
 }
 
+/** True when an active promo asks for a homepage banner and is still redeemable. */
 export function shouldShowHomepagePromoBanner(store: BillingPromoCodesStore, today: Date = new Date()): boolean {
-  if (!isJuly250CampaignVisible(today)) return false
-  const july = store.codes.find(
-    (p) => normalizePromoCodeInput(p.code) === JULY250_PROMO_CODE,
-  )
-  if (!july) return true
-  if (!july.active) return false
-  if (july.show_homepage_banner === false) return false
-  return true
+  const todayYmd = localDateYmd(today)
+  return store.codes.some((p) => {
+    if (!p.active || p.show_homepage_banner !== true) return false
+    if (p.redeemable_until && todayYmd > p.redeemable_until) return false
+    return true
+  })
 }
 
 /** True when at least one promo should appear on the signup form (not expired, active, show_on_signup). */
@@ -74,8 +77,6 @@ export function signupPromoHint(store: BillingPromoCodesStore, today: Date = new
     return check.ok
   })
   if (!visible.length) return null
-  const july = visible.find((p) => normalizePromoCodeInput(p.code) === JULY250_PROMO_CODE)
-  if (july) return july.description
   return visible.map((p) => p.description).filter(Boolean).join(" ")
 }
 
@@ -100,6 +101,7 @@ export function computePromoSignupDiscount(params: {
 
   const cap = params.promo.monthly_price_cap_usd
   const maxCredit = params.promo.max_credit_usd
+  const resume = params.promo.billing_resume_date ?? "after the benefit period"
 
   if (cap != null && maxCredit != null && params.monthlyUsd > cap) {
     const discountUsd = Math.min(maxCredit, baseDue)
@@ -108,7 +110,7 @@ export function computePromoSignupDiscount(params: {
       dueTodayUsd,
       discountUsd,
       tier: "capped_credit",
-      detailMessage: `Up to $${maxCredit.toFixed(0)} July credit on plans over $${cap.toFixed(0)}/mo. Billing resumes ${params.promo.billing_resume_date ?? "after July"}.`,
+      detailMessage: `Up to $${maxCredit.toFixed(0)} credit on plans over $${cap.toFixed(0)}/mo. Billing resumes ${resume}.`,
     }
   }
 
@@ -121,15 +123,12 @@ export function computePromoSignupDiscount(params: {
     tier: params.promo.percent_off >= 100 ? "full_waiver" : "full_waiver",
     detailMessage:
       params.promo.percent_off >= 100
-        ? `No billing for the July benefit period on eligible plans. Billing resumes ${params.promo.billing_resume_date ?? "after July"}.`
+        ? `No billing for the promo benefit period on eligible plans. Billing resumes ${resume}.`
         : params.promo.description || null,
   }
 }
 
 export function describePromoForPackage(promo: BillingPromoCode, monthlyUsd: number): string {
-  if (normalizePromoCodeInput(promo.code) === JULY250_PROMO_CODE) {
-    return describeJuly250ForMonthlyPrice(monthlyUsd)
-  }
   const cap = promo.monthly_price_cap_usd
   const maxCredit = promo.max_credit_usd
   if (cap != null && maxCredit != null && monthlyUsd > cap) {
