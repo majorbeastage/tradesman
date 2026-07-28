@@ -222,7 +222,6 @@ type Props = {
   onSignup?: () => void
   onTrial?: () => void
   onPricing?: () => void
-  onAdminLogin?: () => void
   onAboutUs?: () => void
 }
 
@@ -232,7 +231,6 @@ export function MarketingPreviewStory({
   onSignup,
   onTrial,
   onPricing,
-  onAdminLogin,
   onAboutUs,
 }: Props) {
   const isMobile = useIsMobile(MOBILE_BREAKPOINT)
@@ -511,7 +509,7 @@ export function MarketingPreviewStory({
             </>
           )}
 
-          <MarketingStoryDockFooter reveal={footerReveal} onAdminLogin={onAdminLogin} isMobile={isMobile} />
+          <MarketingStoryDockFooter reveal={footerReveal} isMobile={isMobile} />
         </div>
       </div>
 
@@ -1162,11 +1160,9 @@ function StoryLightbox({ lightbox, onClose }: { lightbox: { src: string; alt: st
 
 function MarketingStoryDockFooter({
   reveal,
-  onAdminLogin,
   isMobile,
 }: {
   reveal: number
-  onAdminLogin?: () => void
   isMobile?: boolean
 }) {
   const r = Math.max(0, Math.min(1, reveal))
@@ -1203,13 +1199,6 @@ function MarketingStoryDockFooter({
             Instagram
           </a>
         </div>
-        {onAdminLogin ? (
-          <div style={{ textAlign: "center", marginBottom: 12 }}>
-            <button type="button" onClick={onAdminLogin} className="marketing-story-admin-btn">
-              Admin portal login
-            </button>
-          </div>
-        ) : null}
         <PublicLegalNav borderTop={false} />
         <CopyrightVersionFooter
           variant="default"
@@ -1411,27 +1400,6 @@ function StoryScrollStyles({ topInsetPx }: { topInsetPx: number }) {
         background: linear-gradient(to top, rgba(248,250,252,0.98) 70%, transparent);
         pointer-events: none;
       }
-      .marketing-story-page-admin {
-        display: flex;
-        justify-content: center;
-        padding: 24px 16px calc(32px + env(safe-area-inset-bottom, 0px));
-        background: #fafafa;
-      }
-      .marketing-story-admin-btn {
-        pointer-events: auto;
-        padding: 8px 16px;
-        border: none;
-        background: transparent;
-        font-size: 12px;
-        font-weight: 600;
-        color: #475569;
-        text-decoration: underline;
-        text-underline-offset: 3px;
-        cursor: pointer;
-      }
-      .marketing-story-admin-btn:hover {
-        color: ${theme.charcoal};
-      }
       .marketing-story-slide-about {
         background: linear-gradient(165deg, #fff 0%, #fff7ed 55%, #f8fafc 100%);
       }
@@ -1518,9 +1486,6 @@ function StoryScrollStyles({ topInsetPx }: { topInsetPx: number }) {
         }
         .marketing-story-dock-footer-inner-mobile {
           font-size: 13px;
-        }
-        .marketing-story-dock-footer-inner-mobile .marketing-story-admin-btn {
-          font-size: 11px;
         }
         .marketing-story-about-photo-grid-mobile {
           flex-direction: column;

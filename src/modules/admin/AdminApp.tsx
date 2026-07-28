@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from "react"
 import type { CSSProperties, ReactNode } from "react"
 import { useAuth } from "../../contexts/AuthContext"
-import { useView } from "../../contexts/ViewContext"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { AdminVisibilityProvider } from "../../contexts/AdminVisibilityContext"
 import { AdminSettingBlock, AdminVisibilityFooter } from "../../components/admin/AdminSettingChrome"
@@ -527,7 +526,6 @@ function AdminAppInner() {
   const isMobile = useIsMobile()
   const [adminNavOpen, setAdminNavOpen] = useState(false)
   const { user, signOut, clientId } = useAuth()
-  const { setView } = useView()
   const [profiles, setProfiles] = useState<ProfileRow[]>([])
   const [audienceTemplates, setAudienceTemplates] = useState<Record<string, PortalConfig>>({})
   const [selectedId, setSelectedId] = useState<string | null>(ALL_PROFILES_ID)
@@ -1476,7 +1474,10 @@ function AdminAppInner() {
           <p style={{ margin: 0, fontSize: 12, opacity: 0.8 }}>{user?.email}</p>
           <button
             type="button"
-            onClick={() => { signOut(); setView("home") }}
+            onClick={() => {
+              void signOut()
+              window.location.assign("/")
+            }}
             style={{ marginTop: 8, padding: "6px 12px", background: "#ef4444", color: "white", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
           >
             Log out

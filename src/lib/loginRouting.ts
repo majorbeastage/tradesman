@@ -1,12 +1,12 @@
 import { APP_NAV_PREFIX } from "./appNavigationHistory"
 
-/** One-shot flag from marketing preview → production home (not persisted across flows). */
-export const ADMIN_LOGIN_FROM_PREVIEW_KEY = "tradesman_open_admin_login"
-
 /** Contractor portal sign-in — separate from admin portal login. */
 export const CONTRACTOR_LOGIN_HASH = "#/login"
 
-/** Admin portal sign-in — linked from homepage footer only. */
+/** Standalone admin portal path (bookmarkable). Legacy hash `#/admin-login` redirects here. */
+export const ADMIN_LOGIN_PATH = "/admin"
+
+/** @deprecated Prefer ADMIN_LOGIN_PATH; kept for old bookmarks. */
 export const ADMIN_LOGIN_HASH = "#/admin-login"
 
 export function hasAppNavDeepLink(hash = typeof window !== "undefined" ? window.location.hash : ""): boolean {
@@ -23,6 +23,11 @@ export function isAdminLoginRouteHash(hash = typeof window !== "undefined" ? win
   return h === ADMIN_LOGIN_HASH || h.startsWith(`${ADMIN_LOGIN_HASH}?`)
 }
 
+export function isAdminLoginPath(pathname = typeof window !== "undefined" ? window.location.pathname : "/"): boolean {
+  const p = pathname.replace(/\/+$/, "").toLowerCase() || "/"
+  return p === ADMIN_LOGIN_PATH || p === "/admin-login"
+}
+
 export function isLoginRouteHash(hash = typeof window !== "undefined" ? window.location.hash : ""): boolean {
   return isContractorLoginRouteHash(hash) || isAdminLoginRouteHash(hash)
 }
@@ -30,6 +35,11 @@ export function isLoginRouteHash(hash = typeof window !== "undefined" ? window.l
 function baseUrlPath(): string {
   if (typeof window === "undefined") return "/"
   return `${window.location.pathname}${window.location.search}`
+}
+
+function homeUrl(): string {
+  if (typeof window === "undefined") return "/"
+  return `/${window.location.search}`
 }
 
 /** Drop #/app/... so admin login is not hijacked by contractor deep-link routing. */
@@ -46,17 +56,29 @@ export function setContractorLoginRoute(): void {
 
 export function setAdminLoginRoute(): void {
   if (typeof window === "undefined") return
-  window.history.replaceState(null, "", `${baseUrlPath()}${ADMIN_LOGIN_HASH}`)
+  const search = window.location.search || ""
+  window.history.replaceState(null, "", `${ADMIN_LOGIN_PATH}${search}`)
 }
 
 export function stripLoginRouteHash(): void {
   if (typeof window === "undefined") return
+  if (isAdminLoginPath()) {
+    // Keep /admin after sign-in so the standalone URL stays bookmarkable in-session.
+    if (window.location.hash) {
+      window.history.replaceState(null, "", `${ADMIN_LOGIN_PATH}${window.location.search}`)
+    }
+    return
+  }
   if (!isLoginRouteHash()) return
   window.history.replaceState(null, "", baseUrlPath())
 }
 
 export function setAppHomeRoute(): void {
   if (typeof window === "undefined") return
+  if (isAdminLoginPath() || isLoginRouteHash()) {
+    window.history.replaceState(null, "", homeUrl())
+    return
+  }
   window.history.replaceState(null, "", baseUrlPath())
 }
 

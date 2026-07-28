@@ -22,7 +22,6 @@ type Props = {
   onSignup?: () => void
   onTrial?: () => void
   onPricing?: () => void
-  onAdminLogin?: () => void
 }
 
 export function MarketingHomePreviewPage({
@@ -33,7 +32,6 @@ export function MarketingHomePreviewPage({
   onSignup,
   onTrial,
   onPricing,
-  onAdminLogin,
 }: Props) {
   const [variant, setVariantState] = useState<MarketingPreviewVariant>(() => parseVariant(pathname, search))
 
@@ -65,7 +63,6 @@ export function MarketingHomePreviewPage({
         onSignup={goSignup}
         onTrial={goTrial}
         onPricing={goPricing}
-        onAdminLogin={onAdminLogin}
         onAboutUs={() => (onNavigate ? onNavigate("/about") : (window.location.href = "/about"))}
       />
     ) : variant === "grid" ? (

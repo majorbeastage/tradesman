@@ -8,7 +8,6 @@ import { PublicLegalNav } from "../public/PublicLegalNav"
 
 type HomePageProps = {
   onLogin: () => void
-  onAdminLogin: () => void
   onSignup: () => void
   onAboutUs: () => void
   onTraining: () => void
@@ -17,7 +16,7 @@ type HomePageProps = {
 
 const FEATURE_IDS = ["workflow", "screening", "comms", "growth", "payments", "scheduling", "archive"] as const
 
-export default function HomePage({ onLogin, onAdminLogin, onSignup, onAboutUs, onTraining, onPricing }: HomePageProps) {
+export default function HomePage({ onLogin, onSignup, onAboutUs, onTraining, onPricing }: HomePageProps) {
   const { t } = useLocale()
   const [supportsHover, setSupportsHover] = useState(false)
   const [hoverId, setHoverId] = useState<string | null>(null)
@@ -354,26 +353,6 @@ export default function HomePage({ onLogin, onAdminLogin, onSignup, onAboutUs, o
         </div>
 
         <div style={{ marginTop: "auto", paddingTop: 26 }}>
-          <div style={{ textAlign: "center", marginBottom: 12 }}>
-            <button
-              type="button"
-              onClick={onAdminLogin}
-              style={{
-                padding: "6px 12px",
-                background: "transparent",
-                border: "none",
-                fontSize: 11,
-                color: theme.text,
-                opacity: 0.55,
-                cursor: "pointer",
-                fontWeight: 600,
-                textDecoration: "underline",
-                textUnderlineOffset: 3,
-              }}
-            >
-              {t("home.adminLogin")}
-            </button>
-          </div>
           <div
             style={{
               borderTop: `1px solid ${theme.border}`,

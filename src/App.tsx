@@ -88,8 +88,8 @@ import { AppNavigationProvider, useAppNavigation } from "./contexts/AppNavigatio
 import { APP_NAV_PREFIX, parseAppHash } from "./lib/appNavigationHistory"
 import { JobTypesModalProvider } from "./contexts/JobTypesModalContext"
 import {
-  ADMIN_LOGIN_FROM_PREVIEW_KEY,
   hasAppNavDeepLink,
+  isAdminLoginPath,
   isAdminLoginRouteHash,
   isContractorLoginRouteHash,
   prepareAppDeepLinkHash,
@@ -149,22 +149,18 @@ function resolveLoginIntent(
   view: View,
   ref: MutableRefObject<"admin" | "contractor" | null>,
 ): "admin" | "contractor" | null {
-  if (ref.current === "admin" || view === "admin-login" || isAdminLoginRouteHash()) return "admin"
+  if (ref.current === "admin" || view === "admin-login" || isAdminLoginPath() || isAdminLoginRouteHash()) return "admin"
   if (ref.current === "contractor" || view === "login" || isContractorLoginRouteHash()) return "contractor"
   return null
 }
 
 function readInitialAppView(): View {
   if (typeof window === "undefined") return "home"
+  if (isAdminLoginPath()) return "admin-login"
   const hash = window.location.hash
   if (hasAppNavDeepLink(hash)) return "home"
   if (isAdminLoginRouteHash(hash)) return "admin-login"
   if (isContractorLoginRouteHash(hash)) return "login"
-  try {
-    if (sessionStorage.getItem(ADMIN_LOGIN_FROM_PREVIEW_KEY) === "1") return "admin-login"
-  } catch {
-    /* ignore */
-  }
   return "home"
 }
 
@@ -747,13 +743,19 @@ function App() {
     try {
       prepareAppDeepLinkHash()
 
+      const path = window.location.pathname.toLowerCase().replace(/\/+$/, "") || "/"
+      if (path === "/admin-login") {
+        beginAdminLogin(loginIntentRef)
+        setView("admin-login")
+        return
+      }
+
       const advisor = sessionStorage.getItem(SIGNUP_OPEN_PRODUCT_ADVISOR_KEY)
       if (advisor === "1") {
         setView("signup")
         return
       }
-      if (sessionStorage.getItem(ADMIN_LOGIN_FROM_PREVIEW_KEY) === "1") {
-        sessionStorage.removeItem(ADMIN_LOGIN_FROM_PREVIEW_KEY)
+      if (isAdminLoginRouteHash()) {
         beginAdminLogin(loginIntentRef)
         setView("admin-login")
         return
@@ -775,7 +777,7 @@ function App() {
       const hash = window.location.hash
       if (hasAppNavDeepLink(hash)) return
       if (isAdminLoginRouteHash(hash)) {
-        loginIntentRef.current = "admin"
+        beginAdminLogin(loginIntentRef)
         setView("admin-login")
         return
       }
@@ -785,6 +787,7 @@ function App() {
         return
       }
       if (view === "login" || view === "admin-login") {
+        if (isAdminLoginPath()) return
         loginIntentRef.current = null
         setView("home")
       }
@@ -852,14 +855,6 @@ function App() {
         }}
         onPricing={() => {
           window.location.href = "/pricing"
-        }}
-        onAdminLogin={() => {
-          try {
-            sessionStorage.setItem(ADMIN_LOGIN_FROM_PREVIEW_KEY, "1")
-          } catch {
-            /* ignore */
-          }
-          window.location.href = "/"
         }}
       />
     )
@@ -967,7 +962,6 @@ function App() {
     return (
       <MarketingHomePage
         onLogin={() => { beginContractorLogin(loginIntentRef); setView("login"); setLoginError("") }}
-        onAdminLogin={() => { beginAdminLogin(loginIntentRef); setView("admin-login"); setLoginError("") }}
         onSignup={() => {
           window.location.href = "/signup"
         }}
@@ -1073,7 +1067,9 @@ function App() {
             <p style={{ color: "#6b7280", margin: 0 }}>Check the browser console for details.</p>
             <button
               type="button"
-              onClick={() => setView("home")}
+              onClick={() => {
+                window.location.assign("/")
+              }}
               style={{ padding: "10px 20px", background: "#f97316", color: "white", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 600 }}
             >
               Back to home

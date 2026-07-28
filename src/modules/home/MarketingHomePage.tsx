@@ -3,7 +3,6 @@ import { MarketingPreviewShell } from "./marketing/MarketingPreviewShared"
 
 type Props = {
   onLogin: () => void
-  onAdminLogin: () => void
   onSignup: () => void
   onTrial: () => void
   onAboutUs: () => void
@@ -11,7 +10,7 @@ type Props = {
 }
 
 /** Production homepage — story scroll (no preview banner). */
-export default function MarketingHomePage({ onLogin, onAdminLogin, onSignup, onTrial, onAboutUs, onPricing }: Props) {
+export default function MarketingHomePage({ onLogin, onSignup, onTrial, onAboutUs, onPricing }: Props) {
   return (
     <MarketingPreviewShell fullWidth hideFooter banner={null}>
       <MarketingPreviewStory
@@ -20,7 +19,6 @@ export default function MarketingHomePage({ onLogin, onAdminLogin, onSignup, onT
         onSignup={onSignup}
         onTrial={onTrial}
         onPricing={onPricing}
-        onAdminLogin={onAdminLogin}
         onAboutUs={onAboutUs}
       />
     </MarketingPreviewShell>
