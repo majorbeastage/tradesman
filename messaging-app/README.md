@@ -8,22 +8,37 @@ It talks to the **same Supabase project** as the main app and uses the same
 `internal_threads` / `internal_thread_members` / `internal_messages` tables
 (`supabase/internal-messaging.sql` in the main repo). It never messages customers.
 
-## Status: scaffold (Phase 2 start)
+## Status
 
-Working in this scaffold:
+Working:
 - Supabase client + auth (email/password login fallback)
 - **Shared auto-login** handoff from the full mobile app (deep link, see below)
 - Team contact list + 1:1 threads + send/receive with Supabase Realtime
-- Ad-hoc groups, customer references, dial-out via `twilio-bridge-call`
+- Ad-hoc groups, customer references, attachments, edit/delete, mute, and push notifications
+- In-app PSTN softphone through Twilio Voice, plus a device-dialer option
 - **Internal team calling — audio + video conference** (WebRTC, no Twilio). 📞/🎥
   buttons in the chat header start a call with everyone in the thread; incoming
   calls take over the screen with Accept/Decline. Shares the same signaling
   (`rtc-inbox-<uid>` / `rtc-room-<roomId>` Supabase Realtime channels) as the
   desktop widget, so desktop ⇄ mobile calls interoperate. See
   `src/lib/useConferenceRoom.ts` + `src/screens/ConferenceCallView.tsx`.
+- Teammates can be invited into an active team call.
+- Calendar, activity, missed-call handling, availability, and Android native
+  call-audio routing.
 
-Roadmap (parity with desktop widget): presence dots, push notifications,
-conference "add participant", external (non-team) invite links.
+### External numbers and team calls
+
+An external phone number is **not** added to the WebRTC team conference. The
+current Twilio Voice API starts a separate PSTN softphone call and has no media
+gateway into the Supabase-signaled peer-to-peer room. The in-call UI therefore
+labels this action as separate, confirms it, leaves the team call, and then
+starts the business-line phone call.
+
+A true shared PSTN/team conference requires an architectural decision and
+server-side implementation (for example, moving the room to Twilio Conference
+or adding an SFU/PSTN gateway), including participant lifecycle, auth, billing,
+recording/consent, and failure handling. Do not simulate this with two local
+audio sessions.
 
 ### Calling requires camera/mic permission (native)
 
@@ -66,9 +81,8 @@ Approach — **secure deep-link session handoff** (no shared password storage):
 3. If no handoff is present and there's no stored session, the user sees the
    email/password login screen (`src/screens/LoginScreen.tsx`).
 
-> The main-app side (generating the deep link on a button tap) is a small change
-> in the main repo and is intentionally **not** included yet — this scaffold
-> implements the *receiving* side and a login fallback so it runs today.
+The main app can launch this app with the auth handoff and can hand off a phone
+number or thread target.
 
 ## Setup
 
@@ -83,11 +97,24 @@ npm run dev               # web preview
 
 ```bash
 npm run build
-npx cap add android
-npx cap add ios
-npx cap sync
-npx cap open android      # / ios
+npx cap sync android
+cd android
+./gradlew assembleDebug        # test APK
+./gradlew bundleRelease        # Play Console AAB
+./gradlew assembleRelease      # optional release APK
 ```
+
+Windows PowerShell uses `.\gradlew.bat` in place of `./gradlew`.
+
+Artifacts:
+- Debug APK: `android/app/build/outputs/apk/debug/app-debug.apk`
+- Release AAB: `android/app/build/outputs/bundle/release/app-release.aab`
+- Release APK: `android/app/build/outputs/apk/release/app-release.apk`
+
+Release signing reads `android/keystore.properties` from the main app first,
+then `messaging-app/android/keystore.properties`. A release artifact is only
+uploadable when a valid keystore and passwords are available. Keep signing
+files out of source control.
 
 `appId`: `com.tradesmanus.messaging` · `appName`: `Tradesman Messaging`
 (see `capacitor.config.ts`). Register the `tradesmanmsg` URL scheme on each

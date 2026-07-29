@@ -135,18 +135,21 @@ export default function ConferenceCallView({
   chat,
   teamPeers,
   onInvitePeople,
+  onStartSeparatePhoneCall,
 }: {
   room: RoomApi
   selfName: string
   chat?: ChatProps | null
   teamPeers?: { id: string; name: string }[]
   onInvitePeople?: (ids: string[]) => void
+  onStartSeparatePhoneCall?: (phone: string) => void
 }) {
   const { state, participants, incoming, muted, cameraOn, isVideo, sharingScreen, speakerOn, seconds, error, selfStream } = room
   const [showChat, setShowChat] = useState(false)
   const [text, setText] = useState("")
   const [addOpen, setAddOpen] = useState(false)
   const [addSel, setAddSel] = useState<Set<string>>(new Set())
+  const [externalPhone, setExternalPhone] = useState("")
   const endRef = useRef<HTMLDivElement | null>(null)
   // Mobile WebViews cannot reliably getDisplayMedia — hide Share; still show remote video/screens.
   const canScreenShare = !Capacitor.isNativePlatform()
@@ -165,6 +168,7 @@ export default function ConferenceCallView({
     const inCall = new Set(participants.map((p) => p.id))
     return (teamPeers ?? []).filter((p) => !inCall.has(p.id))
   }, [teamPeers, participants])
+  const externalPhoneValid = externalPhone.replace(/\D/g, "").length >= 10
 
   if (state === "incoming" && incoming) {
     return (
@@ -419,6 +423,30 @@ export default function ConferenceCallView({
           >
             {addSel.size ? `Add (${addSel.size})` : "Select people"}
           </button>
+          {onStartSeparatePhoneCall ? (
+            <div style={{ borderTop: "1px solid #334155", marginTop: 12, paddingTop: 12, display: "grid", gap: 8 }}>
+              <strong style={{ color: "#fdba74", fontSize: 13 }}>External phone number — separate call</strong>
+              <p style={{ margin: 0, color: "#cbd5e1", fontSize: 12, lineHeight: 1.45 }}>
+                Phone numbers cannot join this team call yet. This leaves the team call, then starts a separate business-line call.
+              </p>
+              <input
+                type="tel"
+                inputMode="tel"
+                value={externalPhone}
+                onChange={(e) => setExternalPhone(e.target.value)}
+                placeholder="(555) 123-4567"
+                style={{ borderRadius: 8, border: "1px solid #475569", background: "#0f172a", color: "#fff", padding: "11px", fontSize: 15 }}
+              />
+              <button
+                type="button"
+                disabled={!externalPhoneValid}
+                onClick={() => onStartSeparatePhoneCall(externalPhone)}
+                style={{ border: "none", borderRadius: 10, padding: "12px", background: externalPhoneValid ? "#b45309" : "#334155", color: "#fff", fontWeight: 800, cursor: externalPhoneValid ? "pointer" : "default" }}
+              >
+                Leave team call &amp; call separately
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -441,8 +469,8 @@ export default function ConferenceCallView({
             active={sharingScreen}
           />
         ) : null}
-        {onInvitePeople && (teamPeers?.length ?? 0) > 0 ? (
-          <ControlBtn label="Add" sub="Teammate" onClick={() => setAddOpen((v) => !v)} active={addOpen} />
+        {(onInvitePeople && (teamPeers?.length ?? 0) > 0) || onStartSeparatePhoneCall ? (
+          <ControlBtn label="Add" sub="Person" onClick={() => setAddOpen((v) => !v)} active={addOpen} />
         ) : null}
         {chat ? <ControlBtn label={showChat ? "Hide chat" : "Chat"} onClick={() => setShowChat((v) => !v)} active={showChat} /> : null}
         <ControlBtn label="Hang up" onClick={room.hangup} danger />

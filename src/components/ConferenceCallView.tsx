@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { theme } from "../styles/theme"
 import type { useConferenceRoom } from "../lib/useConferenceRoom"
@@ -138,6 +138,9 @@ type Props = {
   onPopOut?: () => void
   poppedOut?: boolean
   onReturnFromPopOut?: () => void
+  teamPeers?: { id: string; name: string }[]
+  onInvitePeople?: (ids: string[]) => void
+  onStartSeparatePhoneCall?: (phone: string) => void
 }
 
 export function ConferenceCallBody({
@@ -152,10 +155,21 @@ export function ConferenceCallBody({
   onPopOut,
   poppedOut,
   onReturnFromPopOut,
+  teamPeers,
+  onInvitePeople,
+  onStartSeparatePhoneCall,
 }: Props) {
   const { state, participants, incoming, muted, cameraOn, isVideo, sharingScreen, seconds, error, selfStream } = room
   const [showChatLocal, setShowChatLocal] = useState(false)
+  const [addOpen, setAddOpen] = useState(false)
+  const [addSel, setAddSel] = useState<Set<string>>(new Set())
+  const [externalPhone, setExternalPhone] = useState("")
   const showChat = showChatProp ?? showChatLocal
+  const addablePeers = useMemo(() => {
+    const inCall = new Set(participants.map((p) => p.id))
+    return (teamPeers ?? []).filter((p) => !inCall.has(p.id))
+  }, [participants, teamPeers])
+  const externalPhoneValid = externalPhone.replace(/\D/g, "").length >= 10
 
   function toggleChat() {
     if (onToggleChat) onToggleChat()
@@ -283,6 +297,79 @@ export function ConferenceCallBody({
         )
       ) : null}
 
+      {addOpen ? (
+        <div style={{ border: `1px solid ${theme.border}`, borderRadius: 10, padding: 10, background: "#fff", display: "grid", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <strong style={{ flex: 1, fontSize: 13, color: "#0f172a" }}>Add to call</strong>
+            <button type="button" onClick={() => setAddOpen(false)} style={{ border: "none", background: "transparent", color: "#64748b", cursor: "pointer", fontSize: 16 }}>×</button>
+          </div>
+          {onInvitePeople ? (
+            <>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase" }}>Teammates</div>
+              {addablePeers.length === 0 ? (
+                <div style={{ color: "#64748b", fontSize: 12 }}>No other teammates are available to invite.</div>
+              ) : (
+                addablePeers.map((p) => {
+                  const selected = addSel.has(p.id)
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setAddSel((prev) => {
+                        const next = new Set(prev)
+                        if (next.has(p.id)) next.delete(p.id)
+                        else next.add(p.id)
+                        return next
+                      })}
+                      style={{ border: `1px solid ${selected ? theme.primary : theme.border}`, borderRadius: 8, background: selected ? "#eff6ff" : "#fff", color: "#0f172a", padding: "7px 9px", textAlign: "left", cursor: "pointer", fontWeight: 700, fontSize: 12 }}
+                    >
+                      {selected ? "✓ " : ""}{p.name}
+                    </button>
+                  )
+                })
+              )}
+              <button
+                type="button"
+                disabled={addSel.size === 0}
+                onClick={() => {
+                  if (addSel.size === 0) return
+                  onInvitePeople([...addSel])
+                  setAddSel(new Set())
+                  setAddOpen(false)
+                }}
+                style={{ ...ctrlBtn, padding: "8px", border: "none", background: addSel.size ? theme.primary : "#cbd5e1", color: "#fff", cursor: addSel.size ? "pointer" : "default" }}
+              >
+                {addSel.size ? `Invite ${addSel.size} teammate${addSel.size === 1 ? "" : "s"}` : "Select teammates"}
+              </button>
+            </>
+          ) : null}
+          {onStartSeparatePhoneCall ? (
+            <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 8, display: "grid", gap: 6 }}>
+              <strong style={{ fontSize: 12, color: "#9a3412" }}>External phone number — separate call</strong>
+              <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+                Phone numbers cannot join this team call yet. This leaves the team call, then starts a separate business-line call.
+              </p>
+              <input
+                type="tel"
+                inputMode="tel"
+                value={externalPhone}
+                onChange={(e) => setExternalPhone(e.target.value)}
+                placeholder="(555) 123-4567"
+                style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: "8px 9px", fontSize: 13, color: "#0f172a", background: "#fff" }}
+              />
+              <button
+                type="button"
+                disabled={!externalPhoneValid}
+                onClick={() => onStartSeparatePhoneCall(externalPhone)}
+                style={{ ...ctrlBtn, padding: "8px", border: "none", background: externalPhoneValid ? "#b45309" : "#cbd5e1", color: "#fff", cursor: externalPhoneValid ? "pointer" : "default" }}
+              >
+                Leave team call &amp; call separately
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", flexShrink: 0 }}>
         <button
           type="button"
@@ -314,6 +401,15 @@ export function ConferenceCallBody({
             style={{ ...ctrlBtn, flex: 1, minWidth: 70, background: showChat ? "#fff7ed" : "#fff", color: "#0f172a", border: `1px solid ${theme.border}`, padding: "8px" }}
           >
             {showChat ? "Hide chat" : "Chat"}
+          </button>
+        ) : null}
+        {(onInvitePeople && (teamPeers?.length ?? 0) > 0) || onStartSeparatePhoneCall ? (
+          <button
+            type="button"
+            onClick={() => setAddOpen((v) => !v)}
+            style={{ ...ctrlBtn, flex: 1, minWidth: 70, background: addOpen ? "#fff7ed" : "#fff", color: "#0f172a", border: `1px solid ${theme.border}`, padding: "8px" }}
+          >
+            Add
           </button>
         ) : null}
         <button type="button" onClick={room.hangup} style={{ ...ctrlBtn, flex: 1, minWidth: 70, background: "#dc2626", color: "#fff", border: "none", padding: "8px" }}>

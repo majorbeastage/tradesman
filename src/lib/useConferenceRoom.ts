@@ -556,6 +556,38 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
     [acquireMedia, cleanup, joinRoom, maybeStartTimer, me],
   )
 
+  // Invite additional teammates into the current room. External phone numbers
+  // cannot join this peer-to-peer WebRTC mesh without a PSTN/WebRTC gateway.
+  const inviteMore = useCallback(
+    async (memberIds: string[]) => {
+      const roomId = roomIdRef.current
+      const myId = meRef.current
+      if (!roomId || !myId || !supabase) return
+      const already = new Set([
+        myId,
+        ...participants.map((p) => p.id),
+        ...pendingInviteesRef.current,
+      ])
+      const toInvite = [...new Set(memberIds.filter((id) => id && id !== myId && !already.has(id)))]
+      if (toInvite.length === 0) return
+      for (const id of toInvite) {
+        pendingInviteesRef.current.push(id)
+        upsertParticipant(id, {})
+      }
+      const invite: InvitePayload = {
+        roomId,
+        fromId: myId,
+        fromName: resolveNameRef.current(myId),
+        members: [myId, ...participants.map((p) => p.id), ...toInvite],
+        video: callVideoRef.current,
+      }
+      for (const id of toInvite) {
+        await broadcastInbox(id, "invite", invite)
+      }
+    },
+    [broadcastInbox, participants, upsertParticipant],
+  )
+
   const accept = useCallback(async () => {
     const inv = incoming
     if (!inv) return
@@ -722,6 +754,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
     setError,
     selfStream,
     startCall,
+    inviteMore,
     joinNamedRoom,
     accept,
     decline,

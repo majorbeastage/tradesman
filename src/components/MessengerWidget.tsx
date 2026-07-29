@@ -426,6 +426,22 @@ export default function MessengerWidget({ setPage }: Props) {
     void room.startCall(others, { video })
   }
 
+  function startSeparateExternalCall(rawPhone: string) {
+    const digits = rawPhone.replace(/\D/g, "")
+    if (digits.length < 10) {
+      room.setError("Enter a valid phone number.")
+      return
+    }
+    const to = digits.length === 10 ? `+1${digits}` : `+${digits}`
+    if (!window.confirm("This external number cannot join the team call. Leave the team call and start a separate business-line call?")) return
+    room.hangup()
+    setView("dial")
+    setDialNumber(rawPhone)
+    setDialSelectedName(null)
+    setDialCustQuery("")
+    void voice.placePhoneCall(to, rawPhone)
+  }
+
   // Surface an incoming team call: open the widget. Prefer staying on chat when possible.
   useEffect(() => {
     if (room.state === "incoming") {
@@ -555,6 +571,9 @@ export default function MessengerWidget({ setPage }: Props) {
           onPopOut={() => void handlePopOut()}
           poppedOut={callPoppedOut}
           onReturnFromPopOut={handleReturnFromPopOut}
+          teamPeers={peers.map((p) => ({ id: p.id, name: p.displayName }))}
+          onInvitePeople={(ids) => void room.inviteMore(ids)}
+          onStartSeparatePhoneCall={startSeparateExternalCall}
         />
       </div>
     ) : null
@@ -1007,6 +1026,9 @@ export default function MessengerWidget({ setPage }: Props) {
                   onPopOut={() => void handlePopOut()}
                   poppedOut={callPoppedOut}
                   onReturnFromPopOut={handleReturnFromPopOut}
+                  teamPeers={peers.map((p) => ({ id: p.id, name: p.displayName }))}
+                  onInvitePeople={(ids) => void room.inviteMore(ids)}
+                  onStartSeparatePhoneCall={startSeparateExternalCall}
                 />
               ) : callActive && active ? (
                 <InCallControls

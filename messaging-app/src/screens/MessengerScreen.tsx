@@ -425,6 +425,21 @@ export default function MessengerScreen({ me }: { me: string }) {
     void room.startCall(others, { video })
   }
 
+  function startSeparateExternalCall(rawPhone: string) {
+    if (rawPhone.replace(/\D/g, "").length < 10) {
+      room.setError("Enter a valid phone number.")
+      return
+    }
+    if (!window.confirm("This external number cannot join the team call. Leave the team call and start a separate business-line call?")) return
+    room.hangup()
+    setSelected(null)
+    setTab("phone")
+    setDialNumber(rawPhone)
+    setDialSelectedName(null)
+    setDialCustQuery("")
+    void voice.placePhoneCall(rawPhone)
+  }
+
   const weekDays = useMemo(() => {
     const days: Date[] = []
     for (let i = 0; i < 7; i++) {
@@ -478,6 +493,7 @@ export default function MessengerScreen({ me }: { me: string }) {
         chat={inCallChat}
         teamPeers={peers.filter((p) => p.id !== me).map((p) => ({ id: p.id, name: p.name || peerName(p.id) }))}
         onInvitePeople={(ids) => void room.inviteMore(ids)}
+        onStartSeparatePhoneCall={startSeparateExternalCall}
       />
     )
   }
