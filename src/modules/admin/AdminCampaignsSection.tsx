@@ -7,13 +7,18 @@ import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import {
   AD_CHANNEL_OPTIONS,
+  AD_CAMPAIGN_FEE_DISCLOSURE,
+  AD_CAMPAIGN_SPEND_DISCLAIMER,
   AD_STATUS_OPTIONS,
   adBalanceDueCents,
+  adCampaignProcessingFeeCents,
+  adCampaignTotalChargeCents,
   centsToUsd,
   formatUsdFromCents,
   mergeAdBillingIntoMetadata,
   sumAdBalanceDueCents,
   usdToCents,
+  type AdCampaignPaymentRow,
   type AdCampaignRow,
   type AdCampaignStatus,
   type AdSpendEntry,
@@ -34,6 +39,7 @@ export default function AdminCampaignsSection() {
   const [campaigns, setCampaigns] = useState<AdCampaignRow[]>([])
   const [selectedId, setSelectedId] = useState<string>("")
   const [spendLog, setSpendLog] = useState<AdSpendEntry[]>([])
+  const [paymentLog, setPaymentLog] = useState<AdCampaignPaymentRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [msg, setMsg] = useState("")
@@ -45,6 +51,7 @@ export default function AdminCampaignsSection() {
   const [newBudgetUsd, setNewBudgetUsd] = useState("")
   const [newDetails, setNewDetails] = useState("")
   const [newChannels, setNewChannels] = useState<string[]>(["google"])
+  const [newRequiresClientApproval, setNewRequiresClientApproval] = useState(true)
 
   // Edit / spend
   const [editName, setEditName] = useState("")
@@ -58,6 +65,20 @@ export default function AdminCampaignsSection() {
   const [spendDate, setSpendDate] = useState(todayIsoDate())
 
   const selected = useMemo(() => campaigns.find((c) => c.id === selectedId) ?? null, [campaigns, selectedId])
+
+  async function sendClientApprovalRequest(campaignId: string) {
+    if (!supabase) throw new Error("Supabase is not configured.")
+    const token = (await supabase.auth.getSession()).data.session?.access_token
+    if (!token) throw new Error("Sign in again to send the client approval request.")
+    const response = await fetch("/api/campaign-approval", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "request", campaignId }),
+    })
+    const payload = (await response.json().catch(() => ({}))) as { error?: string; email?: { ok?: boolean; disabled?: boolean } }
+    if (!response.ok) throw new Error(payload.error || `Approval request failed (${response.status}).`)
+    return payload.email
+  }
 
   const clientCampaignOptions = useMemo(() => {
     return campaigns.map((c) => {
@@ -131,16 +152,26 @@ export default function AdminCampaignsSection() {
   useEffect(() => {
     if (!supabase || !selectedId) {
       setSpendLog([])
+      setPaymentLog([])
       return
     }
     void (async () => {
-      const { data } = await supabase
-        .from("ad_spend_entries")
-        .select("*")
-        .eq("campaign_id", selectedId)
-        .order("spend_date", { ascending: false })
-        .limit(40)
-      setSpendLog((data ?? []) as AdSpendEntry[])
+      const [spendResult, paymentResult] = await Promise.all([
+        supabase
+          .from("ad_spend_entries")
+          .select("*")
+          .eq("campaign_id", selectedId)
+          .order("spend_date", { ascending: false })
+          .limit(40),
+        supabase
+          .from("ad_campaign_payments")
+          .select("*")
+          .contains("campaign_ids", [selectedId])
+          .order("created_at", { ascending: false })
+          .limit(40),
+      ])
+      setSpendLog((spendResult.data ?? []) as AdSpendEntry[])
+      setPaymentLog((paymentResult.data ?? []) as AdCampaignPaymentRow[])
     })()
   }, [selectedId])
 
@@ -167,7 +198,14 @@ export default function AdminCampaignsSection() {
         .select("*")
         .single()
       if (insErr) throw insErr
-      setMsg("Campaign request created.")
+      let createdMessage = "Campaign request created."
+      if (data?.id && newRequiresClientApproval) {
+        const email = await sendClientApprovalRequest(String(data.id))
+        createdMessage = email?.ok
+          ? "Campaign created and emailed to the client for approval."
+          : "Campaign created for client approval. Email delivery is unavailable; it appears in Growth and Today’s to-do."
+      }
+      setMsg(createdMessage)
       setNewDetails("")
       setNewBudgetUsd("")
       await load()
@@ -185,6 +223,15 @@ export default function AdminCampaignsSection() {
     setError("")
     setMsg("")
     try {
+      const approval =
+        selected.metadata?.client_approval &&
+        typeof selected.metadata.client_approval === "object" &&
+        !Array.isArray(selected.metadata.client_approval)
+          ? (selected.metadata.client_approval as Record<string, unknown>)
+          : null
+      if (editStatus === "active" && approval && approval.status !== "approved") {
+        throw new Error("The client must approve this campaign before it can be marked Active.")
+      }
       const { error: upErr } = await supabase
         .from("ad_campaigns")
         .update({
@@ -201,6 +248,26 @@ export default function AdminCampaignsSection() {
       await load()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Save failed.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function requestSelectedClientApproval() {
+    if (!selected) return
+    setBusy(true)
+    setError("")
+    setMsg("")
+    try {
+      const email = await sendClientApprovalRequest(selected.id)
+      setMsg(
+        email?.ok
+          ? "Client approval requested and email sent."
+          : "Client approval requested. It appears in Growth and Today’s to-do; email delivery is not configured.",
+      )
+      await load()
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not request client approval.")
     } finally {
       setBusy(false)
     }
@@ -468,8 +535,26 @@ export default function AdminCampaignsSection() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
             <Stat label="Requested" value={formatUsdFromCents(selected.requested_budget_cents)} />
             <Stat label="Spent" value={formatUsdFromCents(selected.spent_cents)} />
+            <Stat label="Processing fee" value={formatUsdFromCents(adCampaignProcessingFeeCents(selected.spent_cents))} />
+            <Stat label="Campaign total" value={formatUsdFromCents(adCampaignTotalChargeCents(selected.spent_cents))} />
             <Stat label="Billed" value={formatUsdFromCents(selected.billed_cents)} />
             <Stat label="Due (Payments)" value={formatUsdFromCents(adBalanceDueCents(selected))} accent />
+          </div>
+
+          <div
+            style={{
+              padding: 12,
+              borderRadius: 10,
+              border: "1px solid #fed7aa",
+              background: "#fff7ed",
+              color: "#9a3412",
+              fontSize: 12,
+              lineHeight: 1.5,
+            }}
+          >
+            <strong style={{ display: "block", marginBottom: 4 }}>Client campaign disclosure</strong>
+            <span>{AD_CAMPAIGN_SPEND_DISCLAIMER}</span>
+            <span style={{ display: "block", marginTop: 4 }}>{AD_CAMPAIGN_FEE_DISCLOSURE}</span>
           </div>
 
           <label style={{ display: "grid", gap: 4 }}>
@@ -508,6 +593,9 @@ export default function AdminCampaignsSection() {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button type="button" onClick={() => void saveCampaign()} disabled={busy} style={primaryBtn}>
               Save campaign
+            </button>
+            <button type="button" onClick={() => void requestSelectedClientApproval()} disabled={busy} style={secondaryBtn}>
+              Send to client for approval
             </button>
             <button type="button" onClick={() => void syncToPayments()} disabled={busy} style={primaryBtn}>
               Sync open balance → Payments
@@ -555,6 +643,22 @@ export default function AdminCampaignsSection() {
               ))}
             </div>
           ) : null}
+          {paymentLog.length > 0 ? (
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#64748b" }}>Verified campaign payments</div>
+              {paymentLog.map((payment) => (
+                <div
+                  key={payment.id}
+                  style={{ display: "flex", flexWrap: "wrap", gap: 10, fontSize: 13, borderBottom: `1px solid ${theme.border}`, padding: "6px 0" }}
+                >
+                  <span style={{ fontWeight: 800, color: "#15803d" }}>{formatUsdFromCents(payment.amount_cents)}</span>
+                  <span style={{ color: "#64748b" }}>{new Date(payment.created_at).toLocaleString()}</span>
+                  <span style={{ textTransform: "capitalize" }}>{payment.provider}</span>
+                  <span style={{ color: "#64748b", fontFamily: "monospace" }}>{payment.provider_transaction_id}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -595,6 +699,20 @@ export default function AdminCampaignsSection() {
             ))}
           </div>
         </div>
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, color: theme.text }}>
+          <input
+            type="checkbox"
+            checked={newRequiresClientApproval}
+            onChange={(event) => setNewRequiresClientApproval(event.target.checked)}
+            style={{ marginTop: 3 }}
+          />
+          <span>
+            <strong>Require client approval before launch</strong>
+            <span style={{ display: "block", color: "#64748b", marginTop: 2 }}>
+              Adds the request to the client&apos;s Growth tab and Today&apos;s to-do, and emails the client when email delivery is configured.
+            </span>
+          </span>
+        </label>
         <button type="button" onClick={() => void createCampaign()} disabled={busy || !newProfileId} style={primaryBtn}>
           Create request
         </button>

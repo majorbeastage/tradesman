@@ -6,7 +6,6 @@ import { theme } from "../../styles/theme"
 import { usePortalTheme } from "../../lib/useSchemeStyles"
 import { formatAppError } from "../../lib/formatAppError"
 import {
-  GROWTH_CAMPAIGN_TEMPLATES,
   applyCampaignStatusTransition,
   buildGrowthRecommendations,
   computeScoresFromGrades,
@@ -25,6 +24,14 @@ import {
 } from "../../lib/growthModule"
 import { mergeSocialPresenceIntoMetadata, readSocialPresenceFromMetadata } from "../../lib/socialPresenceSync"
 import { GROWTH_PROFILE_PLATFORM_DEFS, gradeGrowthProfiles, gradesToRecord } from "../../lib/growthProfileGrading"
+import {
+  AD_CAMPAIGN_FEE_DISCLOSURE,
+  AD_CAMPAIGN_SPEND_DISCLAIMER,
+  adCampaignProcessingFeeCents,
+  formatUsdFromCents,
+  usdToCents,
+  type AdCampaignRow,
+} from "../../lib/adCampaigns"
 
 type Props = {
   setPage: (page: string) => void
@@ -52,6 +59,8 @@ export default function GrowthPage({ setPage }: Props) {
   const [saving, setSaving] = useState(false)
   const [grading, setGrading] = useState(false)
   const [err, setErr] = useState("")
+  const [adminCampaignRequests, setAdminCampaignRequests] = useState<AdCampaignRow[]>([])
+  const [approvalBusyId, setApprovalBusyId] = useState("")
   const saveTimer = useRef<number | null>(null)
   const docBeforeEdit = useRef<GrowthModuleDoc | null>(null)
 
@@ -102,6 +111,49 @@ export default function GrowthPage({ setPage }: Props) {
       cancelled = true
     }
   }, [userId])
+
+  const loadAdminCampaignRequests = useCallback(async () => {
+    if (!supabase || !userId) {
+      setAdminCampaignRequests([])
+      return
+    }
+    const { data } = await supabase
+      .from("ad_campaigns")
+      .select("*")
+      .eq("profile_id", userId)
+      .in("status", ["awaiting_client_approval", "approved", "client_rejected"])
+      .order("updated_at", { ascending: false })
+    setAdminCampaignRequests((data ?? []) as AdCampaignRow[])
+  }, [userId])
+
+  useEffect(() => {
+    void loadAdminCampaignRequests()
+  }, [loadAdminCampaignRequests])
+
+  const respondToAdminCampaign = useCallback(
+    async (campaignId: string, decision: "approved" | "rejected") => {
+      if (!supabase) return
+      setApprovalBusyId(campaignId)
+      setErr("")
+      try {
+        const token = (await supabase.auth.getSession()).data.session?.access_token
+        if (!token) throw new Error("Sign in again to respond to this campaign.")
+        const response = await fetch("/api/campaign-approval", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "respond", campaignId, decision }),
+        })
+        const payload = (await response.json().catch(() => ({}))) as { error?: string }
+        if (!response.ok) throw new Error(payload.error || `Campaign response failed (${response.status}).`)
+        await loadAdminCampaignRequests()
+      } catch (error) {
+        setErr(error instanceof Error ? error.message : "Could not update campaign approval.")
+      } finally {
+        setApprovalBusyId("")
+      }
+    },
+    [loadAdminCampaignRequests],
+  )
 
   const persist = useCallback(
     (next: GrowthModuleDoc) => {
@@ -256,7 +308,16 @@ export default function GrowthPage({ setPage }: Props) {
       {section === "budget" ? (
         <BudgetSection
           budget={doc.marketingBudget}
+          campaigns={doc.campaigns ?? []}
           onPatch={(marketingBudget) => updateDoc({ marketingBudget: { ...doc.marketingBudget, ...marketingBudget } })}
+          onPatchCampaign={(campaignId, patch) =>
+            updateDoc((prev) => ({
+              ...prev,
+              campaigns: (prev.campaigns ?? []).map((campaign) =>
+                campaign.id === campaignId ? { ...campaign, ...patch } : campaign,
+              ),
+            }))
+          }
           onSave={saveNow}
         />
       ) : null}
@@ -264,6 +325,9 @@ export default function GrowthPage({ setPage }: Props) {
       {section === "campaigns" ? (
         <CampaignsSection
           doc={doc}
+          adminCampaignRequests={adminCampaignRequests}
+          approvalBusyId={approvalBusyId}
+          onRespondToAdminCampaign={respondToAdminCampaign}
           ctaSlug={ctaSlug}
           updateDoc={updateDoc}
           saveNow={saveNow}
@@ -484,20 +548,27 @@ function GradesSection({
 
 function BudgetSection({
   budget,
+  campaigns,
   onPatch,
+  onPatchCampaign,
   onSave,
 }: {
   budget: GrowthModuleDoc["marketingBudget"]
+  campaigns: GrowthCampaignDraft[]
   onPatch: (b: NonNullable<GrowthModuleDoc["marketingBudget"]>) => void
+  onPatchCampaign: (campaignId: string, patch: Partial<GrowthCampaignDraft>) => void
   onSave: () => void
 }) {
+  const [selectedCampaignId, setSelectedCampaignId] = useState("")
+  const selectedCampaign = campaigns.find((campaign) => campaign.id === selectedCampaignId)
+
   return (
     <div style={panelStyle}>
       <h2 style={h2}>Marketing budget</h2>
       <p style={p}>
-        Set the monthly cap you are willing to spend on ads and partner services. <strong>Payment collection is not wired yet</strong>{" "}
-        — this will connect to Tradesman Payments (Helcim) so campaigns can draw from an approved budget later.
+        Set an account-wide cap, or select a saved campaign to add or change that campaign&apos;s budget.
       </p>
+      <CampaignSpendDisclosure />
       <div
         style={{
           padding: 12,
@@ -512,22 +583,49 @@ function BudgetSection({
         Status: {budget?.paymentWiringStatus === "connected" ? "Connected to Payments" : "Not connected — Admin Ads & campaigns syncs spend to Payments"}
       </div>
       <label style={labelStyle}>
-        Monthly cap (USD)
+        Campaign
+        <select
+          value={selectedCampaignId}
+          onChange={(event) => setSelectedCampaignId(event.target.value)}
+          style={inputStyle}
+        >
+          <option value="">Account-wide monthly budget</option>
+          {campaigns.map((campaign) => (
+            <option key={campaign.id} value={campaign.id}>
+              {campaign.name || "Untitled campaign"} · {campaign.status}
+            </option>
+          ))}
+        </select>
+      </label>
+      {campaigns.length === 0 ? (
+        <p style={{ margin: "6px 0 12px", fontSize: 12, color: "#64748b" }}>
+          Create a campaign first, then return here to assign its budget.
+        </p>
+      ) : null}
+      <label style={labelStyle}>
+        {selectedCampaign ? "Campaign budget (USD)" : "Monthly cap (USD)"}
         <input
           type="number"
           min={0}
           step={50}
-          value={budget?.monthlyCap ?? ""}
-          onChange={(e) => onPatch({ monthlyCap: Number(e.target.value) || undefined, currency: "USD", paymentWiringStatus: "not_connected" })}
+          value={selectedCampaign ? selectedCampaign.budget ?? "" : budget?.monthlyCap ?? ""}
+          onChange={(e) => {
+            const value = Number(e.target.value) || 0
+            if (selectedCampaign) onPatchCampaign(selectedCampaign.id, { budget: value })
+            else onPatch({ monthlyCap: value || undefined, currency: "USD", paymentWiringStatus: "not_connected" })
+          }}
           placeholder="e.g. 1500"
           style={inputStyle}
         />
       </label>
       <label style={{ ...labelStyle, marginTop: 10 }}>
-        Notes for your marketing firm
+        {selectedCampaign ? "Campaign notes" : "Notes for your marketing firm"}
         <textarea
-          value={budget?.notes ?? ""}
-          onChange={(e) => onPatch({ notes: e.target.value })}
+          value={selectedCampaign ? selectedCampaign.notes ?? "" : budget?.notes ?? ""}
+          onChange={(e) => {
+            if (selectedCampaign) return onPatchCampaign(selectedCampaign.id, { notes: e.target.value })
+            onPatch({ notes: e.target.value })
+          }}
           rows={3}
           placeholder="Seasonal peaks, max per campaign, approval rules…"
           style={{ ...inputStyle, resize: "vertical" }}
@@ -544,16 +642,48 @@ type UpdateDocFn = (patch: Partial<GrowthModuleDoc> | ((prev: GrowthModuleDoc) =
 
 function CampaignsSection({
   doc,
+  adminCampaignRequests,
+  approvalBusyId,
+  onRespondToAdminCampaign,
   ctaSlug,
   updateDoc,
   saveNow,
 }: {
   doc: GrowthModuleDoc
+  adminCampaignRequests: AdCampaignRow[]
+  approvalBusyId: string
+  onRespondToAdminCampaign: (campaignId: string, decision: "approved" | "rejected") => Promise<void>
   ctaSlug: string
   updateDoc: UpdateDocFn
   saveNow: () => void
 }) {
   const monthlyCap = doc.marketingBudget?.monthlyCap
+  const completedCampaigns = (doc.campaigns ?? []).filter((campaign) => campaign.status === "completed")
+
+  const createCampaign = (template?: GrowthCampaignDraft) => {
+    const now = Date.now()
+    updateDoc((prev) => ({
+      ...prev,
+      campaigns: [
+        ...(prev.campaigns ?? []),
+        {
+          id: `campaign-${now}`,
+          name: template?.name ? `${template.name} (new)` : "New campaign",
+          targetService: template?.targetService ?? "",
+          budget: template?.budget ?? (monthlyCap ? Math.min(500, monthlyCap) : 500),
+          radiusMiles: template?.radiusMiles ?? 15,
+          durationDays: template?.durationDays ?? 30,
+          landingSlug: template?.landingSlug ?? ctaSlug,
+          description: template?.description ?? "",
+          notes: template?.notes ?? "",
+          dataCollectionBrief: template?.dataCollectionBrief ?? "",
+          requiresApprovalBeforeLive: template?.requiresApprovalBeforeLive ?? true,
+          status: "draft",
+          snapshots: [],
+        },
+      ],
+    }))
+  }
 
   return (
     <div style={panelStyle}>
@@ -563,48 +693,98 @@ function CampaignsSection({
         <em>before</em> snapshot; when marked <strong>Completed</strong>, an <em>after</em> snapshot — enter traffic and lead
         numbers your firm reports (automated analytics when partner API connects).
       </p>
+      <CampaignSpendDisclosure />
+      {adminCampaignRequests.length > 0 ? (
+        <div style={{ display: "grid", gap: 10, marginBottom: 16 }}>
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 900, color: theme.text }}>Campaigns from Tradesman</h3>
+          {adminCampaignRequests.map((campaign) => {
+            const awaiting = campaign.status === "awaiting_client_approval"
+            return (
+              <div
+                key={campaign.id}
+                style={{
+                  padding: 14,
+                  borderRadius: 12,
+                  border: `1px solid ${awaiting ? "#fb923c" : theme.border}`,
+                  background: awaiting ? "#fff7ed" : "#f8fafc",
+                }}
+              >
+                <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 8 }}>
+                  <div>
+                    <div style={{ fontWeight: 900, color: theme.text }}>{campaign.name}</div>
+                    <div style={{ marginTop: 3, fontSize: 12, color: "#64748b" }}>
+                      Proposed budget {formatUsdFromCents(campaign.requested_budget_cents)} · {campaign.channels.join(", ") || "Channels pending"}
+                    </div>
+                  </div>
+                  <strong style={{ fontSize: 12, color: awaiting ? "#c2410c" : campaign.status === "approved" ? "#15803d" : "#64748b" }}>
+                    {awaiting ? "Your approval is required" : campaign.status === "approved" ? "Approved" : "Declined"}
+                  </strong>
+                </div>
+                {campaign.request_details ? (
+                  <p style={{ margin: "10px 0 0", fontSize: 13, color: theme.text, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
+                    {campaign.request_details}
+                  </p>
+                ) : null}
+                {awaiting ? (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+                    <button
+                      type="button"
+                      disabled={approvalBusyId === campaign.id}
+                      onClick={() => void onRespondToAdminCampaign(campaign.id, "approved")}
+                      style={primaryBtn}
+                    >
+                      Approve campaign
+                    </button>
+                    <button
+                      type="button"
+                      disabled={approvalBusyId === campaign.id}
+                      onClick={() => void onRespondToAdminCampaign(campaign.id, "rejected")}
+                      style={{ ...secondaryBtn, color: "#b91c1c", borderColor: "#fecaca" }}
+                    >
+                      Decline
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            )
+          })}
+        </div>
+      ) : null}
       {monthlyCap ? (
         <p style={{ fontSize: 13, color: "#64748b", marginTop: -8 }}>Account monthly cap: ${monthlyCap.toLocaleString()}</p>
       ) : null}
 
-      <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
-        {GROWTH_CAMPAIGN_TEMPLATES.map((t) => (
-          <div key={t.id} style={{ padding: 12, borderRadius: 10, border: `1px solid ${theme.border}`, display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-            <div>
-              <div style={{ fontWeight: 800 }}>{t.name}</div>
-              <div style={{ fontSize: 12, color: "#64748b" }}>{t.targetService}</div>
-            </div>
-            <button
-              type="button"
-              style={secondaryBtn}
-              onClick={() =>
-                updateDoc((prev) => ({
-                  ...prev,
-                  campaigns: [
-                    ...(prev.campaigns ?? []),
-                    {
-                      id: `${t.id}-${Date.now()}`,
-                      name: t.name,
-                      targetService: t.targetService,
-                      budget: monthlyCap ? Math.min(500, monthlyCap) : 500,
-                      radiusMiles: 15,
-                      durationDays: 30,
-                      landingSlug: ctaSlug,
-                      status: "draft",
-                      dataCollectionBrief: "",
-                    },
-                  ],
-                }))
-              }
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "end", gap: 10, marginBottom: 16 }}>
+        <button type="button" style={primaryBtn} onClick={() => createCampaign()}>
+          New campaign
+        </button>
+        {completedCampaigns.length > 0 ? (
+          <label style={{ ...labelStyle, minWidth: 260 }}>
+            Start from a completed campaign
+            <select
+              defaultValue=""
+              style={inputStyle}
+              onChange={(event) => {
+                const template = completedCampaigns.find((campaign) => campaign.id === event.target.value)
+                if (template) createCampaign(template)
+                event.target.value = ""
+              }}
             >
-              Add template
-            </button>
-          </div>
-        ))}
+              <option value="">Choose completed campaign…</option>
+              {completedCampaigns.map((campaign) => (
+                <option key={campaign.id} value={campaign.id}>
+                  {campaign.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
       </div>
 
       {(doc.campaigns ?? []).length === 0 ? (
-        <p style={{ fontSize: 13, color: "#64748b" }}>No campaigns — add a template to start a brief for your marketing firm.</p>
+        <p style={{ fontSize: 13, color: "#64748b" }}>
+          No campaigns yet. Select <strong>New campaign</strong> to build one. Completed campaigns become reusable starting points here.
+        </p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {(doc.campaigns ?? []).map((c) => (
@@ -698,6 +878,23 @@ function CampaignCard({
           <input value={c.landingSlug ?? ""} onChange={(e) => patchCampaign({ landingSlug: e.target.value })} placeholder={ctaSlug} style={inputStyle} />
         </label>
       </div>
+      {(c.budget ?? 0) > 0 ? (
+        <div
+          style={{
+            marginTop: 10,
+            padding: "9px 11px",
+            borderRadius: 9,
+            border: "1px solid #fed7aa",
+            background: "#fff7ed",
+            color: "#9a3412",
+            fontSize: 12,
+            lineHeight: 1.45,
+          }}
+        >
+          Proposed campaign spend: <strong>{formatUsdFromCents(usdToCents(c.budget ?? 0))}</strong> · Processing fee:{" "}
+          <strong>{formatUsdFromCents(adCampaignProcessingFeeCents(usdToCents(c.budget ?? 0)))}</strong>
+        </div>
+      ) : null}
 
       <SnapshotPair campaign={c} onUpdateMetrics={updateSnapshotMetrics} />
 
@@ -718,6 +915,27 @@ function CampaignCard({
           Remove
         </button>
       </div>
+    </div>
+  )
+}
+
+function CampaignSpendDisclosure() {
+  return (
+    <div
+      style={{
+        margin: "0 0 14px",
+        padding: 12,
+        borderRadius: 10,
+        border: "1px solid #fed7aa",
+        background: "#fff7ed",
+        color: "#9a3412",
+        fontSize: 12,
+        lineHeight: 1.55,
+      }}
+    >
+      <strong style={{ display: "block", marginBottom: 4 }}>Campaign cost and results disclosure</strong>
+      <span>{AD_CAMPAIGN_SPEND_DISCLAIMER}</span>
+      <span style={{ display: "block", marginTop: 5 }}>{AD_CAMPAIGN_FEE_DISCLOSURE}</span>
     </div>
   )
 }

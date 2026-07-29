@@ -1,6 +1,14 @@
 /** Managed ad campaigns — admin ops + Payments balance helpers. */
 
-export type AdCampaignStatus = "requested" | "approved" | "active" | "paused" | "completed" | "canceled"
+export type AdCampaignStatus =
+  | "requested"
+  | "awaiting_client_approval"
+  | "approved"
+  | "client_rejected"
+  | "active"
+  | "paused"
+  | "completed"
+  | "canceled"
 
 export type AdCampaignRow = {
   id: string
@@ -36,6 +44,20 @@ export type AdSpendEntry = {
   notes: string | null
 }
 
+export type AdCampaignPaymentRow = {
+  id: string
+  created_at: string
+  profile_id: string
+  amount_cents: number
+  currency: string
+  provider: string
+  provider_transaction_id: string
+  approval_code: string | null
+  campaign_ids: string[]
+  status: "verified" | "refunded"
+  metadata: Record<string, unknown>
+}
+
 export const AD_CHANNEL_OPTIONS = [
   { id: "google", label: "Google Ads / LSA" },
   { id: "gbp", label: "Google Business Profile" },
@@ -48,16 +70,37 @@ export const AD_CHANNEL_OPTIONS = [
 
 export const AD_STATUS_OPTIONS: { id: AdCampaignStatus; label: string }[] = [
   { id: "requested", label: "Requested" },
+  { id: "awaiting_client_approval", label: "Awaiting client approval" },
   { id: "approved", label: "Approved" },
+  { id: "client_rejected", label: "Client declined" },
   { id: "active", label: "Active" },
   { id: "paused", label: "Paused" },
   { id: "completed", label: "Completed" },
   { id: "canceled", label: "Canceled" },
 ]
 
-/** Amount still owed to Tradesman for media already spent (not yet billed). */
+export const AD_CAMPAIGN_SPEND_DISCLAIMER =
+  "Campaign spend does not purchase or guarantee a specific number of leads, calls, bookings, or customers. Results vary because market demand, competition, platform delivery, customer behavior, service area, and other factors are outside Tradesman Systems’ control. Campaign funds purchase supplemental advertising intended to direct prospective customers to the client’s Tradesman profile and intake channels."
+
+export const AD_CAMPAIGN_FEE_DISCLOSURE =
+  "Tradesman Systems charges a $3.95 campaign processing fee on campaign spend up to $100. For spend over $100, the fee is $3.95 plus 2% of the amount above $100."
+
+/** $3.95 through $100, then $3.95 + 2% of the amount above $100. */
+export function adCampaignProcessingFeeCents(campaignSpendCents: number): number {
+  const spend = Math.max(0, Math.round(campaignSpendCents || 0))
+  if (spend <= 0) return 0
+  if (spend <= 10_000) return 395
+  return 395 + Math.round((spend - 10_000) * 0.02)
+}
+
+export function adCampaignTotalChargeCents(campaignSpendCents: number): number {
+  const spend = Math.max(0, Math.round(campaignSpendCents || 0))
+  return spend + adCampaignProcessingFeeCents(spend)
+}
+
+/** Amount still owed for campaign spend plus processing fee (not yet billed). */
 export function adBalanceDueCents(c: Pick<AdCampaignRow, "spent_cents" | "billed_cents">): number {
-  return Math.max(0, (c.spent_cents || 0) - (c.billed_cents || 0))
+  return Math.max(0, adCampaignTotalChargeCents(c.spent_cents || 0) - (c.billed_cents || 0))
 }
 
 export function sumAdBalanceDueCents(rows: Pick<AdCampaignRow, "spent_cents" | "billed_cents">[]): number {
@@ -78,6 +121,8 @@ export function formatUsdFromCents(cents: number): string {
 
 /** profiles.metadata key for Payments hub advertising summary. */
 export const AD_BILLING_METADATA_KEY = "ad_campaigns_billing_v1"
+/** One-shot dashboard → Payments instruction to load only the advertising balance. */
+export const AD_PAYMENT_LOAD_STORAGE_KEY = "tradesman_load_advertising_balance"
 
 export type AdBillingMetadata = {
   v: 1

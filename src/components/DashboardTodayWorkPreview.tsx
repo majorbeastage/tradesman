@@ -13,6 +13,7 @@ type Props = {
   onOpenReporting?: () => void
   onOpenCustomers?: () => void
   onOpenCalendar?: () => void
+  onOpenGrowth?: () => void
   compact?: boolean
   labels: {
     title: string
@@ -55,6 +56,7 @@ export default function DashboardTodayWorkPreview({
   onOpenReporting,
   onOpenCustomers,
   onOpenCalendar,
+  onOpenGrowth,
   compact,
   labels,
 }: Props) {
@@ -62,11 +64,13 @@ export default function DashboardTodayWorkPreview({
   const [err, setErr] = useState("")
   const [snap, setSnap] = useState<TodayWorkSnapshot | null>(null)
   const [pressing, setPressing] = useState<PressingWorkItem[]>([])
+  const [campaignApprovals, setCampaignApprovals] = useState<{ id: string; name: string; requested_budget_cents: number }[]>([])
 
   useEffect(() => {
     if (!supabase || !dataUserId) {
       setSnap(null)
       setPressing([])
+      setCampaignApprovals([])
       return
     }
     const actorId = viewerUserId ?? dataUserId
@@ -76,11 +80,20 @@ export default function DashboardTodayWorkPreview({
     void Promise.all([
       loadTodayWorkSnapshot(supabase, dataUserId),
       loadPressingWorkQueue(supabase, dataUserId, actorId, { includeTeamTodos: false }),
+      supabase
+        .from("ad_campaigns")
+        .select("id, name, requested_budget_cents")
+        .eq("profile_id", dataUserId)
+        .eq("status", "awaiting_client_approval")
+        .order("updated_at", { ascending: false }),
     ])
-      .then(([today, queue]) => {
+      .then(([today, queue, campaignResult]) => {
         if (!cancelled) {
           setSnap(today)
           setPressing(queue)
+          setCampaignApprovals(
+            (campaignResult.data ?? []) as { id: string; name: string; requested_budget_cents: number }[],
+          )
         }
       })
       .catch((e: unknown) => {
@@ -181,14 +194,22 @@ export default function DashboardTodayWorkPreview({
           <PreviewList
             title={labels.nextUp}
             empty={labels.nextUpEmpty}
-            actionLabel={labels.manageTasks}
-            onAction={requestOpenDashboardTodoModal}
-            items={pressing.slice(0, 5).map((item) => ({
-              key: item.id,
-              primary: item.title,
-              secondary: item.subtitle,
-              accent: item.urgencyScore >= 90 ? "#dc2626" : item.urgencyScore >= 70 ? "#d97706" : undefined,
-            }))}
+            actionLabel={campaignApprovals.length > 0 && onOpenGrowth ? "Open Growth" : labels.manageTasks}
+            onAction={campaignApprovals.length > 0 && onOpenGrowth ? onOpenGrowth : requestOpenDashboardTodoModal}
+            items={[
+              ...campaignApprovals.map((campaign) => ({
+                key: `campaign-${campaign.id}`,
+                primary: `Approve campaign: ${campaign.name}`,
+                secondary: `$${(campaign.requested_budget_cents / 100).toFixed(2)} proposed budget · Growth → Campaigns`,
+                accent: "#c2410c",
+              })),
+              ...pressing.map((item) => ({
+                key: item.id,
+                primary: item.title,
+                secondary: item.subtitle,
+                accent: item.urgencyScore >= 90 ? "#dc2626" : item.urgencyScore >= 70 ? "#d97706" : undefined,
+              })),
+            ].slice(0, 5)}
           />
 
           <div style={{ display: "grid", gridTemplateColumns: gridCols, gap: 8, marginTop: 10 }}>

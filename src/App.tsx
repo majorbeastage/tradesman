@@ -613,6 +613,7 @@ function MainAppInner() {
             onOpenReporting={() => setPage("reporting")}
             onOpenCustomers={() => setPage("customers")}
             onOpenCalendar={() => setPage("calendar")}
+            onOpenGrowth={() => setPage("growth")}
             labels={{
               title: t("dashboard.todayWorkTitle"),
               viewAllReports: t("dashboard.todayWorkViewReports"),

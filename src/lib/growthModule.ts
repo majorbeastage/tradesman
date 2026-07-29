@@ -441,13 +441,6 @@ export function runBasicWebsiteHealthCheck(urlRaw: string): WebsiteHealthCheckRe
   }
 }
 
-export const GROWTH_CAMPAIGN_TEMPLATES: { id: string; name: string; targetService: string }[] = [
-  { id: "spring-hvac", name: "Spring HVAC Tune-Up", targetService: "HVAC maintenance" },
-  { id: "roof-inspection", name: "Free Roof Inspection", targetService: "Roofing" },
-  { id: "holiday-lighting", name: "Holiday Lighting", targetService: "Seasonal lighting" },
-  { id: "landscape-maint", name: "Landscape Maintenance", targetService: "Landscaping" },
-]
-
 export const GROWTH_LIFECYCLE_STEPS = [
   "Source",
   "Conversation",

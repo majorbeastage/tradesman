@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react"
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { FunctionsHttpError } from "@supabase/supabase-js"
 import { supabase } from "../../lib/supabase"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
@@ -13,9 +13,14 @@ import {
 } from "../../lib/billingProfileMetadata"
 import { formatUsdMonthly, sumMonthlyBillingUsd } from "../../lib/billingProductTypes"
 import {
+  AD_CAMPAIGN_FEE_DISCLOSURE,
+  AD_CAMPAIGN_SPEND_DISCLAIMER,
+  AD_PAYMENT_LOAD_STORAGE_KEY,
   adBalanceDueCents,
+  adCampaignProcessingFeeCents,
   formatUsdFromCents,
   parseAdBillingMetadata,
+  type AdCampaignPaymentRow,
   type AdCampaignRow,
 } from "../../lib/adCampaigns"
 import { isHelcimJsReturnMessage, type HelcimJsReturnMessage } from "../../lib/helcimJsReturnMessage"
@@ -74,6 +79,17 @@ const quickLinkCardAltActiveStyle: CSSProperties = {
   boxShadow: "0 0 0 1px #bae6fd inset",
 }
 
+const smallLoadButtonStyle: CSSProperties = {
+  padding: "7px 10px",
+  borderRadius: 8,
+  border: "1px solid #f97316",
+  background: "#f97316",
+  color: "#fff",
+  fontSize: 12,
+  fontWeight: 800,
+  cursor: "pointer",
+}
+
 function formatProfilePaymentIso(iso: string | null | undefined): string {
   const s = typeof iso === "string" ? iso.trim() : ""
   if (!s) return "—"
@@ -102,6 +118,12 @@ export default function PaymentsPage() {
   const [collectionsRows, setCollectionsRows] = useState<CustomerPaymentCollectionsRow[]>([])
   const [collectionsError, setCollectionsError] = useState<string | null>(null)
   const [collectionsRefreshNonce, setCollectionsRefreshNonce] = useState(0)
+  const [paymentAmount, setPaymentAmount] = useState("")
+  const [paymentMode, setPaymentMode] = useState<"suggested" | "advertising" | "custom">("suggested")
+  const [paymentCampaignIds, setPaymentCampaignIds] = useState<string[]>([])
+  const [adPaymentHistory, setAdPaymentHistory] = useState<AdCampaignPaymentRow[]>([])
+  const [adPaymentReconcileMessage, setAdPaymentReconcileMessage] = useState("")
+  const checkoutRef = useRef<HTMLFormElement | null>(null)
 
   const useHelcimJs = Boolean(ENV_JS_TOKEN)
 
@@ -127,6 +149,37 @@ export default function PaymentsPage() {
     adBalanceDueCentsTotal > 0 ||
     Boolean(billingForPayments.billing_helcim_customer_code?.trim()) ||
     Boolean(billingForPayments.billing_payment_due_date?.trim())
+
+  useEffect(() => {
+    if (paymentMode === "suggested") setPaymentAmount(suggestedPaymentAmount)
+  }, [paymentMode, suggestedPaymentAmount])
+
+  const loadAdvertisingIntoCheckout = (campaign?: AdCampaignRow) => {
+    const dueCents = campaign ? adBalanceDueCents(campaign) : adBalanceDueCentsTotal
+    if (dueCents <= 0) return
+    const ids = campaign
+      ? [campaign.id]
+      : adCampaigns.filter((row) => adBalanceDueCents(row) > 0).map((row) => row.id)
+    setPaymentAmount((dueCents / 100).toFixed(2))
+    setPaymentCampaignIds(ids)
+    setPaymentMode("advertising")
+    setPaymentsHubTab("subscription")
+    window.requestAnimationFrame(() => checkoutRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }))
+  }
+
+  useEffect(() => {
+    if (adBalanceDueCentsTotal <= 0) return
+    let shouldLoad = false
+    try {
+      shouldLoad = sessionStorage.getItem(AD_PAYMENT_LOAD_STORAGE_KEY) === "1"
+      if (shouldLoad) sessionStorage.removeItem(AD_PAYMENT_LOAD_STORAGE_KEY)
+    } catch {
+      /* ignore */
+    }
+    if (shouldLoad) loadAdvertisingIntoCheckout()
+    // This is a one-shot navigation intent; campaign rows and balance are the trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adBalanceDueCentsTotal])
 
   const formAction = useMemo(() => {
     const fromWindow = typeof window !== "undefined" ? window.location.origin.replace(/\/+$/, "") : ""
@@ -268,12 +321,19 @@ export default function PaymentsPage() {
       if (!cancelled && resolvedPortal) setBillingPortalConfigError(null)
       setCustomerCode(billing.billing_helcim_customer_code?.trim() || null)
 
-      const { data: camps } = await sb
-        .from("ad_campaigns")
-        .select("*")
-        .eq("profile_id", profileUserId)
-        .order("updated_at", { ascending: false })
-      if (!cancelled) setAdCampaigns((camps ?? []) as AdCampaignRow[])
+      const [campaignResult, paymentResult] = await Promise.all([
+        sb.from("ad_campaigns").select("*").eq("profile_id", profileUserId).order("updated_at", { ascending: false }),
+        sb
+          .from("ad_campaign_payments")
+          .select("*")
+          .eq("profile_id", profileUserId)
+          .order("created_at", { ascending: false })
+          .limit(100),
+      ])
+      if (!cancelled) {
+        setAdCampaigns((campaignResult.data ?? []) as AdCampaignRow[])
+        setAdPaymentHistory((paymentResult.data ?? []) as AdCampaignPaymentRow[])
+      }
     })()
     return () => {
       cancelled = true
@@ -342,10 +402,64 @@ export default function PaymentsPage() {
       if (ev.origin !== helcimReturnOrigin) return
       if (!isHelcimJsReturnMessage(ev.data)) return
       setLastResult(ev.data)
+      if (ev.data.response === 1 && paymentMode === "advertising") {
+        void reconcileAdvertisingPayment(ev.data)
+      }
     }
     window.addEventListener("message", onHelcimMessage)
     return () => window.removeEventListener("message", onHelcimMessage)
-  }, [useHelcimJs, helcimReturnOrigin])
+  }, [useHelcimJs, helcimReturnOrigin, paymentMode, paymentCampaignIds])
+
+  async function reconcileAdvertisingPayment(result: HelcimJsReturnMessage) {
+    if (!supabase || !profileUserId) return
+    setAdPaymentReconcileMessage("Verifying advertising payment with Helcim…")
+    try {
+      const token = (await supabase.auth.getSession()).data.session?.access_token
+      if (!token) throw new Error("Sign in again to verify this payment.")
+      const response = await fetch("/api/ad-campaign-payments", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount: result.amount || paymentAmount,
+          currency: result.currency || "USD",
+          transactionId: result.transactionId,
+          approvalCode: result.approvalCode,
+          cardToken: result.cardToken,
+          cardType: result.cardType,
+          cardNumberMasked: result.cardNumberMasked,
+          customerCode: result.customerCode,
+          date: result.date,
+          campaignIds: paymentCampaignIds,
+        }),
+      })
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string
+        balanceDueCents?: number
+      }
+      if (!response.ok) throw new Error(payload.error || `Payment verification failed (${response.status}).`)
+      setAdPaymentReconcileMessage("Advertising payment verified. Admin campaigns and payment history are updated.")
+      setAdBalanceFromMetaCents(Math.max(0, Number(payload.balanceDueCents ?? 0)))
+      const [campaignResult, paymentResult] = await Promise.all([
+        supabase.from("ad_campaigns").select("*").eq("profile_id", profileUserId).order("updated_at", { ascending: false }),
+        supabase
+          .from("ad_campaign_payments")
+          .select("*")
+          .eq("profile_id", profileUserId)
+          .order("created_at", { ascending: false })
+          .limit(100),
+      ])
+      setAdCampaigns((campaignResult.data ?? []) as AdCampaignRow[])
+      setAdPaymentHistory((paymentResult.data ?? []) as AdCampaignPaymentRow[])
+      setPaymentCampaignIds([])
+      setPaymentMode("suggested")
+    } catch (error) {
+      setAdPaymentReconcileMessage(
+        error instanceof Error
+          ? `Card approved, but campaign reconciliation is pending: ${error.message}`
+          : "Card approved, but campaign reconciliation is pending.",
+      )
+    }
+  }
 
   const withCustomer = portalBaseUrl ? appendHelcimCustomerQueryToPayPortalUrl(portalBaseUrl, customerCode) : null
   const normalizedPortal = withCustomer ? normalizeHelcimPayPortalUrl(withCustomer) : null
@@ -430,6 +544,9 @@ export default function PaymentsPage() {
           <p style={{ margin: "6px 0 12px", fontSize: 13, color: "#9a3412", lineHeight: 1.45 }}>
             Managed ads budget and spend from Tradesman Growth. Open balance is included in the suggested Helcim payment amount below.
           </p>
+          <p style={{ margin: "0 0 12px", fontSize: 12, color: "#9a3412", lineHeight: 1.5 }}>
+            {AD_CAMPAIGN_SPEND_DISCLAIMER} {AD_CAMPAIGN_FEE_DISCLOSURE}
+          </p>
           {adCampaigns.length === 0 ? (
             <p style={{ margin: 0, fontSize: 13, color: "#c2410c" }}>
               Open advertising balance: <strong>{formatUsdFromCents(adBalanceDueCentsTotal)}</strong>
@@ -456,17 +573,38 @@ export default function PaymentsPage() {
                       Requested {formatUsdFromCents(c.requested_budget_cents)} · Spent {formatUsdFromCents(c.spent_cents)} · Billed{" "}
                       {formatUsdFromCents(c.billed_cents)}
                     </div>
+                    {c.spent_cents > 0 ? (
+                      <div style={{ color: "#9a3412", marginTop: 2 }}>
+                        Processing fee {formatUsdFromCents(adCampaignProcessingFeeCents(c.spent_cents))}
+                      </div>
+                    ) : null}
                     {c.request_details?.trim() ? (
                       <div style={{ marginTop: 4, color: "#78716c", whiteSpace: "pre-wrap" }}>{c.request_details.slice(0, 220)}</div>
                     ) : null}
                   </div>
                   <div style={{ textAlign: "right", fontWeight: 900, color: adBalanceDueCents(c) > 0 ? "#c2410c" : "#15803d" }}>
-                    {adBalanceDueCents(c) > 0 ? `Due ${formatUsdFromCents(adBalanceDueCents(c))}` : "Paid up"}
+                    <div>{adBalanceDueCents(c) > 0 ? `Due ${formatUsdFromCents(adBalanceDueCents(c))}` : "Paid up"}</div>
+                    {adBalanceDueCents(c) > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => loadAdvertisingIntoCheckout(c)}
+                        style={{ ...smallLoadButtonStyle, marginTop: 6 }}
+                      >
+                        Load bill
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               ))}
-              <div style={{ fontWeight: 800, fontSize: 14, color: "#9a3412" }}>
-                Total advertising due: {formatUsdFromCents(adBalanceDueCentsTotal)}
+              <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                <div style={{ fontWeight: 800, fontSize: 14, color: "#9a3412" }}>
+                  Total advertising due: {formatUsdFromCents(adBalanceDueCentsTotal)}
+                </div>
+                {adBalanceDueCentsTotal > 0 ? (
+                  <button type="button" onClick={() => loadAdvertisingIntoCheckout()} style={smallLoadButtonStyle}>
+                    Load total into payment tool
+                  </button>
+                ) : null}
               </div>
             </div>
           )}
@@ -527,6 +665,21 @@ export default function PaymentsPage() {
                   ) : null}
                 </div>
               ) : null}
+              {adPaymentReconcileMessage ? (
+                <div
+                  style={{
+                    marginBottom: 16,
+                    padding: 12,
+                    borderRadius: 10,
+                    border: `1px solid ${adPaymentReconcileMessage.includes("pending") ? "#f59e0b" : "#10b981"}`,
+                    background: adPaymentReconcileMessage.includes("pending") ? "#fffbeb" : "#ecfdf5",
+                    color: adPaymentReconcileMessage.includes("pending") ? "#92400e" : "#065f46",
+                    fontSize: 13,
+                  }}
+                >
+                  {adPaymentReconcileMessage}
+                </div>
+              ) : null}
 
               <iframe
                 name={HELCIM_RETURN_IFRAME_NAME}
@@ -536,6 +689,7 @@ export default function PaymentsPage() {
               />
 
               <form
+                ref={checkoutRef}
                 name="helcimForm"
                 id="helcimForm"
                 method="POST"
@@ -559,8 +713,12 @@ export default function PaymentsPage() {
                     <input
                       type="text"
                       id="amount"
-                      key={`amt-${profileUserId}-${suggestedPaymentAmount}`}
-                      defaultValue={suggestedPaymentAmount || ""}
+                      value={paymentAmount}
+                      onChange={(event) => {
+                        setPaymentAmount(event.target.value)
+                        setPaymentMode("custom")
+                        setPaymentCampaignIds([])
+                      }}
                       placeholder="0.00"
                       autoComplete="off"
                       style={inputStyle}
@@ -645,7 +803,12 @@ export default function PaymentsPage() {
                   </div>
 
                   <input type="hidden" id="customerCode" value={customerCode ?? ""} />
-                  <input type="hidden" id="orderNumber" value={profileUserId ? `TM-${profileUserId}` : ""} />
+                  <input
+                    type="hidden"
+                    id="orderNumber"
+                    value={profileUserId ? `${paymentMode === "advertising" ? "TMAD" : "TM"}-${profileUserId}` : ""}
+                  />
+                  <input type="hidden" id="tradesmanCampaignIds" value={paymentCampaignIds.join(",")} />
 
                   <input
                     type="button"
@@ -870,6 +1033,48 @@ export default function PaymentsPage() {
                 Pay from the <strong>Manage Payments to Tradesman</strong> tab to see a live result here after you submit a card in this
                 browser.
               </p>
+            )}
+          </section>
+
+          <section
+            style={{
+              marginTop: 22,
+              padding: 22,
+              borderRadius: 12,
+              border: `1px solid ${theme.border}`,
+              background: "#f8fafc",
+            }}
+          >
+            <h2 style={{ margin: "0 0 10px", fontSize: "1.1rem", fontWeight: 800, color: theme.text }}>
+              Advertising payment history
+            </h2>
+            {adPaymentHistory.length === 0 ? (
+              <p style={{ margin: 0, fontSize: 14, color: "#64748b" }}>No verified advertising payments yet.</p>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 560, fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ textAlign: "left", borderBottom: `2px solid ${theme.border}`, color: "#64748b" }}>
+                      <th style={{ padding: "7px 8px" }}>Paid</th>
+                      <th style={{ padding: "7px 8px" }}>Amount</th>
+                      <th style={{ padding: "7px 8px" }}>Provider</th>
+                      <th style={{ padding: "7px 8px" }}>Reference</th>
+                      <th style={{ padding: "7px 8px" }}>Campaigns</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {adPaymentHistory.map((payment) => (
+                      <tr key={payment.id} style={{ borderBottom: `1px solid ${theme.border}` }}>
+                        <td style={{ padding: "8px" }}>{formatProfilePaymentIso(payment.created_at)}</td>
+                        <td style={{ padding: "8px", fontWeight: 800 }}>{formatUsdFromCents(payment.amount_cents)}</td>
+                        <td style={{ padding: "8px", textTransform: "capitalize" }}>{payment.provider}</td>
+                        <td style={{ padding: "8px", fontFamily: "monospace" }}>{payment.provider_transaction_id}</td>
+                        <td style={{ padding: "8px" }}>{payment.campaign_ids.length}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </section>
 

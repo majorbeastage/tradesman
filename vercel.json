@@ -23,6 +23,8 @@
     "api/twilio-recording.ts": { "maxDuration": 60 },
     "api/platform-tools.ts": { "maxDuration": 60 },
     "api/payment-requests.ts": { "maxDuration": 60 },
+    "api/ad-campaign-payments.ts": { "maxDuration": 30 },
+    "api/campaign-approval.ts": { "maxDuration": 30 },
     "api/estimate-esign.ts": { "maxDuration": 60 },
     "api/sandbox-simulator.ts": { "maxDuration": 60 },
     "api/privacy.ts": { "maxDuration": 30 },
