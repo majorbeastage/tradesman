@@ -35,6 +35,7 @@ import TermsPage from "./modules/public/TermsPage"
 import EmbedLeadPage from "./modules/public/EmbedLeadPage"
 import PublicBusinessWebProfilePage from "./modules/public/PublicBusinessWebProfilePage"
 import EstimateEsignPage from "./modules/public/EstimateEsignPage"
+import VoicePromptStudioPage from "./modules/public/VoicePromptStudioPage"
 import { isReservedBusinessWebProfileSlug } from "./lib/businessPublicProfile"
 import { recordMarketingPageView } from "./lib/siteTrafficBeacon"
 import { useAuth, type UserRole } from "./contexts/AuthContext"
@@ -902,6 +903,12 @@ function App() {
   }
   if (pathname === "/signup") {
     return <SignupRoutePage />
+  }
+
+  const voiceStudioMatch = /^\/voice-studio\/([^/]+)\/?$/i.exec(rawPathname)
+  if (voiceStudioMatch) {
+    const publicToken = decodeURIComponent(voiceStudioMatch[1] || "").replace(/[.…),;:!?>\]}'"]+$/g, "").trim()
+    if (publicToken) return <VoicePromptStudioPage publicToken={publicToken} />
   }
 
   // E-sign tokens — use original path (pathname is lowercased for other routes).

@@ -301,6 +301,24 @@ export async function helpDeskVoiceHandler(req: VercelRequest, res: VercelRespon
   const origin = requestPublicOrigin(req)
   const selfUrl = `${origin}/api/help-desk-voice`
   const voicemailGreetingUrl = `${origin}/api/voicemail-greeting`
+  let platformOpeningUrl = ""
+  if (!greetingUrl) {
+    try {
+      const supabase = createServiceSupabase()
+      const { data } = await supabase
+        .from("voice_prompt_library")
+        .select("active_recording_id")
+        .eq("prompt_key", "helpdesk.opening")
+        .eq("active", true)
+        .eq("scope", "platform")
+        .maybeSingle()
+      if (data?.active_recording_id) {
+        platformOpeningUrl = `${origin}/api/voice-prompt-audio?key=${encodeURIComponent("helpdesk.opening")}`
+      }
+    } catch {
+      // Voice Studio is optional until its schema is installed; retain the existing TTS greeting.
+    }
+  }
 
   async function logHelpDesk(body: string, meta: Record<string, unknown>) {
     if (!logUserId) return
@@ -585,8 +603,9 @@ export async function helpDeskVoiceHandler(req: VercelRequest, res: VercelRespon
   // Initial answer (no gather callback).
   await logHelpDesk("Help desk: answered", { phase: "greeting" })
 
-  const greetingNode = greetingUrl
-    ? `<Play>${xmlEscape(greetingUrl)}</Play>`
+  const openingAudioUrl = greetingUrl || platformOpeningUrl
+  const greetingNode = openingAudioUrl
+    ? `<Play>${xmlEscape(openingAudioUrl)}</Play>`
     : `<Say ${SAY}>${xmlEscape(greetingText)}</Say>`
 
   if (menuEnabled) {

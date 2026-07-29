@@ -15,6 +15,8 @@ export type AdminPanelId =
   | "ops"
   | "traffic"
   | "campaigns"
+  | "google_reserve"
+  | "voice_studio"
   | "signup"
   | "communications"
   | "users"
@@ -54,6 +56,8 @@ export const ADMIN_PANEL_LABELS: Record<AdminPanelId, string> = {
   ops: "Ops inbox & reporting",
   traffic: "Site traffic",
   campaigns: "Ads & campaigns",
+  google_reserve: "Google Reserve",
+  voice_studio: "Voice Prompt Studio",
   signup: "Sign up requirements",
   communications: "Routing & Access",
   users: "Users & office managers",
@@ -335,6 +339,30 @@ export const PLATFORM_ADMIN_INTENTS: PlatformAdminIntent[] = [
     label: ADMIN_PANEL_LABELS.traffic,
     description: "Marketing site traffic and referrers",
     patterns: [/\bsite\s+traffic\b/i, /\bweb\s+traffic\b/i, /\bpage\s+views?\b/i, /\bvisitor\s+stats?\b/i, /\banalytics\b/i],
+  },
+  {
+    kind: "admin",
+    panel: "google_reserve",
+    label: ADMIN_PANEL_LABELS.google_reserve,
+    description: "Manage client Reserve with Google merchant, calendar, Place ID, and feed readiness",
+    patterns: [
+      /\bgoogle\s+reserve\b/i,
+      /\breserve\s+with\s+google\b/i,
+      /\bactions\s+center\b/i,
+      /\bgoogle\s+booking\b/i,
+    ],
+  },
+  {
+    kind: "admin",
+    panel: "voice_studio",
+    label: ADMIN_PANEL_LABELS.voice_studio,
+    description: "Manage human voice scripts, secure recording links, and approved audio takes",
+    patterns: [
+      /\bvoice\s+(?:prompt\s+)?studio\b/i,
+      /\baudio\s+prompts?\b/i,
+      /\brecording\s+portal\b/i,
+      /\bvoice\s+talent\b/i,
+    ],
   },
   {
     kind: "admin",

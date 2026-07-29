@@ -4,25 +4,15 @@
  * (typically Office Manager) and documents the ops steps for early clients.
  */
 import { useEffect, useState } from "react"
+import { useAuth } from "../../contexts/AuthContext"
+import {
+  EMPTY_GOOGLE_RESERVE_SETTINGS,
+  mergeGoogleReserveSettings,
+  parseGoogleReserveSettings,
+  type GoogleReserveSettings,
+} from "../../lib/googleReserve"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
-
-export type GoogleReserveSettings = {
-  enabled: boolean
-  /** Profile user id whose calendar is the booking target (often office manager). */
-  calendarOwnerUserId: string
-  calendarLabel: string
-  gbpPlaceId: string
-  notes: string
-}
-
-const EMPTY: GoogleReserveSettings = {
-  enabled: false,
-  calendarOwnerUserId: "",
-  calendarLabel: "Office Manager — Google Reserve",
-  gbpPlaceId: "",
-  notes: "",
-}
 
 const SETUP_README = `Google Reserve (Reserve with Google) — setup for Tradesman clients
 ================================================================
@@ -71,7 +61,8 @@ type Props = {
 }
 
 export default function GoogleReserveSettingsCard({ profileUserId, canEdit }: Props) {
-  const [settings, setSettings] = useState<GoogleReserveSettings>(EMPTY)
+  const { user } = useAuth()
+  const [settings, setSettings] = useState<GoogleReserveSettings>(EMPTY_GOOGLE_RESERVE_SETTINGS)
   const [team, setTeam] = useState<{ id: string; label: string }[]>([])
   const [showReadme, setShowReadme] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -82,21 +73,7 @@ export default function GoogleReserveSettingsCard({ profileUserId, canEdit }: Pr
     if (!supabase || !profileUserId) return
     void (async () => {
       const { data } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
-      const meta =
-        data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
-          ? (data.metadata as Record<string, unknown>)
-          : {}
-      const raw = meta.google_reserve
-      if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-        const r = raw as Record<string, unknown>
-        setSettings({
-          enabled: r.enabled === true,
-          calendarOwnerUserId: String(r.calendarOwnerUserId ?? ""),
-          calendarLabel: String(r.calendarLabel ?? EMPTY.calendarLabel),
-          gbpPlaceId: String(r.gbpPlaceId ?? ""),
-          notes: String(r.notes ?? ""),
-        })
-      }
+      setSettings(parseGoogleReserveSettings(data?.metadata))
     })()
   }, [profileUserId])
 
@@ -149,13 +126,21 @@ export default function GoogleReserveSettingsCard({ profileUserId, canEdit }: Pr
     setErr("")
     try {
       const { data } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
-      const prev =
-        data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
-          ? { ...(data.metadata as Record<string, unknown>) }
-          : {}
-      prev.google_reserve = settings
-      const { error } = await supabase.from("profiles").update({ metadata: prev }).eq("id", profileUserId)
+      const latest = parseGoogleReserveSettings(data?.metadata)
+      const nextSettings: GoogleReserveSettings = {
+        ...latest,
+        enabled: settings.enabled,
+        calendarOwnerUserId: settings.calendarOwnerUserId,
+        calendarLabel: settings.calendarLabel,
+        gbpPlaceId: settings.gbpPlaceId,
+        notes: settings.notes,
+        updatedAt: new Date().toISOString(),
+        updatedBy: user?.id ?? profileUserId,
+      }
+      const metadata = mergeGoogleReserveSettings(data?.metadata, nextSettings)
+      const { error } = await supabase.from("profiles").update({ metadata }).eq("id", profileUserId)
       if (error) throw error
+      setSettings(nextSettings)
       setMsg("Google Reserve settings saved.")
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Could not save.")
@@ -169,6 +154,10 @@ export default function GoogleReserveSettingsCard({ profileUserId, canEdit }: Pr
       <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.45 }}>
         Choose which Tradesman calendar Google Reserve should use for booking availability. Prefer a shared{" "}
         <strong>Office Manager</strong> calendar so tech schedules stay flexible.
+      </p>
+      <p style={{ margin: 0, padding: 10, borderRadius: 8, background: "#eff6ff", color: "#1e3a8a", fontSize: 12, lineHeight: 1.45 }}>
+        Reserve setup is separate from granting Tradesman access to manage your Google Business Profile. Each booking
+        calendar maps to one Business Profile location / Place ID. Tradesman admin manages partner and feed setup.
       </p>
 
       <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 14, color: theme.text }}>

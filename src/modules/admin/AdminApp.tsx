@@ -24,6 +24,8 @@ import AdminTroubleTicketsSection from "./AdminTroubleTicketsSection"
 import AdminOpsInboxSection from "./AdminOpsInboxSection"
 import AdminTrafficSection from "./AdminTrafficSection"
 import AdminCampaignsSection from "./AdminCampaignsSection"
+import AdminGoogleReserveSection from "./AdminGoogleReserveSection"
+import AdminVoicePromptStudioSection from "./AdminVoicePromptStudioSection"
 import type { PortalConfig, PortalCustomItem, PageControl, PortalSettingItem, CustomActionButton } from "../../types/portal-builder"
 import {
   TAB_ID_LABELS,
@@ -558,7 +560,7 @@ function AdminAppInner() {
   /** When false, control items with hideFromAdmin are omitted from this list (toggle to edit them). */
   const [showPortalItemsHiddenFromAdmin, setShowPortalItemsHiddenFromAdmin] = useState(false)
   const [adminPanel, setAdminPanel] = useState<
-    "ops" | "traffic" | "campaigns" | "signup" | "communications" | "users" | "billing" | "portal" | "tickets" | "about"
+    "ops" | "traffic" | "campaigns" | "google_reserve" | "voice_studio" | "signup" | "communications" | "users" | "billing" | "portal" | "tickets" | "about"
   >("ops")
 
   useEffect(() => {
@@ -572,6 +574,8 @@ function AdminAppInner() {
         pending === "ops" ||
         pending === "traffic" ||
         pending === "campaigns" ||
+        pending === "google_reserve" ||
+        pending === "voice_studio" ||
         pending === "signup" ||
         pending === "communications" ||
         pending === "users" ||
@@ -1187,6 +1191,40 @@ function AdminAppInner() {
           </button>
           <button
             type="button"
+            onClick={() => setAdminPanel("google_reserve")}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 6,
+              border: `1px solid rgba(255,255,255,0.35)`,
+              background: adminPanel === "google_reserve" ? "rgba(249,115,22,0.45)" : "rgba(0,0,0,0.2)",
+              color: "white",
+              fontSize: 13,
+              cursor: "pointer",
+              fontWeight: adminPanel === "google_reserve" ? 600 : 400,
+              textAlign: "left",
+            }}
+          >
+            Google Reserve
+          </button>
+          <button
+            type="button"
+            onClick={() => setAdminPanel("voice_studio")}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 6,
+              border: `1px solid rgba(255,255,255,0.35)`,
+              background: adminPanel === "voice_studio" ? "rgba(249,115,22,0.45)" : "rgba(0,0,0,0.2)",
+              color: "white",
+              fontSize: 13,
+              cursor: "pointer",
+              fontWeight: adminPanel === "voice_studio" ? 600 : 400,
+              textAlign: "left",
+            }}
+          >
+            Voice Prompt Studio
+          </button>
+          <button
+            type="button"
             onClick={() => setAdminPanel("signup")}
             style={{
               padding: "8px 12px",
@@ -1493,6 +1531,10 @@ function AdminAppInner() {
           <AdminTrafficSection />
         ) : adminPanel === "campaigns" ? (
           <AdminCampaignsSection />
+        ) : adminPanel === "google_reserve" ? (
+          <AdminGoogleReserveSection />
+        ) : adminPanel === "voice_studio" ? (
+          <AdminVoicePromptStudioSection />
         ) : adminPanel === "users" ? (
           <div>
             <AdminSettingBlock id="admin:users:page_intro">

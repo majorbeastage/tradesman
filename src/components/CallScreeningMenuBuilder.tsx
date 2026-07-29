@@ -1,4 +1,4 @@
-import { useMemo, type CSSProperties } from "react"
+import { useEffect, useMemo, useState, type CSSProperties } from "react"
 import { theme } from "../styles/theme"
 import {
   newScreeningStepId,
@@ -7,6 +7,15 @@ import {
   type VoiceScreeningStepKind,
 } from "../lib/voiceAutoAttendant"
 import { useLocale } from "../i18n/LocaleContext"
+import { voiceStudioUserRequest } from "../lib/voicePromptStudio"
+
+type PlatformVoicePrompt = {
+  id: string
+  title: string
+  category: string
+  script_text: string
+  playback_url: string
+}
 
 type Props = {
   mode: "ai_menu" | "recorded_menu"
@@ -55,6 +64,29 @@ const btnPrimarySmall: CSSProperties = {
 export function CallScreeningMenuBuilder({ mode, steps, collectContactInfo, onChange, onCollectContactChange }: Props) {
   const { t } = useLocale()
   const isRecorded = mode === "recorded_menu"
+  const [platformPrompts, setPlatformPrompts] = useState<PlatformVoicePrompt[]>([])
+
+  useEffect(() => {
+    if (!isRecorded) return
+    let cancelled = false
+    void voiceStudioUserRequest("client-library")
+      .then((payload) => {
+        if (cancelled) return
+        const rows = Array.isArray(payload.prompts) ? (payload.prompts as PlatformVoicePrompt[]) : []
+        setPlatformPrompts(
+          rows.map((row) => ({
+            ...row,
+            playback_url: new URL(row.playback_url, window.location.origin).toString(),
+          })),
+        )
+      })
+      .catch(() => {
+        if (!cancelled) setPlatformPrompts([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [isRecorded])
 
   const kindLabel = useMemo(
     () =>
@@ -177,6 +209,23 @@ export function CallScreeningMenuBuilder({ mode, steps, collectContactInfo, onCh
             {isRecorded ? (
               <label style={{ display: "grid", gap: 4 }}>
                 <span style={{ fontSize: 11, fontWeight: 600, color: "#64748b" }}>{t("account.callScreening.recordingUrl")}</span>
+                {platformPrompts.length > 0 ? (
+                  <select
+                    value={platformPrompts.some((prompt) => prompt.playback_url === step.recordingUrl) ? step.recordingUrl : ""}
+                    onChange={(event) => {
+                      const selected = platformPrompts.find((prompt) => prompt.playback_url === event.target.value)
+                      if (selected) updateStep(index, { recordingUrl: selected.playback_url, prompt: selected.script_text })
+                    }}
+                    style={theme.formInput}
+                  >
+                    <option value="">Choose an approved Tradesman voice prompt…</option>
+                    {platformPrompts.map((prompt) => (
+                      <option key={prompt.id} value={prompt.playback_url}>
+                        {prompt.title} · {prompt.category.replace(/_/g, " ")}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
                 <input
                   type="url"
                   value={step.recordingUrl ?? ""}
