@@ -860,6 +860,23 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   }, [calendarDbUserId])
 
   useEffect(() => {
+    if (!showDisplayPrefs) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setShowDisplayPrefs(false)
+    }
+    function onPointer(e: PointerEvent) {
+      if (displayPrefsMenuRef.current?.contains(e.target as Node)) return
+      setShowDisplayPrefs(false)
+    }
+    window.addEventListener("keydown", onKey)
+    window.addEventListener("pointerdown", onPointer, true)
+    return () => {
+      window.removeEventListener("keydown", onKey)
+      window.removeEventListener("pointerdown", onPointer, true)
+    }
+  }, [showDisplayPrefs])
+
+  useEffect(() => {
     if (!eventCtxMenu) return
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") setEventCtxMenu(null)
@@ -1038,6 +1055,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [gridEventDrag, setGridEventDrag] = useState<GridEventDragState | null>(null)
   const [monthEventDrag, setMonthEventDrag] = useState<MonthEventDragState | null>(null)
   const eventCtxMenuRef = useRef<HTMLDivElement | null>(null)
+  const displayPrefsMenuRef = useRef<HTMLDivElement | null>(null)
   const [eventCtxMenuPos, setEventCtxMenuPos] = useState<{ left: number; top: number } | null>(null)
   const gridWrapperRef = useRef<HTMLDivElement>(null)
   const skipNextColumnClickRef = useRef(false)
@@ -4056,7 +4074,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           >
             {expanded ? "Collapse" : "Expand"}
           </button>
-          <div style={{ position: "relative" }}>
+          <div ref={displayPrefsMenuRef} style={{ position: "relative" }}>
             <button
               type="button"
               onClick={() => setShowDisplayPrefs((v) => !v)}

@@ -6284,7 +6284,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               style={{ ...ESTIMATE_WORKFLOW_SECTION_BASE, background: "#f8fafc" }}
                             >
                               <summary style={ESTIMATE_WORKFLOW_SUMMARY_STYLE}>
-                                Templates &amp; job type
+                                Job Type
                                 <EstimateGuideStatusMarker
                                   show={showEstimateWizardMarkers}
                                   variant={
@@ -6299,7 +6299,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                       return "none" as const
                                     })()
                                   }
-                                  label="Template & job type"
+                                  label="Job Type"
                                 />
                               </summary>
                                 <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
