@@ -21,7 +21,7 @@ import {
 import { buildCallScreeningRedirectUrl } from "./_callScreeningHandler.js"
 import { shouldSkipCallScreeningForCaller } from "./_callScreeningSkip.js"
 import { activeScreeningSteps, loadVoiceAutoAttendantForUser } from "./_voiceAutoAttendant.js"
-import { activeHuntPhones, loadCallHuntingForUser } from "./_callHunting.js"
+import { loadCallHuntingForUser, loadHuntPhoneByUserId, resolveHuntPhones } from "./_callHunting.js"
 import { recordSmsConsentFromInboundCall, runMissedCallAutoTextBack } from "./_conversationAutoReply.js"
 
 function xmlEscape(value: string): string {
@@ -231,7 +231,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (channel?.user_id) {
     try {
       const hunting = await loadCallHuntingForUser(supabase, channel.user_id)
-      const phones = activeHuntPhones(hunting, forwardTo)
+      const userIds = [
+        ...hunting.targets.map((t) => t.userId).filter((id): id is string => Boolean(id)),
+        ...hunting.exceptions.map((e) => e.unavailableUserId).filter((id): id is string => Boolean(id)),
+        ...hunting.exceptions.map((e) => e.coverUserId).filter((id): id is string => Boolean(id)),
+      ]
+      const phoneByUserId = await loadHuntPhoneByUserId(supabase, userIds)
+      const phones = resolveHuntPhones({
+        settings: hunting,
+        primaryForward: forwardTo,
+        withinBusinessHours,
+        phoneByUserId,
+      })
         .map((p) => toTwilioE164(p) || normalizePhone(p) || p)
         .filter(Boolean)
       if (phones.length > 0) {

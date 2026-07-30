@@ -27,6 +27,7 @@ import {
 } from "../../lib/sandboxDemoLocations"
 import TimeClockPortal from "../../components/TimeClockPortal"
 import TeamLocationsMapModal from "../../components/TeamLocationsMapModal"
+import { CallHuntingSettingsPanel } from "../../components/CallHuntingSettingsPanel"
 import { useIsMobile } from "../../hooks/useIsMobile"
 
 type ProfileLite = {
@@ -667,6 +668,7 @@ export default function CalendarTeamManagementPanel({
   const [cardTabByUser, setCardTabByUser] = useState<Record<string, CardTab>>({})
   const [openClockByUser, setOpenClockByUser] = useState<Record<string, string>>({})
   const [teamMapView, setTeamMapView] = useState<"minimized" | "thumbnail" | "expanded">("thumbnail")
+  const [callCoverageOpen, setCallCoverageOpen] = useState(false)
   const [sandboxDemoLocations, setSandboxDemoLocations] = useState<ReturnType<typeof parseSandboxDemoLocations>>({})
   const [permissionDraftByUserId, setPermissionDraftByUserId] = useState<Record<string, OmCalendarPolicyV1>>({})
 
@@ -1014,6 +1016,48 @@ export default function CalendarTeamManagementPanel({
 
       {message ? (
         <p style={{ margin: 0, fontSize: 13, color: message.includes("saved") ? "#059669" : "#b91c1c" }}>{message}</p>
+      ) : null}
+
+      {variant !== "time_clock_only" && officeManagerUserId ? (
+        <div
+          style={{
+            borderRadius: 10,
+            border: `1px solid ${theme.border}`,
+            background: "#fff",
+            overflow: "hidden",
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setCallCoverageOpen((v) => !v)}
+            style={{
+              width: "100%",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 10,
+              padding: "12px 14px",
+              border: "none",
+              background: "#fff7ed",
+              cursor: "pointer",
+              textAlign: "left",
+              fontWeight: 800,
+              color: theme.text,
+            }}
+          >
+            <span>Call coverage &amp; ring group</span>
+            <span style={{ color: "#64748b", fontWeight: 700 }}>{callCoverageOpen ? "Hide ▲" : "Show ▼"}</span>
+          </button>
+          {callCoverageOpen ? (
+            <div style={{ padding: 14 }}>
+              <p style={{ margin: "0 0 12px", fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
+                Same live settings as My T → Answer &amp; forward. Use team dropdowns for hunt targets, business-hours vs
+                after-hours routing, and temporary out-of-office coverage.
+              </p>
+              <CallHuntingSettingsPanel profileUserId={officeManagerUserId} />
+            </div>
+          ) : null}
+        </div>
       ) : null}
 
       {variant !== "time_clock_only" && teamMapUserIds.length > 0 ? (
