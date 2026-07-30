@@ -5,9 +5,11 @@ import {
   DEFAULT_VOICE_AUTO_ATTENDANT,
   mergeVoiceAutoAttendantMetadata,
   parseVoiceAutoAttendant,
+  recommendedResponseTimeoutSeconds,
   type VoiceAutoAttendantMode,
   type VoiceAutoAttendantSettings,
 } from "../lib/voiceAutoAttendant"
+import { voiceStudioUserRequest } from "../lib/voicePromptStudio"
 import { useLocale } from "../i18n/LocaleContext"
 import { CallScreeningMenuBuilder } from "./CallScreeningMenuBuilder"
 
@@ -72,7 +74,30 @@ export function CallScreeningSettingsPanel({ profileUserId }: Props) {
   }
 
   async function saveMenu() {
-    await persist({ ...settings, menuSteps: menuDraft })
+    setSaving(true)
+    let timedSteps = menuDraft.map((step) => ({
+      ...step,
+      responseTimeoutSeconds: recommendedResponseTimeoutSeconds(step.kind, step.prompt),
+    }))
+    try {
+      const payload = await voiceStudioUserRequest("client-analyze-auto-attendant", {
+        steps: menuDraft.map(({ id, kind, prompt }) => ({ id, kind, prompt })),
+      })
+      const analyzed = Array.isArray(payload.steps)
+        ? (payload.steps as Array<{ id?: string; responseTimeoutSeconds?: number }>)
+        : []
+      const timingById = new Map(analyzed.map((step) => [step.id, step.responseTimeoutSeconds]))
+      timedSteps = timedSteps.map((step) => {
+        const responseTimeoutSeconds = timingById.get(step.id)
+        return typeof responseTimeoutSeconds === "number" && Number.isFinite(responseTimeoutSeconds)
+          ? { ...step, responseTimeoutSeconds }
+          : step
+      })
+    } catch {
+      // The local recommendation keeps call timing safe if the AI service is temporarily unavailable.
+    }
+    setSaving(false)
+    await persist({ ...settings, menuSteps: timedSteps })
   }
 
   if (loading) return <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>{t("common.loading")}</p>

@@ -74,15 +74,17 @@ function buildGatherStepTwiml(params: {
   settings: VoiceAutoAttendantSettings
   promptText: string
   recordingUrl?: string
+  responseTimeoutSeconds?: number
   intro?: string
   speechHints?: string
 }): string {
   const intro = params.intro ? `<Say ${SAY}>${xmlEscape(params.intro)}</Say>` : ""
   const prompt = promptVerb(params.settings, { prompt: params.promptText, recordingUrl: params.recordingUrl })
   const hintsAttr = params.speechHints?.trim() ? ` hints="${xmlEscape(params.speechHints.trim())}"` : ""
+  const responseTimeout = Math.min(20, Math.max(5, Math.round(params.responseTimeoutSeconds ?? 12)))
   return (
     intro +
-    `<Gather input="speech" speechTimeout="auto" timeout="12" action="${xmlEscape(params.actionUrl)}" method="POST" language="en-US"${hintsAttr}>` +
+    `<Gather input="speech" speechTimeout="auto" timeout="${responseTimeout}" action="${xmlEscape(params.actionUrl)}" method="POST" language="en-US"${hintsAttr}>` +
     prompt +
     `</Gather>` +
     `<Say ${SAY}>We did not hear a response. Goodbye.</Say><Hangup/>`
@@ -327,6 +329,7 @@ export async function callScreeningHandler(req: VercelRequest, res: VercelRespon
             settings,
             promptText: nextPrompt,
             recordingUrl: nextStep.recordingUrl,
+            responseTimeoutSeconds: nextStep.responseTimeoutSeconds,
             speechHints,
           }),
         ),
@@ -430,6 +433,7 @@ export async function callScreeningHandler(req: VercelRequest, res: VercelRespon
         settings,
         promptText: firstPrompt,
         recordingUrl: first.recordingUrl,
+        responseTimeoutSeconds: first.responseTimeoutSeconds,
         intro,
         speechHints,
       }),

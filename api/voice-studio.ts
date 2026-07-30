@@ -3,9 +3,11 @@ import { createHash, randomBytes, scryptSync, timingSafeEqual } from "crypto"
 import { createClient, type SupabaseClient } from "@supabase/supabase-js"
 import {
   createServiceSupabase,
+  firstEnv,
   pickSupabaseAnonKeyForServer,
   pickSupabaseUrlForServer,
 } from "./_communications.js"
+import { recommendedResponseTimeoutSeconds, type VoiceScreeningStepKind } from "./_voiceAutoAttendant.js"
 
 type Json = Record<string, unknown>
 const BUCKET = "voice-prompt-studio"
@@ -107,6 +109,61 @@ function statusForError(message: string): number {
   return 500
 }
 
+type TimingStep = {
+  id: string
+  kind: VoiceScreeningStepKind
+  prompt: string
+}
+
+async function analyzeAutoAttendantTimings(steps: TimingStep[]): Promise<Array<TimingStep & { responseTimeoutSeconds: number }>> {
+  const fallback = steps.map((step) => ({
+    ...step,
+    responseTimeoutSeconds: recommendedResponseTimeoutSeconds(step.kind, step.prompt),
+  }))
+  const openaiKey = firstEnv("OPENAI_API_KEY")
+  if (!openaiKey || steps.length === 0) return fallback
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${openaiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: firstEnv("OPENAI_MODEL") || "gpt-4o-mini",
+        temperature: 0.1,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content:
+              "Set a caller response timeout for each phone auto-attendant question. This timeout is only how long to wait for the caller to START speaking; speech recognition continues while they speak. Use 5-20 seconds. Allow more time for open-ended service descriptions, dates, and phone numbers; less for names and yes/no consent. Return JSON only: {\"timings\":[{\"id\":\"...\",\"responseTimeoutSeconds\":12}]}.",
+          },
+          { role: "user", content: JSON.stringify(steps) },
+        ],
+      }),
+    })
+    if (!response.ok) return fallback
+    const payload = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> }
+    const raw = payload.choices?.[0]?.message?.content
+    if (!raw) return fallback
+    const parsed = JSON.parse(raw) as { timings?: Array<{ id?: unknown; responseTimeoutSeconds?: unknown }> }
+    const byId = new Map(
+      (parsed.timings ?? []).map((row) => [String(row.id ?? ""), Number(row.responseTimeoutSeconds)]),
+    )
+    return fallback.map((step) => {
+      const proposed = byId.get(step.id)
+      return {
+        ...step,
+        responseTimeoutSeconds: Number.isFinite(proposed)
+          ? Math.min(20, Math.max(5, Math.round(proposed!)))
+          : step.responseTimeoutSeconds,
+      }
+    })
+  } catch (error) {
+    console.warn("[voice-studio] auto-attendant timing analysis fallback", error instanceof Error ? error.message : error)
+    return fallback
+  }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*")
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS")
@@ -185,6 +242,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .select("id, prompt_key, title, category, script_text, usage_notes, active_recording_id")
         .eq("active", true)
         .eq("scope", "platform")
+        .eq("category", "auto_attendant")
         .not("active_recording_id", "is", null)
         .order("sort_order")
       if (error) throw error
@@ -194,6 +252,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           playback_url: `/api/voice-prompt-audio?key=${encodeURIComponent(prompt.prompt_key)}`,
         })),
       })
+    }
+
+    if (action === "client-analyze-auto-attendant") {
+      const user = await supabaseUser(req)
+      if (!user) throw new Error("Unauthorized")
+      const rawSteps = Array.isArray(body.steps) ? body.steps.slice(0, 12) : []
+      const allowedKinds = new Set([
+        "service_intent",
+        "schedule_timing",
+        "caller_name",
+        "callback_number",
+        "sms_opt_in",
+        "custom",
+      ])
+      const steps = rawSteps
+        .filter((row): row is Json => Boolean(row) && typeof row === "object" && !Array.isArray(row))
+        .map((row) => ({
+          id: String(row.id ?? "").slice(0, 100),
+          kind: (allowedKinds.has(String(row.kind)) ? String(row.kind) : "custom") as VoiceScreeningStepKind,
+          prompt: String(row.prompt ?? "").trim().slice(0, 500),
+        }))
+        .filter((row) => row.id && row.prompt)
+      return res.status(200).json({ steps: await analyzeAutoAttendantTimings(steps) })
     }
 
     const adminId = await requireAdmin(req, service)

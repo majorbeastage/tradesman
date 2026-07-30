@@ -11,10 +11,30 @@ import { voiceStudioUserRequest } from "../lib/voicePromptStudio"
 
 type PlatformVoicePrompt = {
   id: string
+  prompt_key: string
   title: string
   category: string
   script_text: string
   playback_url: string
+}
+
+const PROMPT_KEY_BY_KIND: Partial<Record<VoiceScreeningStepKind, string>> = {
+  service_intent: "attendant.service",
+  schedule_timing: "attendant.schedule",
+  caller_name: "attendant.name",
+  callback_number: "attendant.callback",
+  sms_opt_in: "attendant.sms_opt_in",
+}
+
+function promptMatchesKind(prompt: PlatformVoicePrompt, kind: VoiceScreeningStepKind): boolean {
+  if (kind === "custom") return true
+  if (prompt.prompt_key === PROMPT_KEY_BY_KIND[kind]) return true
+  const searchable = `${prompt.prompt_key} ${prompt.title}`.toLowerCase()
+  if (kind === "service_intent") return /\bservice|intent|reason\b/.test(searchable)
+  if (kind === "schedule_timing") return /\bschedul|timing|appointment|availability\b/.test(searchable)
+  if (kind === "caller_name") return /\bcaller.?name|your.?name|\bname\b/.test(searchable)
+  if (kind === "callback_number") return /\bcallback|phone|number\b/.test(searchable)
+  return /\bsms|text|consent|opt.?in\b/.test(searchable)
 }
 
 type Props = {
@@ -105,6 +125,17 @@ export function CallScreeningMenuBuilder({ mode, steps, collectContactInfo, onCh
     onChange(steps.map((s, i) => (i === index ? { ...s, ...patch } : s)))
   }
 
+  function changeStepKind(index: number, nextKind: VoiceScreeningStepKind) {
+    const step = steps[index]
+    const selectedLibraryPrompt = platformPrompts.find((prompt) => prompt.playback_url === step.recordingUrl)
+    updateStep(index, {
+      kind: nextKind,
+      ...(selectedLibraryPrompt && !promptMatchesKind(selectedLibraryPrompt, nextKind)
+        ? { recordingUrl: undefined }
+        : {}),
+    })
+  }
+
   function moveStep(index: number, dir: -1 | 1) {
     const next = index + dir
     if (next < 0 || next >= steps.length) return
@@ -182,7 +213,7 @@ export function CallScreeningMenuBuilder({ mode, steps, collectContactInfo, onCh
               <span style={{ fontSize: 11, fontWeight: 600, color: "#64748b" }}>{t("account.callScreening.stepKind")}</span>
               <select
                 value={step.kind}
-                onChange={(e) => updateStep(index, { kind: e.target.value as VoiceScreeningStepKind })}
+                onChange={(e) => changeStepKind(index, e.target.value as VoiceScreeningStepKind)}
                 style={theme.formInput}
               >
                 {STEP_KINDS.map((k) => (
@@ -218,12 +249,14 @@ export function CallScreeningMenuBuilder({ mode, steps, collectContactInfo, onCh
                     }}
                     style={theme.formInput}
                   >
-                    <option value="">Choose an approved Tradesman voice prompt…</option>
-                    {platformPrompts.map((prompt) => (
-                      <option key={prompt.id} value={prompt.playback_url}>
-                        {prompt.title} · {prompt.category.replace(/_/g, " ")}
-                      </option>
-                    ))}
+                    <option value="">Choose an approved auto-attendant prompt…</option>
+                    {platformPrompts
+                      .filter((prompt) => promptMatchesKind(prompt, step.kind))
+                      .map((prompt) => (
+                        <option key={prompt.id} value={prompt.playback_url}>
+                          {prompt.title}
+                        </option>
+                      ))}
                   </select>
                 ) : null}
                 <input
@@ -233,9 +266,27 @@ export function CallScreeningMenuBuilder({ mode, steps, collectContactInfo, onCh
                   style={theme.formInput}
                   placeholder="https://…"
                 />
+                {step.recordingUrl ? <audio controls preload="none" src={step.recordingUrl} style={{ width: "100%" }} /> : null}
                 <span style={{ fontSize: 11, color: "#94a3b8" }}>{t("account.callScreening.recordingUrlHelp")}</span>
               </label>
             ) : null}
+
+            <div
+              style={{
+                padding: "8px 10px",
+                borderRadius: 8,
+                background: "#eff6ff",
+                color: "#1e40af",
+                fontSize: 11,
+                lineHeight: 1.45,
+              }}
+            >
+              Smart response window:{" "}
+              <strong>
+                {step.responseTimeoutSeconds ? `${step.responseTimeoutSeconds} seconds` : "analyzed when saved"}
+              </strong>{" "}
+              to begin answering. Once the caller starts, listening continues until they finish speaking.
+            </div>
 
             {step.kind === "schedule_timing" ? (
               <p style={{ margin: 0, fontSize: 11, color: "#0ea5e9" }}>{t("account.callScreening.serviceTokenHint")}</p>

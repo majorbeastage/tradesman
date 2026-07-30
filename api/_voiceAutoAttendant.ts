@@ -17,6 +17,7 @@ export type VoiceScreeningStep = {
   kind: VoiceScreeningStepKind
   prompt: string
   recordingUrl?: string
+  responseTimeoutSeconds?: number
   enabled: boolean
 }
 
@@ -74,6 +75,7 @@ function parseStep(raw: unknown): VoiceScreeningStep | null {
       : "custom"
   const prompt = typeof o.prompt === "string" ? o.prompt.trim() : ""
   const recordingUrl = typeof o.recordingUrl === "string" ? o.recordingUrl.trim() : ""
+  const responseTimeout = Number(o.responseTimeoutSeconds)
   const id = typeof o.id === "string" && o.id.trim() ? o.id.trim() : `step_${Math.random().toString(36).slice(2, 9)}`
   if (!prompt && !recordingUrl) return null
   return {
@@ -81,8 +83,20 @@ function parseStep(raw: unknown): VoiceScreeningStep | null {
     kind,
     prompt: prompt || "Please leave a brief message.",
     recordingUrl: recordingUrl || undefined,
+    responseTimeoutSeconds: Number.isFinite(responseTimeout)
+      ? Math.min(20, Math.max(5, Math.round(responseTimeout)))
+      : recommendedResponseTimeoutSeconds(kind, prompt),
     enabled: o.enabled !== false,
   }
+}
+
+export function recommendedResponseTimeoutSeconds(kind: VoiceScreeningStepKind, prompt: string): number {
+  const text = prompt.toLowerCase()
+  if (kind === "service_intent" || /\b(describe|explain|tell us|what happened|details?)\b/.test(text)) return 14
+  if (kind === "callback_number" || /\b(phone|number|address|email)\b/.test(text)) return 12
+  if (kind === "schedule_timing" || /\b(when|schedule|date|time|availability)\b/.test(text)) return 11
+  if (kind === "caller_name" || kind === "sms_opt_in" || /\b(yes|no|agree|name)\b/.test(text)) return 8
+  return Math.min(16, Math.max(9, 8 + Math.ceil(prompt.trim().split(/\s+/).length / 8)))
 }
 
 function parseLegacyMenuPrompts(raw: unknown): VoiceScreeningStep[] {
