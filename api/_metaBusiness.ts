@@ -11,7 +11,10 @@ import {
 type Json = Record<string, unknown>
 
 const META_KEY = "meta_business_v1"
-const DEFAULT_VERSION = "v25.0"
+/** Pages / Instagram Graph surface (latest as of Jul 2026). */
+const DEFAULT_GRAPH_VERSION = "v26.0"
+/** Marketing API surface — pin until Meta documents Marketing on Graph v26. */
+const DEFAULT_MARKETING_VERSION = "v25.0"
 
 type MetaConnection = {
   v: 1
@@ -56,14 +59,18 @@ async function actorFromRequest(req: VercelRequest): Promise<string | null> {
   return error ? null : data.user?.id ?? null
 }
 
+function pinVersion(raw: string, fallback: string): string {
+  return /^v\d+\.\d+$/.test(raw) ? raw : fallback
+}
+
 function metaConfig() {
   const accessToken = firstEnv("META_SYSTEM_USER_TOKEN").trim()
   const appSecret = firstEnv("META_APP_SECRET").trim()
   const appId = firstEnv("META_APP_ID").trim()
   const businessId = firstEnv("META_BUSINESS_ID").trim()
-  const rawVersion = firstEnv("META_GRAPH_API_VERSION").trim() || DEFAULT_VERSION
-  const version = /^v\d+\.\d+$/.test(rawVersion) ? rawVersion : DEFAULT_VERSION
-  return { accessToken, appSecret, appId, businessId, version }
+  const graphVersion = pinVersion(firstEnv("META_GRAPH_API_VERSION").trim(), DEFAULT_GRAPH_VERSION)
+  const marketingVersion = pinVersion(firstEnv("META_MARKETING_API_VERSION").trim(), DEFAULT_MARKETING_VERSION)
+  return { accessToken, appSecret, appId, businessId, graphVersion, marketingVersion }
 }
 
 function cleanId(value: unknown, field: string): string {
@@ -78,14 +85,15 @@ function appSecretProof(token: string, secret: string): string {
 
 async function metaRequest<T extends Json = Json>(
   path: string,
-  options: { method?: "GET" | "POST"; params?: Json } = {},
+  options: { method?: "GET" | "POST"; params?: Json; api?: "graph" | "marketing" } = {},
 ): Promise<T> {
   const config = metaConfig()
   if (!config.accessToken || !config.appSecret || !config.appId) {
     throw new Error("Meta is not configured. Add META_APP_ID, META_APP_SECRET, and META_SYSTEM_USER_TOKEN in Vercel.")
   }
   const method = options.method ?? "GET"
-  const url = new URL(`https://graph.facebook.com/${config.version}/${path.replace(/^\/+/, "")}`)
+  const version = options.api === "marketing" ? config.marketingVersion : config.graphVersion
+  const url = new URL(`https://graph.facebook.com/${version}/${path.replace(/^\/+/, "")}`)
   const params = new URLSearchParams()
   for (const [key, value] of Object.entries(options.params ?? {})) {
     if (value == null || value === "") continue
@@ -194,6 +202,7 @@ async function listCampaigns(connection: MetaConnection) {
     "insights.date_preset(maximum){spend,impressions,clicks,reach,actions}",
   ].join(",")
   const result = await metaRequest<{ data?: Json[] }>(`act_${accountId}/campaigns`, {
+    api: "marketing",
     params: { fields, limit: 200 },
   })
   return result.data ?? []
@@ -326,6 +335,7 @@ async function resolveGeoTargeting(targeting: Json): Promise<Json> {
   const zips: Json[] = []
   for (const query of [...cities.slice(0, 20), ...states.slice(0, 20), ...zipCodes.slice(0, 50)]) {
     const result = await metaRequest<{ data?: Json[] }>("search", {
+      api: "marketing",
       params: { type: "adgeolocation", location_types: ["city", "region", "zip"], q: query, country_code: "US", limit: 10 },
     })
     const exact = (result.data ?? []).find((row) => String(row.name ?? "").toLowerCase() === query.toLowerCase()) ?? result.data?.[0]
@@ -371,6 +381,7 @@ async function createMetaCampaign(service: SupabaseClient, profileId: string, lo
   }
   const specialCategories = Array.isArray(body.specialAdCategories) ? body.specialAdCategories.map(String) : []
   const campaign = await metaRequest(`act_${accountId}/campaigns`, {
+    api: "marketing",
     method: "POST",
     params: {
       name: String(local.name),
@@ -383,6 +394,7 @@ async function createMetaCampaign(service: SupabaseClient, profileId: string, lo
   const campaignId = cleanId(campaign.id, "campaign ID")
   const targeting = await resolveGeoTargeting(metadataRecord(body.targeting))
   const adSet = await metaRequest(`act_${accountId}/adsets`, {
+    api: "marketing",
     method: "POST",
     params: {
       name: `${String(local.name)} — Ad set`,
@@ -399,6 +411,7 @@ async function createMetaCampaign(service: SupabaseClient, profileId: string, lo
   })
   const adSetId = cleanId(adSet.id, "ad set ID")
   const creative = await metaRequest(`act_${accountId}/adcreatives`, {
+    api: "marketing",
     method: "POST",
     params: {
       name: `${String(local.name)} — Creative`,
@@ -416,6 +429,7 @@ async function createMetaCampaign(service: SupabaseClient, profileId: string, lo
   })
   const creativeId = cleanId(creative.id, "creative ID")
   const ad = await metaRequest(`act_${accountId}/ads`, {
+    api: "marketing",
     method: "POST",
     params: {
       name: `${String(local.name)} — Ad`,
@@ -457,7 +471,7 @@ async function setMetaCampaignStatus(service: SupabaseClient, profileId: string,
   }
   const meta = metadataRecord(local.metadata)
   const ids = [meta.metaCampaignId, meta.metaAdSetId, meta.metaAdId].map((id) => cleanId(id, "campaign component ID"))
-  for (const id of ids) await metaRequest(id, { method: "POST", params: { status: next } })
+  for (const id of ids) await metaRequest(id, { api: "marketing", method: "POST", params: { status: next } })
   meta.metaEffectiveStatus = next
   meta.metaStatusChangedAt = new Date().toISOString()
   const { error: updateError } = await service
@@ -493,7 +507,8 @@ export async function handleMetaBusiness(req: VercelRequest, res: VercelResponse
       res.status(200).json({
         configured: Boolean(config.accessToken && config.appSecret && config.appId),
         businessIdConfigured: Boolean(config.businessId),
-        version: config.version,
+        version: config.graphVersion,
+        marketingVersion: config.marketingVersion,
         systemUser: me,
       })
       return

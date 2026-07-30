@@ -10,7 +10,8 @@ Add these to Production (and Preview if used), then redeploy:
 - `META_APP_SECRET`
 - `META_SYSTEM_USER_TOKEN`
 - `META_BUSINESS_ID` — numeric Business Portfolio ID from Business settings
-- `META_GRAPH_API_VERSION` — optional; defaults to `v25.0`
+- `META_GRAPH_API_VERSION` — optional; defaults to `v26.0` (Pages / Instagram)
+- `META_MARKETING_API_VERSION` — optional; defaults to `v25.0` (Ads Insights / campaign create)
 
 Never use `VITE_` prefixes for these values. They are server secrets.
 

@@ -118,15 +118,16 @@ export default function MetaBusinessPanel({
         configured: boolean
         businessIdConfigured: boolean
         version: string
+        marketingVersion?: string
         systemUser?: { name?: string; id?: string } | null
       }>({ action: "status" })
       setConfigured(status.configured && status.businessIdConfigured)
-      setVersion(status.version)
+      setVersion(`${status.version}${status.marketingVersion ? ` / ads ${status.marketingVersion}` : ""}`)
       setSystemUserName(status.systemUser?.name || status.systemUser?.id || "")
       if (!status.businessIdConfigured) throw new Error("Meta credentials are present, but META_BUSINESS_ID is missing in Vercel.")
       const discovered = await metaApi<{ adAccounts: MetaAsset[]; pages: MetaAsset[] }>({ action: "list_assets" })
       setAssets(discovered)
-      setMessage(`Connected to Meta ${status.version}. Found ${discovered.adAccounts.length} ad account(s) and ${discovered.pages.length} Page(s).`)
+      setMessage(`Connected to Meta Graph ${status.version}. Found ${discovered.adAccounts.length} ad account(s) and ${discovered.pages.length} Page(s).`)
     })
 
   const loadProfileConnection = (nextProfileId: string) => {
