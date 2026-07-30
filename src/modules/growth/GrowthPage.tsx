@@ -810,6 +810,14 @@ function CampaignsSection({
           targetService: template?.targetService ?? "",
           budget: template?.budget ?? (monthlyCap ? Math.min(500, monthlyCap) : 500),
           radiusMiles: template?.radiusMiles ?? 15,
+          targetAreas: template?.targetAreas
+            ? {
+                areaCodes: [...(template.targetAreas.areaCodes ?? [])],
+                zipCodes: [...(template.targetAreas.zipCodes ?? [])],
+                cities: [...(template.targetAreas.cities ?? [])],
+                states: [...(template.targetAreas.states ?? [])],
+              }
+            : {},
           durationDays: template?.durationDays ?? 30,
           landingSlug: template?.landingSlug ?? ctaSlug,
           description: template?.description ?? "",
@@ -1029,6 +1037,50 @@ function CampaignCard({
         <textarea value={c.description ?? ""} onChange={(e) => patchCampaign({ description: e.target.value })} rows={2} style={{ ...inputStyle, resize: "vertical" }} />
       </label>
 
+      <div
+        style={{
+          marginTop: 8,
+          padding: 12,
+          border: `1px solid ${theme.border}`,
+          borderRadius: 10,
+          background: "#fff",
+        }}
+      >
+        <div style={{ fontSize: 13, fontWeight: 900, color: theme.text }}>Target areas (optional)</div>
+        <p style={{ margin: "4px 0 10px", fontSize: 12, lineHeight: 1.45, color: "#64748b" }}>
+          Add as many area codes, ZIP codes, cities, and states as requested. Press Enter or comma after each area.
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10 }}>
+          <CampaignAreaInput
+            label="Area codes"
+            placeholder="e.g. 615"
+            values={c.targetAreas?.areaCodes ?? []}
+            normalize={(value) => value.replace(/\D/g, "").slice(0, 3)}
+            onChange={(areaCodes) => patchCampaign({ targetAreas: { ...c.targetAreas, areaCodes } })}
+          />
+          <CampaignAreaInput
+            label="ZIP codes"
+            placeholder="e.g. 37201"
+            values={c.targetAreas?.zipCodes ?? []}
+            normalize={(value) => value.replace(/[^\d-]/g, "").slice(0, 10)}
+            onChange={(zipCodes) => patchCampaign({ targetAreas: { ...c.targetAreas, zipCodes } })}
+          />
+          <CampaignAreaInput
+            label="Cities"
+            placeholder="e.g. Nashville"
+            values={c.targetAreas?.cities ?? []}
+            onChange={(cities) => patchCampaign({ targetAreas: { ...c.targetAreas, cities } })}
+          />
+          <CampaignAreaInput
+            label="States"
+            placeholder="e.g. TN"
+            values={c.targetAreas?.states ?? []}
+            normalize={(value) => value.replace(/[^a-z]/gi, "").toUpperCase().slice(0, 2)}
+            onChange={(states) => patchCampaign({ targetAreas: { ...c.targetAreas, states } })}
+          />
+        </div>
+      </div>
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 8, marginTop: 8 }}>
         <label style={labelStyle}>
           Budget ($)
@@ -1090,6 +1142,86 @@ function CampaignCard({
         </div>
       ) : null}
     </div>
+  )
+}
+
+function CampaignAreaInput({
+  label,
+  placeholder,
+  values,
+  normalize = (value) => value.trim(),
+  onChange,
+}: {
+  label: string
+  placeholder: string
+  values: string[]
+  normalize?: (value: string) => string
+  onChange: (values: string[]) => void
+}) {
+  const [draft, setDraft] = useState("")
+
+  const addDraft = () => {
+    const additions = draft
+      .split(/[,\n]+/)
+      .map((value) => normalize(value.trim()))
+      .filter(Boolean)
+    if (!additions.length) return
+    onChange([...new Set([...values, ...additions])])
+    setDraft("")
+  }
+
+  return (
+    <label style={labelStyle}>
+      {label}
+      <div style={{ display: "flex", gap: 6 }}>
+        <input
+          value={draft}
+          placeholder={placeholder}
+          style={{ ...inputStyle, minWidth: 0 }}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={addDraft}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === ",") {
+              event.preventDefault()
+              addDraft()
+            }
+          }}
+        />
+        <button type="button" onClick={addDraft} style={{ ...secondaryBtn, padding: "8px 10px" }}>
+          Add
+        </button>
+      </div>
+      {values.length ? (
+        <span style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+          {values.map((value) => (
+            <span
+              key={value}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
+                padding: "4px 7px",
+                borderRadius: 999,
+                background: "#e2e8f0",
+                color: "#0f172a",
+                fontSize: 12,
+                fontWeight: 700,
+              }}
+            >
+              {value}
+              <button
+                type="button"
+                aria-label={`Remove ${value}`}
+                onClick={() => onChange(values.filter((item) => item !== value))}
+                style={{ border: 0, padding: 0, background: "transparent", color: "#64748b", cursor: "pointer", lineHeight: 1 }}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </span>
+      ) : null}
+    </label>
   )
 }
 

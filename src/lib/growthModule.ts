@@ -46,6 +46,13 @@ export type GrowthCampaignDraft = {
   targetService?: string
   budget?: number
   radiusMiles?: number
+  /** Optional, multi-value geographic targeting requested by the client. */
+  targetAreas?: {
+    areaCodes?: string[]
+    zipCodes?: string[]
+    cities?: string[]
+    states?: string[]
+  }
   durationDays?: number
   /** Public lead capture path segment — e.g. /cta/your-slug */
   landingSlug?: string
@@ -59,6 +66,19 @@ export type GrowthCampaignDraft = {
   completedAt?: string
   status: "draft" | "submitted" | "active" | "paused" | "completed"
   snapshots?: GrowthCampaignSnapshot[]
+}
+
+export function summarizeCampaignTargetAreas(campaign: GrowthCampaignDraft): string {
+  const areas = campaign.targetAreas
+  if (!areas) return campaign.radiusMiles ? `Radius: ${campaign.radiusMiles} miles` : ""
+  const parts = [
+    areas.areaCodes?.length ? `Area codes: ${areas.areaCodes.join(", ")}` : "",
+    areas.zipCodes?.length ? `ZIP codes: ${areas.zipCodes.join(", ")}` : "",
+    areas.cities?.length ? `Cities: ${areas.cities.join(", ")}` : "",
+    areas.states?.length ? `States: ${areas.states.join(", ")}` : "",
+    campaign.radiusMiles ? `Radius: ${campaign.radiusMiles} miles` : "",
+  ].filter(Boolean)
+  return parts.join("\n")
 }
 
 export type GrowthPresencePages = {

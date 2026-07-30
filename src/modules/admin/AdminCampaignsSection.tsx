@@ -24,7 +24,7 @@ import {
   type AdCampaignStatus,
   type AdSpendEntry,
 } from "../../lib/adCampaigns"
-import { GROWTH_METADATA_KEY, type GrowthModuleDoc } from "../../lib/growthModule"
+import { GROWTH_METADATA_KEY, summarizeCampaignTargetAreas, type GrowthModuleDoc } from "../../lib/growthModule"
 import { mergeBillingIntoProfileMetadata, parseBillingMetadata } from "../../lib/billingProfileMetadata"
 import SocialBannerBuilder from "./SocialBannerBuilder"
 
@@ -520,7 +520,14 @@ export default function AdminCampaignsSection() {
             name: c.name || "Growth campaign",
             status: c.status === "active" ? "active" : "requested",
             channels: ["google"],
-            request_details: [c.description, c.dataCollectionBrief, c.notes].filter(Boolean).join("\n\n"),
+            request_details: [
+              c.description,
+              c.dataCollectionBrief,
+              summarizeCampaignTargetAreas(c) ? `Target areas:\n${summarizeCampaignTargetAreas(c)}` : "",
+              c.notes,
+            ]
+              .filter(Boolean)
+              .join("\n\n"),
             requested_budget_cents: usdToCents(Number(c.budget) || 0),
             growth_campaign_id: c.id,
           })
