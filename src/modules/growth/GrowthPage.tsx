@@ -22,6 +22,7 @@ import {
   type GrowthProfileGrade,
   type GrowthProfilePlatformId,
 } from "../../lib/growthModule"
+import PlatformBadge, { isPlatformBadgeId } from "../../components/PlatformBadge"
 import { mergeSocialPresenceIntoMetadata, readSocialPresenceFromMetadata } from "../../lib/socialPresenceSync"
 import { GROWTH_PROFILE_PLATFORM_DEFS, gradeGrowthProfiles, gradesToRecord } from "../../lib/growthProfileGrading"
 import {
@@ -273,7 +274,7 @@ export default function GrowthPage({ setPage }: Props) {
   }
 
   return (
-    <div className="scheme-page" style={{ maxWidth: 1100, margin: "0 auto", padding: "8px 4px 32px" }}>
+    <div className="scheme-page growth-page" style={{ maxWidth: 1100, margin: "0 auto", padding: "8px 4px 32px" }}>
       <header style={{ marginBottom: 20 }}>
         <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: portalTheme.text }}>Growth</h1>
         {saving ? <div style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>Saving…</div> : null}
@@ -451,7 +452,10 @@ function ProfilesSection({
       </label>
       {GROWTH_PROFILE_PLATFORM_DEFS.map((field) => (
         <label key={field.id} style={{ ...labelStyle, marginTop: 10 }}>
-          {field.label}
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+            {isPlatformBadgeId(field.id) ? <PlatformBadge id={field.id} size={20} /> : null}
+            {field.label}
+          </span>
           <input
             value={
               field.id === "website"
@@ -564,7 +568,10 @@ function ProfilesSection({
                       color: theme.text,
                     }}
                   >
-                    <span>{platform.label}</span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 9 }}>
+                      {isPlatformBadgeId(platform.id) ? <PlatformBadge id={platform.id} size={22} /> : null}
+                      {platform.label}
+                    </span>
                     <span style={{ color: "#94a3b8", fontWeight: 600 }}>{open ? "Hide ▲" : "How to invite ▼"}</span>
                   </button>
                   {open ? (
@@ -637,7 +644,10 @@ function GradesSection({
           <div key={row.id} style={{ ...panelStyle, borderLeft: `4px solid ${gradeColor(row.grade.status)}` }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
               <div>
-                <div style={{ fontWeight: 800, fontSize: 16 }}>{row.label}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 9, fontWeight: 800, fontSize: 16 }}>
+                  {isPlatformBadgeId(row.id) ? <PlatformBadge id={row.id} size={22} /> : null}
+                  {row.label}
+                </div>
                 {row.url ? <div style={{ fontSize: 12, color: "#64748b", wordBreak: "break-all" }}>{row.url}</div> : null}
               </div>
               <div style={{ textAlign: "right" }}>
@@ -1311,7 +1321,14 @@ const panelStyle: CSSProperties = {
 const h2: CSSProperties = { margin: "0 0 10px", fontSize: 18, fontWeight: 800, color: theme.text }
 const p: CSSProperties = { margin: "0 0 14px", fontSize: 14, lineHeight: 1.55, color: "#475569" }
 const labelStyle: CSSProperties = { display: "flex", flexDirection: "column", gap: 6, fontSize: 12, fontWeight: 700, color: "#334155" }
-const inputStyle: CSSProperties = { padding: "10px 12px", borderRadius: 8, border: `1px solid ${theme.border}`, fontSize: 14 }
+const inputStyle: CSSProperties = {
+  padding: "10px 12px",
+  borderRadius: 8,
+  border: `1px solid ${theme.border}`,
+  fontSize: 14,
+  background: "#ffffff",
+  color: "#0f172a",
+}
 const primaryBtn: CSSProperties = {
   padding: "8px 14px",
   borderRadius: 8,

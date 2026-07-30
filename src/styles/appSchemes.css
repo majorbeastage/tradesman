@@ -264,6 +264,26 @@
   border-color: var(--scheme-border) !important;
 }
 
+/* Growth keeps light entry fields on every scheme so profile URLs and campaign
+   numbers stay legible while people copy them in from another window. */
+.portal-charcoal main.scheme-main-content .growth-page.growth-page input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]),
+.portal-charcoal main.scheme-main-content .growth-page.growth-page select,
+.portal-charcoal main.scheme-main-content .growth-page.growth-page textarea {
+  background: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+.portal-charcoal main.scheme-main-content .growth-page.growth-page option {
+  background: #ffffff;
+  color: #0f172a;
+}
+
+.portal-charcoal main.scheme-main-content .growth-page.growth-page input::placeholder,
+.portal-charcoal main.scheme-main-content .growth-page.growth-page textarea::placeholder {
+  color: #64748b !important;
+}
+
 /* White/light panels (common React inline backgrounds) → scheme cards */
 .portal-charcoal[data-app-scheme="dark"] main.app-main-safe.scheme-main-content div[style*="background: #fff"],
 .portal-charcoal[data-app-scheme="dark"] main.app-main-safe.scheme-main-content div[style*="background:#fff"],
