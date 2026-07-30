@@ -69,6 +69,7 @@ export type GrowthPresencePages = {
   x?: string
   linkedin?: string
   yelp?: string
+  youtube?: string
 }
 
 export type GrowthProfilePlatformId = keyof GrowthPresencePages | "website"

@@ -53,6 +53,9 @@ function gradeSingleUrl(platform: GrowthProfilePlatformId, label: string, url: s
     } else if (platform === "instagram" && parsed.hostname.includes("instagram")) {
       whatAiCanSee.push("Instagram profile — visual brand signals for social campaigns.")
       score += 15
+    } else if (platform === "youtube" && (parsed.hostname.includes("youtube") || parsed.hostname.includes("youtu.be"))) {
+      whatAiCanSee.push("YouTube channel — video content AI can surface and a base for YouTube/Google video ads.")
+      score += 15
     } else if (platform === "website") {
       whatAiCanSee.push("Primary website — anchor for landing pages and conversion tracking.")
       score += 15
@@ -119,6 +122,7 @@ export const GROWTH_PROFILE_PLATFORM_DEFS: { id: GrowthProfilePlatformId; label:
   { id: "yelp", label: "Yelp", placeholder: "https://yelp.com/biz/…" },
   { id: "tiktok", label: "TikTok", placeholder: "https://tiktok.com/@your-handle" },
   { id: "x", label: "X (Twitter)", placeholder: "https://x.com/your-handle" },
+  { id: "youtube", label: "YouTube", placeholder: "https://youtube.com/@your-channel" },
 ]
 
 export function gradeGrowthProfiles(doc: GrowthModuleDoc): {

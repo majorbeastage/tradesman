@@ -123,6 +123,20 @@ export const BUSINESS_PROFILE_ACCESS_GUIDE: BusinessProfileAccessGuide[] = [
     ],
     notes: "If Delegate/Teams is unavailable on a free account, create a strong unique password for a shared ops login only as a last resort — prefer invite-based access.",
   },
+  {
+    id: "youtube",
+    label: "YouTube",
+    why: "Video presence for how-to and project content, plus YouTube/Google video ads. Channel access lets us upload, optimize, and manage without your password.",
+    inviteTarget: "YouTube channel → Google (Brand) account managers, or Google Ads for video campaigns",
+    steps: [
+      "Confirm the channel uses a Brand Account (Settings → Advanced settings → 'Move channel to a Brand Account' if it is on a personal login).",
+      "Open studio.youtube.com → Settings → Permissions (Brand Account channels), or account.google.com → the Brand Account → Manage permissions.",
+      `Invite ${TRADESMAN_ACCESS_INVITE_EMAIL} (or your Tradesman contact) as a Manager or Editor.`,
+      "For video ads, link the channel to your Google Ads account and grant us access there.",
+      "Paste your channel URL (youtube.com/@… or /channel/…) above.",
+    ],
+    notes: "Manager access requires a Brand Account. A channel tied to a personal Google login cannot add managers until it is converted.",
+  },
 ]
 
 export const BUSINESS_PROFILE_ACCESS_INTRO = {

@@ -512,7 +512,7 @@ function ProfilesSection({
         <div>
           <div style={{ fontWeight: 900, color: theme.text, fontSize: 16 }}>{BUSINESS_PROFILE_ACCESS_INTRO.title}</div>
           <div style={{ marginTop: 4, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-            Step-by-step invites for Google, Meta, LinkedIn, Yelp, TikTok, and X — keep Ownership, grant Manager access.
+            Step-by-step invites for Google, Meta, LinkedIn, Yelp, TikTok, X, and YouTube — keep Ownership, grant Manager access.
           </div>
         </div>
         <span style={{ color: "#94a3b8", flexShrink: 0 }}>{accessGuideOpen ? "▲" : "▼"}</span>

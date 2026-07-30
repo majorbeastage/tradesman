@@ -18,6 +18,7 @@ export type PlatformBadgeId =
   | "yelp"
   | "tiktok"
   | "x"
+  | "youtube"
 
 type BadgeSpec = { glyph: string; background: string; color: string; fontScale?: number }
 
@@ -35,6 +36,7 @@ const BADGES: Record<PlatformBadgeId, BadgeSpec> = {
   yelp: { glyph: "Y", background: "#d32323", color: "#ffffff" },
   tiktok: { glyph: "TT", background: "#111111", color: "#ffffff", fontScale: 0.4 },
   x: { glyph: "X", background: "#000000", color: "#ffffff" },
+  youtube: { glyph: "▶", background: "#ff0000", color: "#ffffff", fontScale: 0.5 },
 }
 
 export function isPlatformBadgeId(value: string): value is PlatformBadgeId {
