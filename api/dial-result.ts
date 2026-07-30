@@ -8,14 +8,25 @@ import {
   getOrCreateConversation,
   getOrCreateCustomerByPhone,
   getUserRoutingProfile,
+  isWithinBusinessHours,
   logCommunicationEvent,
   lookupChannelById,
   isInboundCallerOurBusinessNumber,
   normalizePhone,
   pickFirstString,
+  toTwilioE164,
 } from "./_communications.js"
 import { recordSmsConsentFromInboundCall, runMissedCallAutoTextBack } from "./_conversationAutoReply.js"
-import { resolveAutoReplyForIntake } from "./_automaticRepliesChannels.js"
+import { loadCallHuntingForUser } from "./_callHunting.js"
+
+function xmlEscape(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;")
+}
 
 function sendTwiml(res: VercelResponse, body: string): VercelResponse {
   res.setHeader("Content-Type", "text/xml; charset=utf-8")
@@ -62,18 +73,89 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Forward-whisper decline (or Gather timeout → Hangup) ends the callee leg before A–B bridge → DialCallStatus completed + DialBridged false. Send caller to voicemail.
   const screeningDeclinedOrNeverBridged = dialCallStatus === "completed" && dialNotBridged
 
-  if (
+  const missedForward =
     dialCallStatus === "no-answer" ||
     dialCallStatus === "busy" ||
     dialCallStatus === "failed" ||
     dialCallStatus === "canceled" ||
     screeningDeclinedOrNeverBridged
-  ) {
+
+  if (missedForward) {
+    const origin = requestPublicOrigin(req)
+    const huntEnabled = pickFirstString(req.query?.hunt) === "1"
+    const huntMode = pickFirstString(req.query?.huntMode)
+    const huntIndex = Number(pickFirstString(req.query?.huntIndex) || "0")
+    const huntPhones = pickFirstString(req.query?.huntPhones)
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean)
+
+    // Sequential hunt: try the next number on no-answer/busy/failed — not when the callee declined whisper.
+    if (
+      huntEnabled &&
+      huntMode === "sequential" &&
+      !screeningDeclinedOrNeverBridged &&
+      Number.isFinite(huntIndex) &&
+      huntIndex + 1 < huntPhones.length
+    ) {
+      const nextIndex = huntIndex + 1
+      const nextPhone = toTwilioE164(huntPhones[nextIndex]) || normalizePhone(huntPhones[nextIndex]) || huntPhones[nextIndex]
+      console.info("[dial-result] sequential_hunt_next", {
+        dialCallStatus: dialCallStatus || null,
+        nextIndex,
+        nextPhone,
+      })
+      try {
+        const supabase = createServiceSupabase()
+        const channel = channelId ? await lookupChannelById(supabase, channelId) : null
+        const routingProfile = channel?.user_id ? await getUserRoutingProfile(supabase, channel.user_id) : null
+        const hunting = channel?.user_id ? await loadCallHuntingForUser(supabase, channel.user_id) : null
+        const ringSeconds = hunting?.ringSeconds ?? 22
+        const twilioDid = to || normalizePhone(channel?.public_address ?? "") || ""
+        const inboundFrom = from && !/^anonymous$/i.test(from) ? from : twilioDid
+        const callerIdForDial =
+          routingProfile?.forward_dial_caller_id_mode === "twilio_number" && twilioDid
+            ? twilioDid
+            : inboundFrom || twilioDid
+        const withinBusinessHours = isWithinBusinessHours(routingProfile)
+        const whisperEnabled = routingProfile?.forward_whisper_on_answer === true
+        const whisperOnlyOutsideHours = routingProfile?.forward_whisper_only_outside_business_hours === true
+        const useWhisper =
+          whisperEnabled && channel?.user_id && (!whisperOnlyOutsideHours || !withinBusinessHours)
+        const whisperParams = new URLSearchParams()
+        if (channel?.user_id) whisperParams.set("userId", channel.user_id)
+        if (from) whisperParams.set("from", from)
+        const whisperUrl = `${origin}/api/forward-whisper${whisperParams.size ? `?${whisperParams.toString()}` : ""}`
+        const nextQuery = new URLSearchParams()
+        if (channelId) nextQuery.set("channelId", channelId)
+        if (to) nextQuery.set("to", to)
+        if (from) nextQuery.set("from", from)
+        nextQuery.set("hunt", "1")
+        nextQuery.set("huntMode", "sequential")
+        nextQuery.set("huntIndex", String(nextIndex))
+        nextQuery.set("huntPhones", huntPhones.join(","))
+        const dialActionUrl = `${origin}/api/dial-result?${nextQuery.toString()}`
+        const dialInner = useWhisper
+          ? `<Number url="${xmlEscape(whisperUrl)}">${xmlEscape(nextPhone)}</Number>`
+          : `<Number>${xmlEscape(nextPhone)}</Number>`
+        const answerOnBridge = useWhisper ? "true" : "false"
+        const dialTimeoutSec = Math.min(45, Math.max(8, ringSeconds))
+        return sendTwiml(
+          res,
+          `<?xml version="1.0" encoding="UTF-8"?><Response>` +
+            `<Dial answerOnBridge="${answerOnBridge}" timeout="${dialTimeoutSec}" action="${xmlEscape(dialActionUrl)}" method="POST" callerId="${xmlEscape(callerIdForDial)}">` +
+            dialInner +
+            `</Dial></Response>`,
+        )
+      } catch (e) {
+        console.error("[dial-result] sequential hunt failed — voicemail", e instanceof Error ? e.message : e)
+      }
+    }
+
     console.info("[dial-result] route_to_voicemail", {
       dialCallStatus: dialCallStatus || null,
       screeningDeclinedOrNeverBridged,
     })
-    const origin = requestPublicOrigin(req)
     const params = new URLSearchParams()
     if (channelId) params.set("channelId", channelId)
     if (to) params.set("to", to)

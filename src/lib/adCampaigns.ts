@@ -61,11 +61,66 @@ export type AdCampaignPaymentRow = {
 export const AD_CHANNEL_OPTIONS = [
   { id: "google", label: "Google Ads / LSA" },
   { id: "gbp", label: "Google Business Profile" },
-  { id: "meta", label: "Facebook / Instagram" },
+  { id: "meta", label: "Facebook / Instagram (Meta)" },
   { id: "tiktok", label: "TikTok" },
+  { id: "linkedin", label: "LinkedIn" },
+  { id: "x", label: "X (Twitter)" },
   { id: "yelp", label: "Yelp" },
   { id: "angi", label: "Angi / HomeAdvisor" },
   { id: "other", label: "Other" },
+] as const
+
+/** Agency publishing / ads access checklist shown in Admin Ads & campaigns. */
+export const SOCIAL_PLATFORM_PROCESS = [
+  {
+    id: "meta",
+    label: "Meta (Facebook + Instagram)",
+    needs: "Tradesman Business Manager + Ads account, or Partner access to the client’s BM",
+    automate: "Marketing API / Ads Insights for spend + creatives; Page posting via Graph API after Page token grant",
+    steps: [
+      "Create or use Tradesman’s Meta Business Manager",
+      "Add client Page + Instagram as assets (or request Partner access)",
+      "Create Ad Account under Tradesman BM or accept client Ad Account share",
+      "Complete Business Verification + payment method",
+      "Store system user token (server secret) for Ads Insights + publishing",
+    ],
+  },
+  {
+    id: "tiktok",
+    label: "TikTok Ads / Organic",
+    needs: "TikTok Ads Manager Business Center + Business API app",
+    automate: "Ads spend + campaign status via Marketing API; organic posts need TikTok for Business posting permissions",
+    steps: [
+      "Open TikTok Business Center for Tradesman",
+      "Invite client ad account or create agency-managed account",
+      "Register Marketing API app and approve scopes",
+      "Store access tokens as Vercel secrets (never in the browser)",
+    ],
+  },
+  {
+    id: "linkedin",
+    label: "LinkedIn Campaign Manager",
+    needs: "LinkedIn Company Page admin + Campaign Manager account",
+    automate: "Campaign Management API for ads; Community Management API for organic (separate products)",
+    steps: [
+      "Become admin on client Company Page (or create Tradesman-managed page posts with permission)",
+      "Create Campaign Manager ad account",
+      "Create LinkedIn Developer app and request Advertising API access",
+      "Store OAuth refresh token server-side",
+    ],
+  },
+  {
+    id: "x",
+    label: "X (Twitter)",
+    needs: "X Ads account + elevated API access (paid tiers for reliable automation)",
+    automate: "Ads API for campaigns; posting API for organic (rate-limited; paid access recommended)",
+    steps: [
+      "Create X Ads account under Tradesman or agency handle",
+      "Apply for Ads API / elevated access",
+      "Generate app keys + OAuth 1.0a or OAuth 2 tokens",
+      "Store secrets on Vercel; use Admin checklist until API is live",
+    ],
+  },
 ] as const
 
 export const AD_STATUS_OPTIONS: { id: AdCampaignStatus; label: string }[] = [

@@ -158,8 +158,8 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "account.tradesmanEmail.custom.active": "Active custom address",
     "account.tradesmanEmail.custom.err.invalid": "Enter a valid domain (e.g. yourcompany.com).",
     "account.tradesmanEmail.custom.err.platformDomain": "Use Option A for @tradesman-us.com addresses.",
-    "account.fold.callScreeningTitle": "Call screening & auto-attendant (optional)",
-    "account.fold.callScreeningSub": "AI or recorded menu before forwarding — off by default.",
+    "account.fold.callScreeningTitle": "3 · Auto-attendant (optional)",
+    "account.fold.callScreeningSub": "Ask callers questions before ringing your phones — off by default.",
     "account.callScreening.intro":
       "Optional inbound screening. Default call handling stays the same until you turn this on. Tradesman can analyze short menus, log outcomes, screen spam, and forward good leads to your phone.",
     "account.callScreening.enable": "Enable call screening / auto-attendant",
@@ -248,7 +248,7 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "account.section.schemeSub": "Color scheme, layout style & custom logo",
     "account.fold.hoursSub": "Timezone & weekly schedule",
     "account.fold.forwardSub": "Twilio → your phone",
-    "account.fold.voicemailBundleTitle": "Voicemail, greeting & help line",
+    "account.fold.voicemailBundleTitle": "4 · Voicemail & help line",
     "account.field.timezone": "Timezone",
     "account.day.mon": "Monday",
     "account.day.tue": "Tuesday",
@@ -257,10 +257,10 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "account.day.fri": "Friday",
     "account.day.sat": "Saturday",
     "account.day.sun": "Sunday",
-    "account.section.forwardTitle": "Call forwarding",
-    "account.forward.enabled": "Call forwarding from Twilio to my phone is enabled",
+    "account.section.forwardTitle": "1 · Answer & forward calls",
+    "account.forward.enabled": "Forward inbound business calls to my phone",
     "account.forward.saveNote": "Saving this updates live routing immediately for inbound forwarded calls.",
-    "account.forward.outsideHours": "Turn forwarding off outside of business hours",
+    "account.forward.outsideHours": "Do not forward outside business hours (send to voicemail instead)",
     "account.forward.outsideHelp":
       "When checked, calls only forward during the business hours you set above. When unchecked, calls may still forward on closed days or outside those hours. If forwarding is off entirely, unanswered calls use Tradesman voicemail.",
     "account.forward.callerIdLabel": "Caller ID on my phone when a call is forwarded",
@@ -268,9 +268,9 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "account.forward.callerIdTwilio": "Show my Tradesman / Twilio business number",
     "account.forward.callerIdHelp":
       "If your carrier often marks forwarded calls as busy or spam when the customer’s real caller ID is shown, choose your business number so your cell sees a familiar caller ID.",
-    "account.forward.whisperHeading": "Call screening (whisper)",
+    "account.forward.whisperHeading": "Whisper / accept on your phone",
     "account.forward.whisperOffWarn":
-      "Forwarding is off. Whisper and press-1/2 screening only run when a call is forwarded to your phone. With forwarding unchecked, inbound calls go straight to Tradesman voicemail — you will not hear the announcement on your cell. Turn on Call forwarding above (and set your forward number on the channel in Admin → Communications) to use screening.",
+      "Forwarding is off. Whisper only runs on forwarded PSTN calls (not Messenger team calls). Turn on forwarding above — primary number is set in Admin → Communications.",
     "account.forward.announceTitle": "Announce caller before I connect",
     "account.forward.announceHelp":
       "Short audio on your phone when you pick up a forwarded call: name (from your CRM when known) and number. Does not play if the call is not forwarded to you.",
@@ -284,7 +284,10 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "account.forward.placeholdersHelp":
       "Placeholders: {caller_name}, {caller_phone}, {caller_phone_spoken} (digits with pauses for text-to-speech). If the name is unknown, {caller_name} is read as \"Unknown caller\".",
     "account.forward.finePrint":
-      "Fine print: Screening avoids odd carrier behavior if you hang up during the whisper. Unclear or timed-out responses are treated like decline (voicemail).",
+      "Inbound flow: optional auto-attendant → ring phones (hunt) → whisper if enabled → voicemail. Messenger team audio is a separate path from PSTN forwarding.",
+    "account.forward.stackIntro":
+      "Use this stack for customer calls to your Tradesman number. Primary forward phone lives on your Twilio channel (Admin → Communications).",
+    "account.forward.huntHeading": "Ring group / hunting",
     "account.voicemail.title": "Voicemail greeting",
     "account.voicemail.subAi": "AI reads your script",
     "account.voicemail.subRecorded": "Custom audio recording",

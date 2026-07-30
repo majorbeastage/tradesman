@@ -801,12 +801,16 @@ function CampaignCard({
   ctaSlug,
   updateDoc,
   saveNow,
+  defaultExpanded = false,
 }: {
   campaign: GrowthCampaignDraft
   ctaSlug: string
   updateDoc: UpdateDocFn
   saveNow: () => void
+  defaultExpanded?: boolean
 }) {
+  const [expanded, setExpanded] = useState(defaultExpanded)
+
   const patchCampaign = (patch: Partial<GrowthCampaignDraft>) =>
     updateDoc((prev) => ({
       ...prev,
@@ -833,8 +837,35 @@ function CampaignCard({
     }))
 
   return (
-    <div style={{ padding: 14, borderRadius: 12, border: `1px solid ${theme.border}`, background: "#f8fafc" }}>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+    <div style={{ borderRadius: 12, border: `1px solid ${theme.border}`, background: "#f8fafc", overflow: "hidden" }}>
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        style={{
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "12px 14px",
+          border: "none",
+          background: "transparent",
+          cursor: "pointer",
+          textAlign: "left",
+        }}
+      >
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 900, color: theme.text, fontSize: 15 }}>{c.name || "Untitled campaign"}</div>
+          <div style={{ marginTop: 3, fontSize: 12, color: "#64748b" }}>
+            {c.status} · {formatUsdFromCents(usdToCents(c.budget ?? 0))}
+            {c.targetService ? ` · ${c.targetService}` : ""}
+          </div>
+        </div>
+        <span style={{ fontSize: 11, color: "#94a3b8", flexShrink: 0 }}>{expanded ? "▲" : "▼"}</span>
+      </button>
+
+      {expanded ? (
+        <div style={{ padding: "0 14px 14px", display: "grid", gap: 8, borderTop: `1px solid ${theme.border}` }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
         <input value={c.name} onChange={(e) => patchCampaign({ name: e.target.value })} style={{ ...inputStyle, fontWeight: 800, flex: "1 1 200px" }} />
         <select value={c.status} onChange={(e) => setStatus(e.target.value as GrowthCampaignDraft["status"])} style={{ ...inputStyle, width: 160 }}>
           <option value="draft">Draft</option>
@@ -907,6 +938,9 @@ function CampaignCard({
             Submit to partner
           </button>
         ) : null}
+        <button type="button" style={secondaryBtn} onClick={() => setExpanded(false)}>
+          Minimize
+        </button>
         <button
           type="button"
           style={{ ...secondaryBtn, color: "#b91c1c", borderColor: "#fecaca" }}
@@ -915,6 +949,8 @@ function CampaignCard({
           Remove
         </button>
       </div>
+        </div>
+      ) : null}
     </div>
   )
 }

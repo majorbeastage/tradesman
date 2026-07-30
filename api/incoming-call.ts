@@ -21,6 +21,7 @@ import {
 import { buildCallScreeningRedirectUrl } from "./_callScreeningHandler.js"
 import { shouldSkipCallScreeningForCaller } from "./_callScreeningSkip.js"
 import { activeScreeningSteps, loadVoiceAutoAttendantForUser } from "./_voiceAutoAttendant.js"
+import { activeHuntPhones, loadCallHuntingForUser } from "./_callHunting.js"
 import { recordSmsConsentFromInboundCall, runMissedCallAutoTextBack } from "./_conversationAutoReply.js"
 
 function xmlEscape(value: string): string {
@@ -200,7 +201,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     )
   }
 
-  const dialActionUrl = `${origin}/api/dial-result${q}`
   const twilioDid = to || normalizePhone(channel?.public_address ?? "") || ""
   const inboundFrom = from && !/^anonymous$/i.test(from) ? from : twilioDid
   const callerIdForDial =
@@ -224,13 +224,53 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const whisperOnlyOutsideHours = routingProfile?.forward_whisper_only_outside_business_hours === true
   const useWhisper =
     whisperEnabled && channel?.user_id && (!whisperOnlyOutsideHours || !withinBusinessHours)
-  const dialInner = useWhisper
-    ? `<Number url="${xmlEscape(whisperUrl)}">${xmlEscape(forwardTo)}</Number>`
-    : `<Number>${xmlEscape(forwardTo)}</Number>`
+
+  let huntPhones = [forwardTo]
+  let huntMode: "primary_only" | "simultaneous" | "sequential" = "primary_only"
+  let ringSeconds = useWhisper ? 25 : 32
+  if (channel?.user_id) {
+    try {
+      const hunting = await loadCallHuntingForUser(supabase, channel.user_id)
+      const phones = activeHuntPhones(hunting, forwardTo)
+        .map((p) => toTwilioE164(p) || normalizePhone(p) || p)
+        .filter(Boolean)
+      if (phones.length > 0) {
+        huntPhones = phones
+        huntMode = hunting.enabled ? hunting.mode : "primary_only"
+        ringSeconds = hunting.enabled ? hunting.ringSeconds : ringSeconds
+      }
+    } catch (e) {
+      console.error("[incoming-call] hunting load failed — using primary only", e instanceof Error ? e.message : e)
+    }
+  }
+
+  const dialTargets =
+    huntMode === "simultaneous"
+      ? huntPhones
+      : huntMode === "sequential"
+        ? [huntPhones[0]]
+        : [forwardTo]
+
+  const dialQuery = new URLSearchParams(query)
+  if (huntMode === "sequential" && huntPhones.length > 1) {
+    dialQuery.set("hunt", "1")
+    dialQuery.set("huntIndex", "0")
+    dialQuery.set("huntMode", "sequential")
+    dialQuery.set("huntPhones", huntPhones.join(","))
+  }
+  const dialActionUrl = `${origin}/api/dial-result${dialQuery.size ? `?${dialQuery.toString()}` : ""}`
+
+  const dialInner = dialTargets
+    .map((phone) =>
+      useWhisper
+        ? `<Number url="${xmlEscape(whisperUrl)}">${xmlEscape(phone)}</Number>`
+        : `<Number>${xmlEscape(phone)}</Number>`,
+    )
+    .join("")
 
   /** Whisper: must stay true so ringback + DialBridged behave for screening. Plain forward: false can reduce odd PSTN “decline” on some carriers. */
   const answerOnBridge = useWhisper ? "true" : "false"
-  const dialTimeoutSec = useWhisper ? 25 : 32
+  const dialTimeoutSec = Math.min(45, Math.max(8, ringSeconds || (useWhisper ? 25 : 32)))
 
   const twiml =
     `<?xml version="1.0" encoding="UTF-8"?>` +

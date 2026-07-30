@@ -36,6 +36,7 @@ import {
   PROFILE_CONTACT_META_KEYS,
 } from "../../lib/profileContactMeta"
 import { CallScreeningSettingsPanel } from "../../components/CallScreeningSettingsPanel"
+import { CallHuntingSettingsPanel } from "../../components/CallHuntingSettingsPanel"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { usePortalTheme } from "../../lib/useSchemeStyles"
 import {
@@ -1411,6 +1412,9 @@ export function AccountProfilePanel({
               category={cat}
             >
             <div style={{ padding: 14, borderRadius: 10, background: "#fff7ed", border: "1px solid #fdba74" }}>
+              <p style={{ margin: "0 0 12px", fontSize: 13, color: "#9a3412", lineHeight: 1.5 }}>
+                {t("account.forward.stackIntro")}
+              </p>
               <label style={{ display: "flex", alignItems: "center", gap: 10, color: theme.text, fontWeight: 700 }}>
                 <input
                   type="checkbox"
@@ -1500,6 +1504,19 @@ export function AccountProfilePanel({
                     </label>
                   </div>
                 )}
+              </div>
+
+              <div
+                style={{
+                  marginTop: 16,
+                  paddingTop: 14,
+                  borderTop: "1px solid #fdba74",
+                  display: "grid",
+                  gap: 10,
+                }}
+              >
+                <span style={{ fontSize: 12, fontWeight: 800, color: theme.text }}>{t("account.forward.huntHeading")}</span>
+                <CallHuntingSettingsPanel profileUserId={profileUserId} />
               </div>
             </div>
             </AccountFold>

@@ -10,6 +10,7 @@ import {
   AD_CAMPAIGN_FEE_DISCLOSURE,
   AD_CAMPAIGN_SPEND_DISCLAIMER,
   AD_STATUS_OPTIONS,
+  SOCIAL_PLATFORM_PROCESS,
   adBalanceDueCents,
   adCampaignProcessingFeeCents,
   adCampaignTotalChargeCents,
@@ -44,6 +45,12 @@ export default function AdminCampaignsSection() {
   const [error, setError] = useState("")
   const [msg, setMsg] = useState("")
   const [busy, setBusy] = useState(false)
+  const [createFormOpen, setCreateFormOpen] = useState(false)
+  const [detailOpen, setDetailOpen] = useState(false)
+  const [platformsOpen, setPlatformsOpen] = useState(true)
+  const [bannerOpen, setBannerOpen] = useState(false)
+  const [platformNotes, setPlatformNotes] = useState("")
+  const [platformChecks, setPlatformChecks] = useState<Record<string, boolean>>({})
 
   // New campaign form
   const [newProfileId, setNewProfileId] = useState("")
@@ -123,6 +130,30 @@ export default function AdminCampaignsSection() {
       setCampaigns((camps ?? []) as AdCampaignRow[])
       if (!selectedId && (camps ?? []).length > 0) {
         setSelectedId(String((camps as AdCampaignRow[])[0].id))
+      }
+
+      try {
+        const { data: socialSetting } = await supabase
+          .from("platform_settings")
+          .select("value")
+          .eq("key", "social_platform_ops_v1")
+          .maybeSingle()
+        const socialVal =
+          socialSetting?.value && typeof socialSetting.value === "object" && !Array.isArray(socialSetting.value)
+            ? (socialSetting.value as Record<string, unknown>)
+            : {}
+        setPlatformNotes(typeof socialVal.notes === "string" ? socialVal.notes : "")
+        const checks =
+          socialVal.checks && typeof socialVal.checks === "object" && !Array.isArray(socialVal.checks)
+            ? (socialVal.checks as Record<string, unknown>)
+            : {}
+        const nextChecks: Record<string, boolean> = {}
+        for (const platform of SOCIAL_PLATFORM_PROCESS) {
+          nextChecks[platform.id] = checks[platform.id] === true
+        }
+        setPlatformChecks(nextChecks)
+      } catch {
+        /* optional until first save */
       }
     } catch (e) {
       setError(
@@ -208,10 +239,35 @@ export default function AdminCampaignsSection() {
       setMsg(createdMessage)
       setNewDetails("")
       setNewBudgetUsd("")
+      setCreateFormOpen(false)
+      setDetailOpen(false)
       await load()
       if (data?.id) setSelectedId(String(data.id))
     } catch (e) {
       setError(e instanceof Error ? e.message : "Create failed.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function saveSocialOps() {
+    if (!supabase) return
+    setBusy(true)
+    setError("")
+    setMsg("")
+    try {
+      const { error: upErr } = await supabase.from("platform_settings").upsert(
+        {
+          key: "social_platform_ops_v1",
+          value: { notes: platformNotes, checks: platformChecks, updated_at: new Date().toISOString() },
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "key" },
+      )
+      if (upErr) throw upErr
+      setMsg("Social platform access checklist saved.")
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save social checklist.")
     } finally {
       setBusy(false)
     }
@@ -518,7 +574,10 @@ export default function AdminCampaignsSection() {
         <span style={{ fontSize: 13, fontWeight: 800, color: theme.text }}>Client campaign requests</span>
         <select
           value={selectedId}
-          onChange={(e) => setSelectedId(e.target.value)}
+          onChange={(e) => {
+            setSelectedId(e.target.value)
+            setDetailOpen(false)
+          }}
           style={{ ...theme.formInput, maxWidth: 720 }}
         >
           <option value="">Select a campaign…</option>
@@ -531,7 +590,33 @@ export default function AdminCampaignsSection() {
       </label>
 
       {selected ? (
-        <div style={{ display: "grid", gap: 14, padding: 16, border: `1px solid ${theme.border}`, borderRadius: 12, background: "#fff" }}>
+        <div style={{ border: `1px solid ${theme.border}`, borderRadius: 12, background: "#fff", overflow: "hidden" }}>
+          <button
+            type="button"
+            onClick={() => setDetailOpen((v) => !v)}
+            style={{
+              width: "100%",
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 12,
+              alignItems: "center",
+              padding: "12px 16px",
+              border: "none",
+              background: "#f8fafc",
+              cursor: "pointer",
+              textAlign: "left",
+            }}
+          >
+            <div>
+              <div style={{ fontWeight: 900, color: theme.text }}>{selected.name}</div>
+              <div style={{ marginTop: 3, fontSize: 12, color: "#64748b" }}>
+                {selected.status} · Due {formatUsdFromCents(adBalanceDueCents(selected))} · click to {detailOpen ? "minimize" : "expand"}
+              </div>
+            </div>
+            <span style={{ color: "#94a3b8" }}>{detailOpen ? "▲" : "▼"}</span>
+          </button>
+          {detailOpen ? (
+        <div style={{ display: "grid", gap: 14, padding: 16 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
             <Stat label="Requested" value={formatUsdFromCents(selected.requested_budget_cents)} />
             <Stat label="Spent" value={formatUsdFromCents(selected.spent_cents)} />
@@ -660,11 +745,32 @@ export default function AdminCampaignsSection() {
             </div>
           ) : null}
         </div>
+          ) : null}
+        </div>
       ) : null}
 
-      {/* Create new */}
-      <div style={{ display: "grid", gap: 10, padding: 16, border: `1px dashed ${theme.border}`, borderRadius: 12, background: "#f8fafc" }}>
-        <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>New client request</h3>
+      <div style={{ border: `1px dashed ${theme.border}`, borderRadius: 12, background: "#f8fafc", overflow: "hidden" }}>
+        <button
+          type="button"
+          onClick={() => setCreateFormOpen((v) => !v)}
+          style={{
+            width: "100%",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            padding: "12px 16px",
+            border: "none",
+            background: "transparent",
+            cursor: "pointer",
+            fontWeight: 800,
+            color: theme.text,
+          }}
+        >
+          <span>New client request</span>
+          <span style={{ color: "#94a3b8", fontWeight: 600 }}>{createFormOpen ? "Minimize ▲" : "Expand ▼"}</span>
+        </button>
+        {createFormOpen ? (
+      <div style={{ display: "grid", gap: 10, padding: "0 16px 16px" }}>
         <label style={{ display: "grid", gap: 4 }}>
           <span style={labelStyle}>Client</span>
           <select value={newProfileId} onChange={(e) => setNewProfileId(e.target.value)} style={theme.formInput}>
@@ -717,7 +823,101 @@ export default function AdminCampaignsSection() {
           Create request
         </button>
       </div>
+        ) : null}
+      </div>
 
+      <div style={{ border: `1px solid ${theme.border}`, borderRadius: 12, background: "#fff", overflow: "hidden" }}>
+        <button
+          type="button"
+          onClick={() => setPlatformsOpen((v) => !v)}
+          style={{
+            width: "100%",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            padding: "12px 16px",
+            border: "none",
+            background: "#eff6ff",
+            cursor: "pointer",
+            fontWeight: 800,
+            color: theme.text,
+            textAlign: "left",
+          }}
+        >
+          <span>Social platform access &amp; automation process</span>
+          <span style={{ color: "#94a3b8" }}>{platformsOpen ? "▲" : "▼"}</span>
+        </button>
+        {platformsOpen ? (
+          <div style={{ display: "grid", gap: 12, padding: 16 }}>
+            <p style={{ margin: 0, fontSize: 13, color: "#475569", lineHeight: 1.55 }}>
+              Yes — to automate Meta, TikTok, LinkedIn, and X you need <strong>Tradesman-owned Business / Ads logins</strong>{" "}
+              and/or <strong>partner access</strong> to each client’s accounts, plus <strong>server-side API credentials</strong>{" "}
+              (never in the browser). Until those APIs are wired, use this checklist and run spend manually in each Ads Manager,
+              then log it on the campaign above.
+            </p>
+            {SOCIAL_PLATFORM_PROCESS.map((platform) => (
+              <div key={platform.id} style={{ padding: 12, borderRadius: 10, border: `1px solid ${theme.border}`, background: "#f8fafc" }}>
+                <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontWeight: 800, color: theme.text }}>
+                  <input
+                    type="checkbox"
+                    checked={platformChecks[platform.id] === true}
+                    onChange={(e) => setPlatformChecks((prev) => ({ ...prev, [platform.id]: e.target.checked }))}
+                    style={{ marginTop: 3 }}
+                  />
+                  <span>{platform.label}</span>
+                </label>
+                <p style={{ margin: "8px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                  <strong>Access:</strong> {platform.needs}
+                </p>
+                <p style={{ margin: "4px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                  <strong>Automate:</strong> {platform.automate}
+                </p>
+                <ol style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 12, color: "#334155", lineHeight: 1.45 }}>
+                  {platform.steps.map((step) => (
+                    <li key={step}>{step}</li>
+                  ))}
+                </ol>
+              </div>
+            ))}
+            <label style={{ display: "grid", gap: 4 }}>
+              <span style={labelStyle}>Ops notes (Business Manager IDs, who owns tokens, blockers)</span>
+              <textarea
+                value={platformNotes}
+                onChange={(e) => setPlatformNotes(e.target.value)}
+                rows={4}
+                style={{ ...theme.formInput, resize: "vertical" }}
+                placeholder="Example: Meta BM #… verified; TikTok BC pending; X Ads API waitlist…"
+              />
+            </label>
+            <button type="button" onClick={() => void saveSocialOps()} disabled={busy} style={primaryBtn}>
+              Save access checklist
+            </button>
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ border: `1px solid ${theme.border}`, borderRadius: 12, overflow: "hidden" }}>
+        <button
+          type="button"
+          onClick={() => setBannerOpen((v) => !v)}
+          style={{
+            width: "100%",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            padding: "12px 16px",
+            border: "none",
+            background: "#fff7ed",
+            cursor: "pointer",
+            fontWeight: 800,
+            color: theme.text,
+          }}
+        >
+          <span>Social banner builder</span>
+          <span style={{ color: "#94a3b8" }}>{bannerOpen ? "Minimize ▲" : "Expand ▼"}</span>
+        </button>
+        {bannerOpen ? (
+          <div style={{ padding: 12 }}>
       <SocialBannerBuilder
         seed={
           selected
@@ -729,6 +929,9 @@ export default function AdminCampaignsSection() {
             : null
         }
       />
+          </div>
+        ) : null}
+      </div>
     </div>
   )
 }
