@@ -7,6 +7,7 @@
  * POST /api/platform-tools?__route=notify-admin-verified-signup  (Bearer jwt; merged route — saves a Vercel function slot)
  * POST /api/platform-tools?__route=notify-client-sms-disclosure  (Bearer jwt; one-time SMS disclosure email after email verify)
  * POST /api/platform-tools?__route=business-profile-access  (Bearer jwt; client access update or admin confirmation)
+ * POST /api/platform-tools?__route=meta-business  (Bearer jwt; admin-only Meta assets, publishing, campaigns, insights)
  * POST /api/platform-tools?__route=billing-portal-config  — Helcim pay URL from Vercel env (rewrite: /api/billing-portal-config)
  * POST /api/platform-tools?__route=ai-summarize-customer-event — AI summary for communication up to an event (Bearer JWT)
  * POST /api/platform-tools?__route=platform-assistant-route — Phase 2 LLM router for platform assistant (Bearer JWT)
@@ -44,6 +45,7 @@ import { handleSendOnboardingWelcome } from "./_sendOnboardingWelcomeHandler.js"
 import { handleNotifyAdminSupportTicket } from "./_notifyAdminSupportTicket.js"
 import { handleNotifyClientSmsDisclosure } from "./_clientPostVerifySmsDisclosureEmail.js"
 import { handleBusinessProfileAccess } from "./_businessProfileAccess.js"
+import { handleMetaBusiness } from "./_metaBusiness.js"
 import { handleRecordOpsCustomerEvent } from "./_recordOpsCustomerEvent.js"
 import {
   handlePlatformEmailDomainClaim,
@@ -1994,6 +1996,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     }
     if (route === "business-profile-access") {
       await handleBusinessProfileAccess(req, res)
+      return
+    }
+    if (route === "meta-business") {
+      await handleMetaBusiness(req, res)
       return
     }
     if (route === "platform-email-domain-register") {

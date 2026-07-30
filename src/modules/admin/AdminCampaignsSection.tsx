@@ -36,6 +36,7 @@ import { GROWTH_PROFILE_PLATFORM_DEFS } from "../../lib/growthProfileGrading"
 import PlatformBadge from "../../components/PlatformBadge"
 import { mergeBillingIntoProfileMetadata, parseBillingMetadata } from "../../lib/billingProfileMetadata"
 import SocialBannerBuilder from "./SocialBannerBuilder"
+import MetaBusinessPanel from "./MetaBusinessPanel"
 
 type ClientOpt = {
   id: string
@@ -623,6 +624,8 @@ export default function AdminCampaignsSection() {
           Import submitted Growth campaigns
         </button>
       </div>
+
+      <MetaBusinessPanel clients={clients} campaigns={campaigns} onChanged={load} />
 
       {profileAccessAlerts.length > 0 ? (
         <section style={{ border: "1px solid #bfdbfe", borderRadius: 12, background: "#eff6ff", padding: 14 }}>

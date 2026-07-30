@@ -72,6 +72,10 @@
       "destination": "/api/platform-tools?__route=business-profile-access"
     },
     {
+      "source": "/api/meta-business",
+      "destination": "/api/platform-tools?__route=meta-business"
+    },
+    {
       "source": "/api/billing-portal-config",
       "destination": "/api/platform-tools?__route=billing-portal-config"
     },
