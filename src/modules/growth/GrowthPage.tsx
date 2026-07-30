@@ -25,6 +25,11 @@ import {
 import { mergeSocialPresenceIntoMetadata, readSocialPresenceFromMetadata } from "../../lib/socialPresenceSync"
 import { GROWTH_PROFILE_PLATFORM_DEFS, gradeGrowthProfiles, gradesToRecord } from "../../lib/growthProfileGrading"
 import {
+  BUSINESS_PROFILE_ACCESS_GUIDE,
+  BUSINESS_PROFILE_ACCESS_INTRO,
+  TRADESMAN_ACCESS_INVITE_EMAIL,
+} from "../../lib/businessProfileAccessGuide"
+import {
   AD_CAMPAIGN_FEE_DISCLOSURE,
   AD_CAMPAIGN_SPEND_DISCLAIMER,
   adCampaignProcessingFeeCents,
@@ -425,12 +430,16 @@ function ProfilesSection({
   onGrade: () => void
   grading: boolean
 }) {
+  const [accessGuideOpen, setAccessGuideOpen] = useState(true)
+  const [openPlatformId, setOpenPlatformId] = useState<string | null>("google")
   const onPatch = (patch: Partial<GrowthModuleDoc>) => updateDoc(patch)
   return (
+    <div style={{ display: "grid", gap: 14 }}>
     <div style={panelStyle}>
       <h2 style={h2}>Business profiles</h2>
       <p style={p}>
         Shared with <strong>MyT → Business profile / web address</strong>. Update Facebook or Instagram here or there — they stay in sync.
+        After you save each URL, use the access guide below to invite Tradesman as a Manager on the platforms you want us to run.
       </p>
       <label style={labelStyle}>
         Business name (public)
@@ -477,6 +486,125 @@ function ProfilesSection({
           {grading ? "Grading…" : "Grade visibility"}
         </button>
       </div>
+    </div>
+
+    <div style={{ ...panelStyle, padding: 0, overflow: "hidden" }}>
+      <button
+        type="button"
+        onClick={() => setAccessGuideOpen((v) => !v)}
+        style={{
+          width: "100%",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 12,
+          padding: "14px 16px",
+          border: "none",
+          background: "#eff6ff",
+          cursor: "pointer",
+          textAlign: "left",
+        }}
+      >
+        <div>
+          <div style={{ fontWeight: 900, color: theme.text, fontSize: 16 }}>{BUSINESS_PROFILE_ACCESS_INTRO.title}</div>
+          <div style={{ marginTop: 4, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+            Step-by-step invites for Google, Meta, LinkedIn, Yelp, TikTok, and X — keep Ownership, grant Manager access.
+          </div>
+        </div>
+        <span style={{ color: "#94a3b8", flexShrink: 0 }}>{accessGuideOpen ? "▲" : "▼"}</span>
+      </button>
+
+      {accessGuideOpen ? (
+        <div style={{ padding: 16, display: "grid", gap: 14 }}>
+          <p style={{ margin: 0, fontSize: 13, color: "#334155", lineHeight: 1.55 }}>{BUSINESS_PROFILE_ACCESS_INTRO.summary}</p>
+          <div
+            style={{
+              padding: 12,
+              borderRadius: 10,
+              border: "1px solid #bfdbfe",
+              background: "#f8fafc",
+              fontSize: 13,
+              color: theme.text,
+              lineHeight: 1.5,
+            }}
+          >
+            <strong>Invite email:</strong>{" "}
+            <code style={{ fontSize: 12 }}>{TRADESMAN_ACCESS_INVITE_EMAIL}</code>
+            <span style={{ color: "#64748b" }}> (or the email your Tradesman contact provides)</span>
+          </div>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 800, color: "#334155", marginBottom: 6 }}>Quick checklist</div>
+            <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: "#475569", lineHeight: 1.55 }}>
+              {BUSINESS_PROFILE_ACCESS_INTRO.checklist.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ol>
+          </div>
+
+          <div style={{ display: "grid", gap: 8 }}>
+            {BUSINESS_PROFILE_ACCESS_GUIDE.map((platform) => {
+              const open = openPlatformId === platform.id
+              return (
+                <div key={platform.id} style={{ border: `1px solid ${theme.border}`, borderRadius: 10, overflow: "hidden", background: "#fff" }}>
+                  <button
+                    type="button"
+                    onClick={() => setOpenPlatformId(open ? null : platform.id)}
+                    style={{
+                      width: "100%",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "11px 13px",
+                      border: "none",
+                      background: open ? "#fff7ed" : "#fff",
+                      cursor: "pointer",
+                      textAlign: "left",
+                      fontWeight: 800,
+                      color: theme.text,
+                    }}
+                  >
+                    <span>{platform.label}</span>
+                    <span style={{ color: "#94a3b8", fontWeight: 600 }}>{open ? "Hide ▲" : "How to invite ▼"}</span>
+                  </button>
+                  {open ? (
+                    <div style={{ padding: "0 13px 13px", display: "grid", gap: 8, borderTop: `1px solid ${theme.border}` }}>
+                      <p style={{ margin: "10px 0 0", fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
+                        <strong>Why:</strong> {platform.why}
+                      </p>
+                      <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                        <strong>Where:</strong> {platform.inviteTarget}
+                      </p>
+                      <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: "#334155", lineHeight: 1.55 }}>
+                        {platform.steps.map((step) => (
+                          <li key={step}>{step}</li>
+                        ))}
+                      </ol>
+                      {platform.notes ? (
+                        <p
+                          style={{
+                            margin: 0,
+                            padding: 10,
+                            borderRadius: 8,
+                            background: "#fff7ed",
+                            border: "1px solid #fed7aa",
+                            color: "#9a3412",
+                            fontSize: 12,
+                            lineHeight: 1.45,
+                          }}
+                        >
+                          {platform.notes}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
     </div>
   )
 }
