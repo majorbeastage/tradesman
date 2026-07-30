@@ -39,7 +39,7 @@ export const BUSINESS_PROFILE_ACCESS_GUIDE: BusinessProfileAccessGuide[] = [
       "Select your location → Users (or People and access).",
       `Add ${TRADESMAN_ACCESS_INVITE_EMAIL} (or your assigned Tradesman marketing email).`,
       "Role: Managers (can edit listing). Owners keep full control.",
-      "Paste your public Maps / g.page link in Business profiles above and check “I manage this Google Business listing” when you control the listing.",
+      "Paste your public Maps / g.page link in Business profiles above.",
       "Accept any verification prompts Google sends to the Owner account.",
     ],
     notes: "Do not transfer Ownership unless you explicitly want Tradesman to own the listing.",

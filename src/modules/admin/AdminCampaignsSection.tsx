@@ -24,11 +24,25 @@ import {
   type AdCampaignStatus,
   type AdSpendEntry,
 } from "../../lib/adCampaigns"
-import { GROWTH_METADATA_KEY, summarizeCampaignTargetAreas, type GrowthModuleDoc } from "../../lib/growthModule"
+import {
+  GROWTH_METADATA_KEY,
+  loadGrowthDocFromProfileMetadata,
+  summarizeCampaignTargetAreas,
+  type BusinessProfileAccessUpdate,
+  type GrowthModuleDoc,
+  type GrowthProfilePlatformId,
+} from "../../lib/growthModule"
+import { GROWTH_PROFILE_PLATFORM_DEFS } from "../../lib/growthProfileGrading"
+import PlatformBadge from "../../components/PlatformBadge"
 import { mergeBillingIntoProfileMetadata, parseBillingMetadata } from "../../lib/billingProfileMetadata"
 import SocialBannerBuilder from "./SocialBannerBuilder"
 
-type ClientOpt = { id: string; label: string; email: string | null }
+type ClientOpt = {
+  id: string
+  label: string
+  email: string | null
+  profileAccessUpdates: BusinessProfileAccessUpdate[]
+}
 
 function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10)
@@ -51,6 +65,7 @@ export default function AdminCampaignsSection() {
   const [bannerOpen, setBannerOpen] = useState(false)
   const [platformNotes, setPlatformNotes] = useState("")
   const [platformChecks, setPlatformChecks] = useState<Record<string, boolean>>({})
+  const [accessConfirmChecks, setAccessConfirmChecks] = useState<Record<string, GrowthProfilePlatformId[]>>({})
 
   // New campaign form
   const [newProfileId, setNewProfileId] = useState("")
@@ -72,6 +87,13 @@ export default function AdminCampaignsSection() {
   const [spendDate, setSpendDate] = useState(todayIsoDate())
 
   const selected = useMemo(() => campaigns.find((c) => c.id === selectedId) ?? null, [campaigns, selectedId])
+  const profileAccessAlerts = useMemo(
+    () =>
+      clients
+        .flatMap((client) => client.profileAccessUpdates.map((update) => ({ client, update })))
+        .sort((a, b) => b.update.createdAt.localeCompare(a.update.createdAt)),
+    [clients],
+  )
 
   async function sendClientApprovalRequest(campaignId: string) {
     if (!supabase) throw new Error("Supabase is not configured.")
@@ -109,7 +131,7 @@ export default function AdminCampaignsSection() {
       const { data: list } = await supabase.from("admin_users_list").select("id, email")
       const { data: profiles, error: pErr } = await supabase
         .from("profiles")
-        .select("id, display_name, role, account_disabled")
+        .select("id, display_name, role, account_disabled, metadata")
         .order("display_name", { ascending: true })
       if (pErr) throw pErr
       const emailById = new Map((list ?? []).map((r: { id: string; email?: string }) => [r.id, r.email ?? null]))
@@ -119,6 +141,7 @@ export default function AdminCampaignsSection() {
           id: p.id,
           email: emailById.get(p.id) ?? null,
           label: `${p.display_name?.trim() || "Unnamed"}${p.role ? ` (${String(p.role).replace(/_/g, " ")})` : ""}${emailById.get(p.id) ? ` · ${emailById.get(p.id)}` : ""}`,
+          profileAccessUpdates: loadGrowthDocFromProfileMetadata(p.metadata).profileAccessUpdates ?? [],
         }))
       setClients(opts)
 
@@ -165,6 +188,31 @@ export default function AdminCampaignsSection() {
       setLoading(false)
     }
   }, [selectedId])
+
+  async function confirmProfileAccess(client: ClientOpt, update: BusinessProfileAccessUpdate) {
+    if (!supabase) return
+    setBusy(true)
+    setError("")
+    setMsg("")
+    try {
+      const token = (await supabase.auth.getSession()).data.session?.access_token
+      if (!token) throw new Error("Sign in again to confirm profile access.")
+      const platforms = accessConfirmChecks[update.id] ?? update.adminConfirmedPlatforms ?? update.platforms
+      const response = await fetch("/api/business-profile-access", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "admin_confirm", profileId: client.id, updateId: update.id, platforms }),
+      })
+      const payload = (await response.json().catch(() => ({}))) as { error?: string }
+      if (!response.ok) throw new Error(payload.error || `Access confirmation failed (${response.status}).`)
+      setMsg(`Confirmed business profile access for ${client.label.split(" · ")[0]}.`)
+      await load()
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not confirm profile access.")
+    } finally {
+      setBusy(false)
+    }
+  }
 
   useEffect(() => {
     void load()
@@ -575,6 +623,94 @@ export default function AdminCampaignsSection() {
           Import submitted Growth campaigns
         </button>
       </div>
+
+      {profileAccessAlerts.length > 0 ? (
+        <section style={{ border: "1px solid #bfdbfe", borderRadius: 12, background: "#eff6ff", padding: 14 }}>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 900, color: theme.text }}>Business profile access updates</h3>
+          <p style={{ margin: "5px 0 12px", fontSize: 12, color: "#475569" }}>
+            Client help requests and access grants from Growth → Business profiles.
+          </p>
+          <div style={{ display: "grid", gap: 10 }}>
+            {profileAccessAlerts.map(({ client, update }) => {
+              const checks = accessConfirmChecks[update.id] ?? update.adminConfirmedPlatforms ?? update.platforms
+              const confirmed = update.status === "admin_confirmed"
+              return (
+                <div key={`${client.id}-${update.id}`} style={{ padding: 12, borderRadius: 10, border: `1px solid ${confirmed ? "#86efac" : "#fdba74"}`, background: "#fff" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 10, flexWrap: "wrap" }}>
+                    <div>
+                      <div style={{ fontWeight: 900, color: theme.text }}>{client.label}</div>
+                      <div style={{ marginTop: 3, fontSize: 12, color: "#64748b" }}>
+                        {update.kind === "request_help" ? "Requested help" : "Granted access — awaiting confirmation"} ·{" "}
+                        {new Date(update.createdAt).toLocaleString()}
+                      </div>
+                    </div>
+                    <strong style={{ fontSize: 11, color: confirmed ? "#15803d" : "#c2410c", textTransform: "uppercase" }}>
+                      {confirmed ? "Admin confirmed" : "Needs review"}
+                    </strong>
+                  </div>
+                  {update.note ? <p style={{ margin: "8px 0 0", whiteSpace: "pre-wrap", fontSize: 12, color: "#334155" }}>{update.note}</p> : null}
+                  {update.kind === "granted_access" ? (
+                    <div style={{ marginTop: 10 }}>
+                      <div style={{ fontSize: 12, fontWeight: 800, color: theme.text, marginBottom: 6 }}>
+                        Confirm outlets with working access
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(165px, 1fr))", gap: 7 }}>
+                        {GROWTH_PROFILE_PLATFORM_DEFS.map((platform) => {
+                          const clientSent = update.platforms.includes(platform.id)
+                          return (
+                            <label
+                              key={platform.id}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 7,
+                                opacity: clientSent || checks.includes(platform.id) ? 1 : 0.55,
+                                fontSize: 12,
+                                color: theme.text,
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                disabled={confirmed}
+                                checked={checks.includes(platform.id)}
+                                onChange={() =>
+                                  setAccessConfirmChecks((current) => ({
+                                    ...current,
+                                    [update.id]: checks.includes(platform.id)
+                                      ? checks.filter((id) => id !== platform.id)
+                                      : [...checks, platform.id],
+                                  }))
+                                }
+                              />
+                              <PlatformBadge id={platform.id} size={18} />
+                              {platform.label}
+                              {clientSent ? <span title="Client reported access sent">• sent</span> : null}
+                            </label>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
+                  {!confirmed ? (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void confirmProfileAccess(client, update)}
+                      style={{ ...primaryBtn, marginTop: 10 }}
+                    >
+                      {update.kind === "request_help" ? "Mark help request reviewed" : "Confirm selected access"}
+                    </button>
+                  ) : update.adminConfirmedAt ? (
+                    <div style={{ marginTop: 8, fontSize: 11, color: "#15803d" }}>
+                      Confirmed {new Date(update.adminConfirmedAt).toLocaleString()}
+                    </div>
+                  ) : null}
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      ) : null}
 
       {/* Client / campaign dropdown */}
       <label style={{ display: "grid", gap: 6 }}>

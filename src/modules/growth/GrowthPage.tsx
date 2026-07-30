@@ -14,6 +14,7 @@ import {
   loadGrowthDocFromProfileMetadata,
   mergeGrowthModuleMetadata,
   mergeProfileChanges,
+  type BusinessProfileAccessUpdate,
   type GrowthCampaignDraft,
   type GrowthCampaignMetrics,
   type GrowthCampaignSnapshot,
@@ -433,7 +434,49 @@ function ProfilesSection({
 }) {
   const [accessGuideOpen, setAccessGuideOpen] = useState(true)
   const [openPlatformId, setOpenPlatformId] = useState<string | null>("google")
+  const [accessAction, setAccessAction] = useState<"request_help" | "granted_access" | null>(null)
+  const [accessPlatforms, setAccessPlatforms] = useState<GrowthProfilePlatformId[]>([])
+  const [accessNote, setAccessNote] = useState("")
+  const [accessBusy, setAccessBusy] = useState(false)
+  const [accessMessage, setAccessMessage] = useState("")
   const onPatch = (patch: Partial<GrowthModuleDoc>) => updateDoc(patch)
+
+  const sendAccessUpdate = async () => {
+    if (!supabase || !accessAction) return
+    if (accessAction === "granted_access" && accessPlatforms.length === 0) {
+      setAccessMessage("Select at least one outlet where you granted access.")
+      return
+    }
+    setAccessBusy(true)
+    setAccessMessage("")
+    try {
+      const token = (await supabase.auth.getSession()).data.session?.access_token
+      if (!token) throw new Error("Sign in again to notify Admin.")
+      const response = await fetch("/api/business-profile-access", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ action: accessAction, platforms: accessPlatforms, note: accessNote }),
+      })
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string
+        profileAccessUpdates?: BusinessProfileAccessUpdate[]
+      }
+      if (!response.ok) throw new Error(payload.error || `Admin notification failed (${response.status}).`)
+      if (payload.profileAccessUpdates) onPatch({ profileAccessUpdates: payload.profileAccessUpdates })
+      setAccessMessage(
+        accessAction === "request_help"
+          ? "Your help request was sent to Tradesman Admin."
+          : "Admin was notified and will confirm the selected access.",
+      )
+      setAccessAction(null)
+      setAccessPlatforms([])
+      setAccessNote("")
+    } catch (error) {
+      setAccessMessage(error instanceof Error ? error.message : "Could not notify Admin.")
+    } finally {
+      setAccessBusy(false)
+    }
+  }
   return (
     <div style={{ display: "grid", gap: 14 }}>
     <div style={panelStyle}>
@@ -478,10 +521,6 @@ function ProfilesSection({
           />
         </label>
       ))}
-      <label style={{ ...labelStyle, marginTop: 12, display: "flex", flexDirection: "row", alignItems: "center", gap: 8 }}>
-        <input type="checkbox" checked={doc.gbpConnected === true} onChange={(e) => onPatch({ gbpConnected: e.target.checked })} />
-        I manage this Google Business listing
-      </label>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 14 }}>
         <button type="button" style={primaryBtn} onClick={onSave}>
           Save profiles
@@ -608,6 +647,92 @@ function ProfilesSection({
                 </div>
               )
             })}
+          </div>
+
+          <div
+            style={{
+              marginTop: 4,
+              padding: 14,
+              borderRadius: 10,
+              border: "1px solid #bfdbfe",
+              background: "#eff6ff",
+            }}
+          >
+            <div style={{ fontWeight: 900, color: theme.text, fontSize: 14 }}>Send an update to Tradesman Admin</div>
+            <p style={{ margin: "5px 0 10px", color: "#475569", fontSize: 12, lineHeight: 1.5 }}>
+              Ask for help with an access step, or tell us which outlets you granted so Admin can verify them.
+            </p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => setAccessAction("request_help")}
+                style={accessAction === "request_help" ? primaryBtn : secondaryBtn}
+              >
+                Requesting help
+              </button>
+              <button
+                type="button"
+                onClick={() => setAccessAction("granted_access")}
+                style={accessAction === "granted_access" ? primaryBtn : secondaryBtn}
+              >
+                Granted Access — Send to Admin to Confirm
+              </button>
+            </div>
+
+            {accessAction === "granted_access" ? (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: theme.text, marginBottom: 7 }}>
+                  Select every outlet where access was sent
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 7 }}>
+                  {GROWTH_PROFILE_PLATFORM_DEFS.map((platform) => (
+                    <label key={platform.id} style={{ display: "flex", alignItems: "center", gap: 7, color: theme.text, fontSize: 12 }}>
+                      <input
+                        type="checkbox"
+                        checked={accessPlatforms.includes(platform.id)}
+                        onChange={() =>
+                          setAccessPlatforms((current) =>
+                            current.includes(platform.id)
+                              ? current.filter((id) => id !== platform.id)
+                              : [...current, platform.id],
+                          )
+                        }
+                      />
+                      <PlatformBadge id={platform.id} size={18} />
+                      {platform.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {accessAction ? (
+              <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+                <textarea
+                  value={accessNote}
+                  onChange={(event) => setAccessNote(event.target.value)}
+                  rows={2}
+                  placeholder={accessAction === "request_help" ? "Tell Admin where you are stuck…" : "Optional note for Admin…"}
+                  style={{ ...inputStyle, resize: "vertical" }}
+                />
+                <button type="button" disabled={accessBusy} onClick={() => void sendAccessUpdate()} style={{ ...primaryBtn, justifySelf: "start" }}>
+                  {accessBusy ? "Sending…" : accessAction === "request_help" ? "Send help request" : "Send access update"}
+                </button>
+              </div>
+            ) : null}
+            {accessMessage ? (
+              <p
+                role="status"
+                style={{
+                  margin: "10px 0 0",
+                  color: accessMessage.toLowerCase().includes("sent") || accessMessage.toLowerCase().includes("notified") ? "#15803d" : "#b91c1c",
+                  fontSize: 12,
+                  fontWeight: 700,
+                }}
+              >
+                {accessMessage}
+              </p>
+            ) : null}
           </div>
         </div>
       ) : null}

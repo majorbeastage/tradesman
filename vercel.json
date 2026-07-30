@@ -68,6 +68,10 @@
       "destination": "/api/platform-tools?__route=notify-client-sms-disclosure"
     },
     {
+      "source": "/api/business-profile-access",
+      "destination": "/api/platform-tools?__route=business-profile-access"
+    },
+    {
       "source": "/api/billing-portal-config",
       "destination": "/api/platform-tools?__route=billing-portal-config"
     },

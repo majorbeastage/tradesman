@@ -102,6 +102,19 @@ export type GrowthProfileGrade = {
   gaps: string[]
 }
 
+export type BusinessProfileAccessUpdate = {
+  id: string
+  kind: "request_help" | "granted_access"
+  status: "help_requested" | "access_granted" | "admin_confirmed"
+  platforms: GrowthProfilePlatformId[]
+  note?: string
+  createdAt: string
+  createdBy: string
+  adminConfirmedAt?: string
+  adminConfirmedBy?: string
+  adminConfirmedPlatforms?: GrowthProfilePlatformId[]
+}
+
 export type GrowthProfileChangeEntry = {
   id: string
   at: string
@@ -154,6 +167,7 @@ export type GrowthModuleDoc = {
   gbpBusinessName?: string
   gbpLocation?: string
   presencePages?: GrowthPresencePages
+  profileAccessUpdates?: BusinessProfileAccessUpdate[]
   profileGrades?: Partial<Record<GrowthProfilePlatformId, GrowthProfileGrade>>
   lastGradedAt?: string
   marketingBudget?: GrowthMarketingBudget
@@ -194,6 +208,9 @@ export function loadGrowthModuleFromMetadata(raw: unknown): GrowthModuleDoc {
       typeof o.presencePages === "object" && o.presencePages && !Array.isArray(o.presencePages)
         ? (o.presencePages as GrowthPresencePages)
         : undefined,
+    profileAccessUpdates: Array.isArray(o.profileAccessUpdates)
+      ? (o.profileAccessUpdates.filter((item) => item && typeof item === "object") as BusinessProfileAccessUpdate[])
+      : [],
     websiteHealthCheck:
       typeof o.websiteHealthCheck === "object" && o.websiteHealthCheck
         ? (o.websiteHealthCheck as WebsiteHealthCheckResult)
