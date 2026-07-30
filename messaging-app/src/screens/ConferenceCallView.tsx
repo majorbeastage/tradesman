@@ -353,81 +353,91 @@ export default function ConferenceCallView({
           }}
         >
           <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
-            <strong style={{ flex: 1, color: "#fff", fontSize: 14 }}>Add to call</strong>
+            <strong style={{ flex: 1, color: "#fff", fontSize: 14 }}>Team call vs phone call</strong>
             <button type="button" onClick={() => setAddOpen(false)} style={{ border: "none", background: "transparent", color: "#94a3b8", fontSize: 18, cursor: "pointer" }}>
               ×
             </button>
           </div>
-          {addablePeers.length === 0 ? (
-            <div style={{ color: "#94a3b8", fontSize: 13, padding: 8 }}>Everyone on your team is already on this call (or no teammates loaded).</div>
-          ) : (
-            addablePeers.map((p) => {
-              const on = addSel.has(p.id)
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => toggleAdd(p.id)}
-                  style={{
-                    width: "100%",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    padding: "10px 8px",
-                    border: "none",
-                    borderBottom: "1px solid #334155",
-                    background: on ? "#1d4ed8" : "transparent",
-                    color: "#fff",
-                    cursor: "pointer",
-                    textAlign: "left",
-                    fontWeight: 700,
-                    fontSize: 14,
-                  }}
-                >
-                  <span
-                    style={{
-                      width: 18,
-                      height: 18,
-                      borderRadius: 4,
-                      border: `2px solid ${on ? "#fff" : "#64748b"}`,
-                      background: on ? "#fff" : "transparent",
-                      color: "#1d4ed8",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: 12,
-                    }}
-                  >
-                    {on ? "✓" : ""}
-                  </span>
-                  {p.name}
-                </button>
-              )
-            })
-          )}
-          <button
-            type="button"
-            onClick={confirmAdd}
-            disabled={addSel.size === 0}
-            style={{
-              marginTop: 10,
-              width: "100%",
-              border: "none",
-              borderRadius: 10,
-              padding: "12px",
-              background: addSel.size ? "#f97316" : "#334155",
-              color: "#fff",
-              fontWeight: 800,
-              cursor: addSel.size ? "pointer" : "default",
-            }}
-          >
-            {addSel.size ? `Add (${addSel.size})` : "Select people"}
-          </button>
+          <p style={{ margin: "0 0 10px", color: "#94a3b8", fontSize: 12, lineHeight: 1.45 }}>
+            Team calls stay on Tradesman (invite below). Outside numbers use a separate Twilio business-line call — not mixed into this room.
+          </p>
+          {onInvitePeople ? (
+            <>
+              <div style={{ color: "#5eead4", fontSize: 11, fontWeight: 800, textTransform: "uppercase", marginBottom: 6 }}>Invite teammate · team call</div>
+              {addablePeers.length === 0 ? (
+                <div style={{ color: "#94a3b8", fontSize: 13, padding: 8 }}>Everyone on your team is already on this call (or no teammates loaded).</div>
+              ) : (
+                addablePeers.map((p) => {
+                  const on = addSel.has(p.id)
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => toggleAdd(p.id)}
+                      style={{
+                        width: "100%",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        padding: "10px 8px",
+                        border: "none",
+                        borderBottom: "1px solid #334155",
+                        background: on ? "#1d4ed8" : "transparent",
+                        color: "#fff",
+                        cursor: "pointer",
+                        textAlign: "left",
+                        fontWeight: 700,
+                        fontSize: 14,
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 18,
+                          height: 18,
+                          borderRadius: 4,
+                          border: `2px solid ${on ? "#fff" : "#64748b"}`,
+                          background: on ? "#fff" : "transparent",
+                          color: "#1d4ed8",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontSize: 12,
+                        }}
+                      >
+                        {on ? "✓" : ""}
+                      </span>
+                      {p.name}
+                    </button>
+                  )
+                })
+              )}
+              <button
+                type="button"
+                onClick={confirmAdd}
+                disabled={addSel.size === 0}
+                style={{
+                  marginTop: 10,
+                  width: "100%",
+                  border: "none",
+                  borderRadius: 10,
+                  padding: "12px",
+                  background: addSel.size ? "#f97316" : "#334155",
+                  color: "#fff",
+                  fontWeight: 800,
+                  cursor: addSel.size ? "pointer" : "default",
+                }}
+              >
+                {addSel.size ? `Invite (${addSel.size}) to team call` : "Select teammates"}
+              </button>
+            </>
+          ) : addablePeers.length === 0 ? (
+            <div style={{ color: "#94a3b8", fontSize: 13, padding: 8 }}>No teammates available to invite on this call.</div>
+          ) : null}
           {onStartSeparatePhoneCall ? (
             <div style={{ borderTop: "1px solid #334155", marginTop: 12, paddingTop: 12, display: "grid", gap: 8 }}>
-              <strong style={{ color: "#fdba74", fontSize: 13 }}>External phone number — separate call</strong>
+              <div style={{ color: "#fdba74", fontSize: 11, fontWeight: 800, textTransform: "uppercase" }}>External phone · Twilio call</div>
               <p style={{ margin: 0, color: "#cbd5e1", fontSize: 12, lineHeight: 1.45 }}>
-                Phone numbers cannot join this team call yet. This leaves the team call, then starts a separate business-line call.
+                Ends this team call, then starts a separate business-line phone call from your Tradesman number.
               </p>
               <input
                 type="tel"
@@ -443,7 +453,7 @@ export default function ConferenceCallView({
                 onClick={() => onStartSeparatePhoneCall(externalPhone)}
                 style={{ border: "none", borderRadius: 10, padding: "12px", background: externalPhoneValid ? "#b45309" : "#334155", color: "#fff", fontWeight: 800, cursor: externalPhoneValid ? "pointer" : "default" }}
               >
-                Leave team call &amp; call separately
+                Leave team call &amp; start phone call
               </button>
             </div>
           ) : null}
@@ -470,7 +480,7 @@ export default function ConferenceCallView({
           />
         ) : null}
         {(onInvitePeople && (teamPeers?.length ?? 0) > 0) || onStartSeparatePhoneCall ? (
-          <ControlBtn label="Add" sub="Person" onClick={() => setAddOpen((v) => !v)} active={addOpen} />
+          <ControlBtn label={addOpen ? "Close" : "Invite / phone"} sub="Team or Twilio" onClick={() => setAddOpen((v) => !v)} active={addOpen} />
         ) : null}
         {chat ? <ControlBtn label={showChat ? "Hide chat" : "Chat"} onClick={() => setShowChat((v) => !v)} active={showChat} /> : null}
         <ControlBtn label="Hang up" onClick={room.hangup} danger />

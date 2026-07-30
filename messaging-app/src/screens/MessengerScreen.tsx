@@ -430,7 +430,13 @@ export default function MessengerScreen({ me }: { me: string }) {
       room.setError("Enter a valid phone number.")
       return
     }
-    if (!window.confirm("This external number cannot join the team call. Leave the team call and start a separate business-line call?")) return
+    if (
+      !window.confirm(
+        "Team calls and phone calls stay on separate lanes.\n\nThis outside number cannot join the Tradesman team call. Leave the team call and start a separate Twilio business-line phone call?",
+      )
+    ) {
+      return
+    }
     room.hangup()
     setSelected(null)
     setTab("phone")
@@ -999,7 +1005,7 @@ export default function MessengerScreen({ me }: { me: string }) {
         {topNav()}
         <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "grid", gap: 12, alignContent: "start" }}>
           <p style={{ margin: 0, fontSize: 13, color: "var(--muted)", lineHeight: 1.5 }}>
-            Calls go out from your Tradesman Twilio number through this app (mic + speaker). Your personal phone is not dialed first.
+            External phone lane: calls go out from your Tradesman Twilio number through this app (mic + speaker). Team conferences stay inside chats and do not use Twilio.
           </p>
           {callActive ? (
             <InCallControls
@@ -1019,7 +1025,7 @@ export default function MessengerScreen({ me }: { me: string }) {
             <>
               {voice.error ? <p style={{ margin: 0, fontSize: 12, color: "#dc2626" }}>{voice.error}</p> : null}
               <p style={{ margin: 0, fontSize: 13, color: "var(--muted)", lineHeight: 1.5 }}>
-                Calls go out from your Tradesman Twilio number. Search a customer or type a number.
+                Search a customer or type a number for a Twilio business-line call (separate from team conferences).
               </p>
               <input
                 value={dialCustQuery}

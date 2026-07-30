@@ -300,12 +300,15 @@ export function ConferenceCallBody({
       {addOpen ? (
         <div style={{ border: `1px solid ${theme.border}`, borderRadius: 10, padding: 10, background: "#fff", display: "grid", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <strong style={{ flex: 1, fontSize: 13, color: "#0f172a" }}>Add to call</strong>
+            <strong style={{ flex: 1, fontSize: 13, color: "#0f172a" }}>Team call vs phone call</strong>
             <button type="button" onClick={() => setAddOpen(false)} style={{ border: "none", background: "transparent", color: "#64748b", cursor: "pointer", fontSize: 16 }}>×</button>
           </div>
+          <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.45 }}>
+            Team calls stay on Tradesman (invite teammates below). Outside phone numbers use a separate Twilio business-line call — they are not mixed into this room.
+          </p>
           {onInvitePeople ? (
             <>
-              <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase" }}>Teammates</div>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#0f766e", textTransform: "uppercase" }}>Invite teammate · team call</div>
               {addablePeers.length === 0 ? (
                 <div style={{ color: "#64748b", fontSize: 12 }}>No other teammates are available to invite.</div>
               ) : (
@@ -339,15 +342,15 @@ export function ConferenceCallBody({
                 }}
                 style={{ ...ctrlBtn, padding: "8px", border: "none", background: addSel.size ? theme.primary : "#cbd5e1", color: "#fff", cursor: addSel.size ? "pointer" : "default" }}
               >
-                {addSel.size ? `Invite ${addSel.size} teammate${addSel.size === 1 ? "" : "s"}` : "Select teammates"}
+                {addSel.size ? `Invite ${addSel.size} teammate${addSel.size === 1 ? "" : "s"} to team call` : "Select teammates"}
               </button>
             </>
           ) : null}
           {onStartSeparatePhoneCall ? (
             <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 8, display: "grid", gap: 6 }}>
-              <strong style={{ fontSize: 12, color: "#9a3412" }}>External phone number — separate call</strong>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#9a3412", textTransform: "uppercase" }}>External phone · Twilio call</div>
               <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
-                Phone numbers cannot join this team call yet. This leaves the team call, then starts a separate business-line call.
+                Ends this team call, then starts a separate business-line phone call from your Tradesman number.
               </p>
               <input
                 type="tel"
@@ -363,7 +366,7 @@ export function ConferenceCallBody({
                 onClick={() => onStartSeparatePhoneCall(externalPhone)}
                 style={{ ...ctrlBtn, padding: "8px", border: "none", background: externalPhoneValid ? "#b45309" : "#cbd5e1", color: "#fff", cursor: externalPhoneValid ? "pointer" : "default" }}
               >
-                Leave team call &amp; call separately
+                Leave team call &amp; start phone call
               </button>
             </div>
           ) : null}
@@ -409,7 +412,7 @@ export function ConferenceCallBody({
             onClick={() => setAddOpen((v) => !v)}
             style={{ ...ctrlBtn, flex: 1, minWidth: 70, background: addOpen ? "#fff7ed" : "#fff", color: "#0f172a", border: `1px solid ${theme.border}`, padding: "8px" }}
           >
-            Add
+            {addOpen ? "Close" : "Invite / phone"}
           </button>
         ) : null}
         <button type="button" onClick={room.hangup} style={{ ...ctrlBtn, flex: 1, minWidth: 70, background: "#dc2626", color: "#fff", border: "none", padding: "8px" }}>

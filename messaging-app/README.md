@@ -26,19 +26,25 @@ Working:
 - Calendar, activity, missed-call handling, availability, and Android native
   call-audio routing.
 
-### External numbers and team calls
+### Call lanes (intentional)
+
+Messaging uses **two separate lanes** — they are never mixed in one audio room:
+
+1. **Team call (internal)** — Tradesman WebRTC conference. Invite teammates mid-call.
+   No Twilio media cost.
+2. **Phone call (external)** — Twilio softphone / business-line dial to a customer or
+   outside number. Starts from the Phone tab, or from an in-call “Leave team call &
+   start phone call” action.
 
 An external phone number is **not** added to the WebRTC team conference. The
 current Twilio Voice API starts a separate PSTN softphone call and has no media
 gateway into the Supabase-signaled peer-to-peer room. The in-call UI therefore
-labels this action as separate, confirms it, leaves the team call, and then
-starts the business-line phone call.
+labels this action as a separate lane, confirms it, leaves the team call, and
+then starts the business-line phone call.
 
-A true shared PSTN/team conference requires an architectural decision and
-server-side implementation (for example, moving the room to Twilio Conference
-or adding an SFU/PSTN gateway), including participant lifecycle, auth, billing,
-recording/consent, and failure handling. Do not simulate this with two local
-audio sessions.
+A true shared PSTN/team conference (dial-in PIN, multi-staff + customer) would
+require Twilio Conference and is a separate product decision — not simulated by
+running two local audio sessions at once.
 
 ### Calling requires camera/mic permission (native)
 

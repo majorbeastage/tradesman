@@ -433,7 +433,13 @@ export default function MessengerWidget({ setPage }: Props) {
       return
     }
     const to = digits.length === 10 ? `+1${digits}` : `+${digits}`
-    if (!window.confirm("This external number cannot join the team call. Leave the team call and start a separate business-line call?")) return
+    if (
+      !window.confirm(
+        "Team calls and phone calls stay on separate lanes.\n\nThis outside number cannot join the Tradesman team call. Leave the team call and start a separate Twilio business-line phone call?",
+      )
+    ) {
+      return
+    }
     room.hangup()
     setView("dial")
     setDialNumber(rawPhone)
@@ -579,7 +585,7 @@ export default function MessengerWidget({ setPage }: Props) {
     ) : null
 
   const headerTitle =
-    view === "chat" ? (selectedThread ? threadTitle(selectedThread) : "Message") : view === "dial" ? "Dial out" : view === "new_group" ? "New group" : "Instant messaging"
+    view === "chat" ? (selectedThread ? threadTitle(selectedThread) : "Message") : view === "dial" ? "Phone call (Twilio)" : view === "new_group" ? "New group" : "Instant messaging"
 
   return (
     <div style={{ position: "fixed", right: 18, bottom: 80, zIndex: 12000 }}>
@@ -1047,7 +1053,7 @@ export default function MessengerWidget({ setPage }: Props) {
               ) : (
                 <>
                   <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-                    Call from this computer using your Tradesman business number. Search a customer or type a number.
+                    External phone lane: call from this computer on your Tradesman Twilio number. Team conferences stay in chat and do not use Twilio.
                   </p>
                   <input
                     value={dialCustQuery}
