@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-        <string>Tradesman</string>
+        <string>Tradesman Messaging</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -26,10 +26,10 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.tradesmanus.com</string>
+			<string>com.tradesmanus.messaging</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>tradesman</string>
+				<string>tradesmanmsg</string>
 			</array>
 		</dict>
 	</array>
@@ -58,15 +58,13 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Tradesman uses your location for dispatch radius, en-route customer updates, and team maps when you enable GPS in Account.</string>
-	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Optional background location for office manager live maps when enabled in settings.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Tradesman Messaging uses the camera for video calls with your team.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Tradesman Messaging uses the microphone for voice and video calls with your team.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
 	</array>
-	<key>NSUserNotificationsUsageDescription</key>
-	<string>Tradesman sends job updates and messages when you allow notifications.</string>
 </dict>
 </plist>

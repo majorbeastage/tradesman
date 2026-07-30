@@ -9,6 +9,7 @@ import {
 } from "../lib/capacitorMobile"
 import { initMessagingHandoffListener } from "../lib/messagingHandoff"
 import { flushPendingMessagingHandoff, initMainAppPushTapListener } from "../lib/mainAppPushTap"
+import { initNativeAuthLifecycle } from "../lib/nativeAuthLifecycle"
 
 /**
  * Native only: registers push token rows and (when GPS opt-in) periodically upserts user_last_locations.
@@ -33,6 +34,14 @@ export default function NativeMobilePipeline() {
     window.addEventListener("focus", onFocus)
     return () => window.removeEventListener("focus", onFocus)
   }, [loadMobilePrefs])
+
+  useEffect(() => {
+    let cleanup: (() => void) | undefined
+    void initNativeAuthLifecycle(supabase).then((fn) => {
+      cleanup = fn
+    })
+    return () => cleanup?.()
+  }, [])
 
   useEffect(() => {
     let cleanup: (() => void) | undefined

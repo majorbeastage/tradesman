@@ -20,8 +20,8 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Shared auto-login / dial handoff from the full Tradesman app:
-                 tradesmanmsg://auth#access_token=...&refresh_token=...&phone=...&label=... -->
+            <!-- Single-use auto-login / dial handoff from the full Tradesman app:
+                 tradesmanmsg://auth?code=...&phone=...&label=... -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />

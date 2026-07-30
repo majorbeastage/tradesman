@@ -1,7 +1,7 @@
 {
   "name": "tradesman-messaging",
   "private": true,
-  "version": "0.3.10",
+  "version": "0.3.11",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -24,7 +24,7 @@
     "@capacitor/android": "^8.3.0",
     "@capacitor/assets": "^3.0.5",
     "@capacitor/cli": "^8.3.0",
-    "@capacitor/ios": "^8.3.0",
+    "@capacitor/ios": "^8.4.2",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",

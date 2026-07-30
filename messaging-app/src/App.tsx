@@ -1,9 +1,13 @@
 import { useEffect, useState } from "react"
 import type { Session } from "@supabase/supabase-js"
+import { Capacitor } from "@capacitor/core"
+import { Preferences } from "@capacitor/preferences"
 import { supabase } from "./lib/supabaseClient"
 import { initSharedAuth } from "./lib/sharedAuth"
+import { requestTradesmanAppHandoff } from "./lib/openMainApp"
 import { initMessagingPushTapListener } from "./lib/pushTapHandler"
 import { initAndroidBackListener } from "./lib/androidBack"
+import { initNativeAuthLifecycle } from "./lib/nativeAuthLifecycle"
 import {
   heartbeatAppSession,
   registerAppSession,
@@ -12,6 +16,8 @@ import {
 import LoginScreen from "./screens/LoginScreen"
 import MessengerScreen from "./screens/MessengerScreen"
 import { ensureMessagingPush } from "./lib/messagingNotifications"
+
+const AUTO_HANDOFF_ATTEMPTED_KEY = "tradesman_messaging_auto_handoff_attempted_v1"
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null)
@@ -22,7 +28,9 @@ export default function App() {
     let cleanup: (() => void) | undefined
     let pushCleanup: (() => void) | undefined
     let backCleanup: (() => void) | undefined
+    let authLifecycleCleanup: (() => void) | undefined
     void (async () => {
+      authLifecycleCleanup = await initNativeAuthLifecycle(supabase)
       cleanup = await initSharedAuth()
       pushCleanup = await initMessagingPushTapListener()
       backCleanup = await initAndroidBackListener()
@@ -32,6 +40,14 @@ export default function App() {
       if (data.session?.user) {
         void registerAppSession(supabase, "messaging")
         void ensureMessagingPush(data.session.user.id)
+      } else if (Capacitor.isNativePlatform()) {
+        // Try SSO once per install. If the main app is missing or signed out, the
+        // visible button remains available without creating an app-open loop.
+        const { value } = await Preferences.get({ key: AUTO_HANDOFF_ATTEMPTED_KEY })
+        if (value !== "1") {
+          await Preferences.set({ key: AUTO_HANDOFF_ATTEMPTED_KEY, value: "1" })
+          requestTradesmanAppHandoff()
+        }
       }
     })()
     const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
@@ -47,6 +63,7 @@ export default function App() {
       cleanup?.()
       pushCleanup?.()
       backCleanup?.()
+      authLifecycleCleanup?.()
     }
   }, [])
 

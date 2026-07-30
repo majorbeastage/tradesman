@@ -1,4 +1,4 @@
--- App-level session registry for common login (main = 1 device, messaging = up to 3).
+-- App-level session registry for persistent login (main = up to 4 devices, messaging = up to 3).
 -- Soft takeover: supersede rows without killing all Supabase refresh tokens (so Messaging
 -- can stay signed in when Main switches devices). Run in Supabase SQL editor.
 --
@@ -41,12 +41,17 @@ create policy user_app_sessions_update_own on public.user_app_sessions
   for update to authenticated
   using (user_id = auth.uid()) with check (user_id = auth.uid());
 
--- Register / promote this device. Main: only one active. Messaging: max 3 active (LRU supersede).
+-- Register / promote this device. Main: max 4 active. Messaging: max 3 active (LRU supersede).
+-- Drop the previous four-argument signature so old clients resolve to this function
+-- through the p_max_main default rather than leaving a strict one-device overload active.
+drop function if exists public.register_app_session(text, text, text, int);
+drop function if exists public.register_app_session(text, text, text, int, int);
 create or replace function public.register_app_session(
   p_app text,
   p_device_id text,
   p_device_label text default null,
-  p_max_messaging int default 3
+  p_max_messaging int default 3,
+  p_max_main int default 4
 )
 returns jsonb
 language plpgsql
@@ -77,13 +82,18 @@ begin
   returning id into v_id;
 
   if p_app = 'main' then
-    -- Soft-supersede other main devices (they sign out locally after call if in_call).
-    update public.user_app_sessions
+    -- Keep newest N main devices; only the least-recently-used devices over the cap
+    -- are superseded. Desktop, phone, and tablet can stay signed in together.
+    with ranked as (
+      select id,
+             row_number() over (order by last_seen desc, created_at desc) as rn
+      from public.user_app_sessions
+      where user_id = v_uid and app = 'main' and status = 'active'
+    )
+    update public.user_app_sessions s
       set status = 'superseded'
-      where user_id = v_uid
-        and app = 'main'
-        and device_id <> trim(p_device_id)
-        and status = 'active';
+      from ranked r
+      where s.id = r.id and r.rn > greatest(1, coalesce(p_max_main, 4));
     get diagnostics v_superseded = row_count;
   else
     -- Messaging: keep newest N by last_seen; supersede older actives.
@@ -109,8 +119,8 @@ begin
 end;
 $$;
 
-revoke all on function public.register_app_session(text, text, text, int) from public;
-grant execute on function public.register_app_session(text, text, text, int) to authenticated;
+revoke all on function public.register_app_session(text, text, text, int, int) from public;
+grant execute on function public.register_app_session(text, text, text, int, int) to authenticated;
 
 -- Heartbeat is read-mostly on purpose: last_seen is only written when it is already stale,
 -- so routine polling costs a select instead of an UPDATE + WAL record on every tick.
@@ -200,4 +210,4 @@ begin
   begin alter publication supabase_realtime drop table public.user_app_sessions; exception when others then null; end;
 end $$;
 
-comment on table public.user_app_sessions is 'Common login registry: main=1 active device (soft supersede); messaging<=3; in_call protects live voice.';
+comment on table public.user_app_sessions is 'Persistent login registry: main<=4 active devices; messaging<=3; LRU supersede; in_call protects live voice.';

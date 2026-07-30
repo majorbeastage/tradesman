@@ -36,11 +36,11 @@ export default function MainAppSessionGuard({ userId }: { userId: string | null 
     const applySuperseded = () => {
       if (getVoiceTrafficInCall()) {
         setTakeoverPending(true)
-        setMessage("Signed in on another device. This session will end when your call finishes.")
+        setMessage("This account reached its 4-device limit. This least-recently-used session will end when your call finishes.")
         return
       }
       setTakeoverPending(false)
-      setMessage("Signed in on another device. Signing out here…")
+      setMessage("This account reached its 4-device limit. Signing out the least-recently-used session here…")
       void (async () => {
         await revokeLocalAppSession(sb, "main")
         await sb.auth.signOut({ scope: "local" })
@@ -95,7 +95,7 @@ export default function MainAppSessionGuard({ userId }: { userId: string | null 
     if (inCall) return
     if (!takeoverPending || !sb) return
     setTakeoverPending(false)
-    setMessage("Signed in on another device. Signing out here…")
+    setMessage("This account reached its 4-device limit. Signing out the least-recently-used session here…")
     void (async () => {
       await revokeLocalAppSession(sb, "main")
       await sb.auth.signOut({ scope: "local" })

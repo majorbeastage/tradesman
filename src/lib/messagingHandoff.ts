@@ -1,14 +1,16 @@
 /**
- * Open the standalone Tradesman Messaging app with the current Supabase session
- * so the user does not re-enter email/password.
+ * Open the standalone Tradesman Messaging app with a one-time exchange code so
+ * the user does not re-enter email/password. Messaging redeems the code for its
+ * own independently rotating Supabase session; refresh tokens never cross apps.
  *
- * Deep link: tradesmanmsg://auth#access_token=...&refresh_token=...
+ * Deep link: tradesmanmsg://auth?code=mh_...
  * If Messaging is not installed (Android), Intent browser_fallback goes to Play Store.
  * We deliberately do NOT force Play Store after a short timer — Capacitor WebViews often
  * stay "visible" after a successful launch, which was wrongly opening Play Store every time.
  */
 import { Capacitor } from "@capacitor/core"
 import { supabase } from "./supabase"
+import { forceRefreshAccessToken, getFreshAccessToken } from "./authPlatformApi"
 
 export const MESSAGING_ANDROID_PACKAGE = "com.tradesmanus.messaging"
 export const MESSAGING_PLAY_STORE_URL = `https://play.google.com/store/apps/details?id=${MESSAGING_ANDROID_PACKAGE}`
@@ -32,6 +34,36 @@ function isAndroidUa(): boolean {
 function isIosUa(): boolean {
   if (typeof navigator === "undefined") return false
   return /iPhone|iPad|iPod/i.test(navigator.userAgent)
+}
+
+function handoffApiUrl(): string {
+  if (!Capacitor.isNativePlatform()) return "/api/messaging-handoff"
+  const configured = String(import.meta.env.VITE_PUBLIC_APP_ORIGIN ?? "").trim().replace(/\/+$/, "")
+  return `${configured || "https://www.tradesman-us.com"}/api/messaging-handoff`
+}
+
+async function issueMessagingHandoffCode(): Promise<string> {
+  if (!supabase) throw new Error("Not signed in.")
+  let token = await getFreshAccessToken(supabase, null)
+  if (!token) throw new Error("No active session. Sign in to Tradesman first.")
+
+  const request = (accessToken: string) =>
+    fetch(handoffApiUrl(), {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "issue" }),
+    })
+
+  let response = await request(token)
+  if (response.status === 401) {
+    token = (await forceRefreshAccessToken(supabase)) ?? ""
+    if (token) response = await request(token)
+  }
+  const payload = (await response.json().catch(() => ({}))) as { code?: string; error?: string }
+  if (!response.ok || !payload.code) {
+    throw new Error(payload.error || "Could not create the secure Messaging sign-in.")
+  }
+  return payload.code
 }
 
 /** Open store listing for Tradesman Messaging (Play on Android, App Store on iOS when configured). */
@@ -70,7 +102,7 @@ export function openMainAppPlayStore(): void {
  * Open Messaging with session when possible; otherwise store listing (via Intent fallback only).
  * Optional `phone` / `label` open the Phone tab with dial prefill.
  * Optional `threadId` opens that Instant Messaging thread.
- *   tradesmanmsg://auth#access_token=…&refresh_token=…&phone=…&thread=…
+ *   tradesmanmsg://auth?code=…&phone=…&thread=…
  */
 export async function openMessagingAppWithSession(opts?: {
   playStoreFallbackMs?: number
@@ -81,13 +113,13 @@ export async function openMessagingAppWithSession(opts?: {
   /** Open Messenger focused on missed calls. */
   openMissed?: boolean
 }): Promise<{ ok: boolean; error?: string }> {
-  if (!supabase) return { ok: false, error: "Not signed in." }
-  const { data } = await supabase.auth.getSession()
-  const session = data.session
-  if (!session?.access_token || !session.refresh_token) {
-    return { ok: false, error: "No active session. Sign in to Tradesman first." }
+  let code: string
+  try {
+    code = await issueMessagingHandoffCode()
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "Could not prepare Messaging sign-in." }
   }
-  let qs = `access_token=${encodeURIComponent(session.access_token)}&refresh_token=${encodeURIComponent(session.refresh_token)}`
+  let qs = `code=${encodeURIComponent(code)}`
   const phone = opts?.phone?.trim()
   if (phone) {
     qs += `&phone=${encodeURIComponent(phone)}`
@@ -136,14 +168,6 @@ export async function openMessagingAppWithSession(opts?: {
   }
 }
 
-type CapAppMod = {
-  App?: {
-    addListener: (event: string, cb: (data: { url: string }) => void) => Promise<{ remove: () => void }>
-    getLaunchUrl?: () => Promise<{ url?: string } | undefined>
-    openUrl?: (opts: { url: string }) => Promise<void>
-  }
-}
-
 function handleHandoffUrl(u: string): void {
   if (!u.includes("messaging-handoff") && !u.includes("tradesman://messaging")) return
   void openMessagingAppWithSession().then((r) => {
@@ -157,20 +181,15 @@ function handleHandoffUrl(u: string): void {
   })
 }
 
-/** Listen for tradesman://messaging-handoff and open the messaging app with tokens. */
+/** Listen for tradesman://messaging-handoff and open Messaging with a one-time code. */
 export async function initMessagingHandoffListener(): Promise<() => void> {
   try {
-    const importer = new Function("m", "return import(m)") as (m: string) => Promise<CapAppMod>
-    const mod = await importer("@capacitor/app")
-    const App = mod.App
-    if (!App?.addListener) return () => {}
+    const { App } = await import("@capacitor/app")
 
     // Cold start: URL that launched the app (mirror messaging sharedAuth).
     try {
-      if (typeof App.getLaunchUrl === "function") {
-        const launch = await App.getLaunchUrl()
-        if (launch?.url) handleHandoffUrl(launch.url)
-      }
+      const launch = await App.getLaunchUrl()
+      if (launch?.url) handleHandoffUrl(launch.url)
     } catch {
       /* ignore */
     }

@@ -1,13 +1,15 @@
 import { supabase } from "./supabaseClient"
+import { Capacitor } from "@capacitor/core"
 import { parseDialFromUrl, setPendingDial } from "./pendingDial"
 import { parseMissedFromUrl, parseThreadFromUrl, setPendingMissedCalls, setPendingThread } from "./pendingThread"
 
 /**
  * Shared auto-login: accept a session handed off from the full Tradesman mobile app.
  *
- * Preferred (Android-safe): query string
+ * Preferred (Android-safe): a 60-second single-use exchange code
+ *   tradesmanmsg://auth?code=mh_...
+ * Legacy token query/fragment (accepted for one release during rollout):
  *   tradesmanmsg://auth?access_token=<JWT>&refresh_token=<RT>
- * Legacy fragment (still supported):
  *   tradesmanmsg://auth#access_token=<JWT>&refresh_token=<RT>
  * Optional dial / thread extras in either place.
  */
@@ -41,6 +43,27 @@ function parseTokensFromUrl(url: string): { access_token: string; refresh_token:
   return null
 }
 
+function handoffApiUrl(): string {
+  if (!Capacitor.isNativePlatform()) return "/api/messaging-handoff"
+  const configured = String(import.meta.env.VITE_PUBLIC_APP_ORIGIN ?? "").trim().replace(/\/+$/, "")
+  return `${configured || "https://www.tradesman-us.com"}/api/messaging-handoff`
+}
+
+async function redeemHandoffCode(code: string): Promise<boolean> {
+  const response = await fetch(handoffApiUrl(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "redeem", code }),
+  })
+  const payload = (await response.json().catch(() => ({}))) as { tokenHash?: string }
+  if (!response.ok || !payload.tokenHash) return false
+  const { error } = await supabase.auth.verifyOtp({
+    token_hash: payload.tokenHash,
+    type: "magiclink",
+  })
+  return !error
+}
+
 function captureHandoffExtras(url: string): void {
   const dial = parseDialFromUrl(url)
   if (dial) setPendingDial(dial)
@@ -51,6 +74,9 @@ function captureHandoffExtras(url: string): void {
 
 export async function applySessionFromUrl(url: string): Promise<boolean> {
   captureHandoffExtras(url)
+  const code = paramsFromUrl(url).get("code")?.trim()
+  if (code) return redeemHandoffCode(code)
+  // Temporary compatibility for main-app versions already installed in the field.
   const tokens = parseTokensFromUrl(url)
   if (!tokens) return false
   const { error } = await supabase.auth.setSession(tokens)
@@ -67,6 +93,7 @@ export async function initSharedAuth(): Promise<() => void> {
     const href = window.location.href
     if (
       href.includes("access_token") ||
+      href.includes("code=") ||
       href.includes("phone=") ||
       href.includes("thread=") ||
       href.includes("missed=")

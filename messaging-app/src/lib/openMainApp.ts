@@ -1,6 +1,6 @@
 /**
- * Ask the full Tradesman-US Android/iOS app to hand off the signed-in session
- * into this messaging app via tradesmanmsg://auth#access_token=...&refresh_token=...
+ * Ask the full Tradesman-US Android/iOS app to issue a one-time sign-in code
+ * and hand it to this app through tradesmanmsg://auth?code=...
  *
  * Opens the main app with tradesman://messaging-handoff (registered on the main app).
  * If the main app is not installed, Intent browser_fallback goes to Play Store.

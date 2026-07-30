@@ -75,7 +75,7 @@ export function defaultDeviceLabel(): string {
 export async function registerAppSession(
   supabase: SupabaseClient | null,
   app: AppSessionKind,
-  opts?: { deviceLabel?: string; maxMessaging?: number },
+  opts?: { deviceLabel?: string; maxMessaging?: number; maxMain?: number },
 ): Promise<{ ok: boolean; supersededOthers?: number; error?: string }> {
   if (!supabase) return { ok: false, error: "No client" }
   const deviceId = await getOrCreateDeviceId()
@@ -86,6 +86,7 @@ export async function registerAppSession(
         p_device_id: deviceId,
         p_device_label: opts?.deviceLabel ?? defaultDeviceLabel(),
         p_max_messaging: opts?.maxMessaging ?? 3,
+        p_max_main: opts?.maxMain ?? 4,
       })
       return {
         row: (data as { superseded_others?: number } | null) ?? null,

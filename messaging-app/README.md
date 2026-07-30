@@ -70,22 +70,22 @@ WebRTC uses `getUserMedia`. When you generate the native projects, add:
 Goal: if the user is logged into the full Tradesman app, this app logs in as the
 same user **without** re-entering credentials.
 
-Approach — **secure deep-link session handoff** (no shared password storage):
+Approach — **single-use deep-link handoff** (no shared password or refresh-token storage):
 
-1. The full mobile app adds a "Messaging" launch that reads its current Supabase
-   session and opens this app via its custom URL scheme with the tokens in the
-   URL **fragment** (fragments are not sent to servers / logs):
+1. The full mobile app authenticates to `/api/messaging-handoff`, receives an
+   unguessable code that expires in 60 seconds, and opens this app through:
 
    ```
-   tradesmanmsg://auth#access_token=<JWT>&refresh_token=<RT>
+   tradesmanmsg://auth?code=mh_...
    ```
 
-2. This app listens for `appUrlOpen` (Capacitor App plugin), parses the fragment,
-   and calls `supabase.auth.setSession({ access_token, refresh_token })`.
-   See `src/lib/sharedAuth.ts`.
+2. This app listens for `appUrlOpen`, redeems the code exactly once, and verifies
+   the returned magic-link token hash. Messaging receives its own independently
+   rotating Supabase session, so one app refreshing cannot invalidate the other.
 
-3. If no handoff is present and there's no stored session, the user sees the
-   email/password login screen (`src/screens/LoginScreen.tsx`).
+3. On first native launch without a session, Messaging attempts this handoff
+   automatically. If the main app is missing or signed out, the email/password
+   screen and manual "Sign in through Tradesman" button remain available.
 
 The main app can launch this app with the auth handoff and can hand off a phone
 number or thread target.
@@ -103,7 +103,7 @@ npm run dev               # web preview
 
 ```bash
 npm run build
-npx cap sync android
+npx cap sync
 cd android
 ./gradlew assembleDebug        # test APK
 ./gradlew bundleRelease        # Play Console AAB
