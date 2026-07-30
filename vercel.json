@@ -176,6 +176,8 @@
     { "source": "/accept-invite", "destination": "/" },
     { "source": "/accept-invite/", "destination": "/" },
     { "source": "/e/:token", "destination": "/index.html" },
+    { "source": "/voice-studio/:token", "destination": "/index.html" },
+    { "source": "/voice-studio/:token/", "destination": "/index.html" },
     { "source": "/embed/lead/:path*", "destination": "/index.html" },
     { "source": "/:slug", "destination": "/index.html" }
   ]

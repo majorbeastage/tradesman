@@ -246,6 +246,7 @@ export const RESERVED_BUSINESS_WEB_PROFILE_SLUGS = new Set([
   "cta",
   "embed",
   "e",
+  "voice-studio",
   "api",
   "assets",
   "index.html",
