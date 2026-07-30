@@ -5,8 +5,12 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { Capacitor } from "@capacitor/core"
+import { withTimeout } from "./promiseTimeout"
 
 export type AppSessionKind = "main" | "messaging"
+
+/** Session bookkeeping is never worth stalling a screen for; give up and retry next tick. */
+const SESSION_RPC_TIMEOUT_MS = 8000
 
 const DEVICE_KEY = "tradesman_app_device_id"
 const STAY_SIGNED_IN_KEY = "tradesman_messaging_stay_signed_in"
@@ -75,15 +79,24 @@ export async function registerAppSession(
 ): Promise<{ ok: boolean; supersededOthers?: number; error?: string }> {
   if (!supabase) return { ok: false, error: "No client" }
   const deviceId = await getOrCreateDeviceId()
-  const { data, error } = await supabase.rpc("register_app_session", {
-    p_app: app,
-    p_device_id: deviceId,
-    p_device_label: opts?.deviceLabel ?? defaultDeviceLabel(),
-    p_max_messaging: opts?.maxMessaging ?? 3,
-  })
-  if (error) return { ok: false, error: error.message }
-  const row = data as { superseded_others?: number } | null
-  return { ok: true, supersededOthers: row?.superseded_others ?? 0 }
+  const res = await withTimeout(
+    (async () => {
+      const { data, error } = await supabase.rpc("register_app_session", {
+        p_app: app,
+        p_device_id: deviceId,
+        p_device_label: opts?.deviceLabel ?? defaultDeviceLabel(),
+        p_max_messaging: opts?.maxMessaging ?? 3,
+      })
+      return {
+        row: (data as { superseded_others?: number } | null) ?? null,
+        error: error?.message ?? null,
+      }
+    })(),
+    SESSION_RPC_TIMEOUT_MS,
+    { row: null, error: "Session registry timed out" },
+  )
+  if (res.error) return { ok: false, error: res.error }
+  return { ok: true, supersededOthers: res.row?.superseded_others ?? 0 }
 }
 
 export async function heartbeatAppSession(
@@ -92,14 +105,23 @@ export async function heartbeatAppSession(
 ): Promise<{ ok: boolean; superseded: boolean; missing?: boolean; error?: string }> {
   if (!supabase) return { ok: false, superseded: false, error: "No client" }
   const deviceId = await getOrCreateDeviceId()
-  const { data, error } = await supabase.rpc("heartbeat_app_session", {
-    p_app: app,
-    p_device_id: deviceId,
-  })
-  if (error) return { ok: false, superseded: false, error: error.message }
-  const row = data as { ok?: boolean; superseded?: boolean; missing?: boolean } | null
-  if (row?.missing) return { ok: false, superseded: false, missing: true }
-  return { ok: true, superseded: Boolean(row?.superseded) }
+  const res = await withTimeout(
+    (async () => {
+      const { data, error } = await supabase.rpc("heartbeat_app_session", {
+        p_app: app,
+        p_device_id: deviceId,
+      })
+      return {
+        row: (data as { ok?: boolean; superseded?: boolean; missing?: boolean } | null) ?? null,
+        error: error?.message ?? null,
+      }
+    })(),
+    SESSION_RPC_TIMEOUT_MS,
+    { row: null, error: "Session heartbeat timed out" },
+  )
+  if (res.error) return { ok: false, superseded: false, error: res.error }
+  if (res.row?.missing) return { ok: false, superseded: false, missing: true }
+  return { ok: true, superseded: Boolean(res.row?.superseded) }
 }
 
 export async function setAppSessionInCall(
@@ -110,11 +132,17 @@ export async function setAppSessionInCall(
   if (!supabase) return
   try {
     const deviceId = await getOrCreateDeviceId()
-    await supabase.rpc("set_app_session_in_call", {
-      p_app: app,
-      p_device_id: deviceId,
-      p_in_call: inCall,
-    })
+    await withTimeout(
+      Promise.resolve(
+        supabase.rpc("set_app_session_in_call", {
+          p_app: app,
+          p_device_id: deviceId,
+          p_in_call: inCall,
+        }),
+      ).then(() => undefined),
+      SESSION_RPC_TIMEOUT_MS,
+      undefined,
+    )
   } catch {
     /* best-effort */
   }
@@ -127,7 +155,13 @@ export async function revokeLocalAppSession(
   if (!supabase) return
   try {
     const deviceId = await getOrCreateDeviceId()
-    await supabase.rpc("revoke_app_session", { p_app: app, p_device_id: deviceId })
+    await withTimeout(
+      Promise.resolve(supabase.rpc("revoke_app_session", { p_app: app, p_device_id: deviceId })).then(
+        () => undefined,
+      ),
+      SESSION_RPC_TIMEOUT_MS,
+      undefined,
+    )
   } catch {
     /* best-effort */
   }

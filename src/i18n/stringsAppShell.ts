@@ -106,6 +106,7 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "login.err.passwordShort": "Password must be at least 6 characters.",
     "login.err.passwordMismatch": "Passwords do not match.",
     "login.err.noSupabase": "App is not connected to Supabase.",
+    "login.err.timeout": "Sign-in is taking longer than usual and timed out. Check your connection and try again in a moment.",
     "login.msg.resetSent": "If that email is registered, you will receive a reset link. Check spam folders too.",
     "login.msg.signingIn": "Signing you in…",
     "login.msg.confirmEmail":
@@ -465,6 +466,7 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "login.err.passwordShort": "La contraseña debe tener al menos 6 caracteres.",
     "login.err.passwordMismatch": "Las contraseñas no coinciden.",
     "login.err.noSupabase": "La aplicación no está conectada a Supabase.",
+    "login.err.timeout": "El inicio de sesión tardó demasiado y expiró. Revise su conexión e inténtelo de nuevo en un momento.",
     "login.msg.resetSent": "Si ese correo está registrado, recibirá un enlace. Revise también spam.",
     "login.msg.signingIn": "Iniciando sesión…",
     "login.msg.confirmEmail":

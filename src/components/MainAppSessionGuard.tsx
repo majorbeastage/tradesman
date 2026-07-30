@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { supabase } from "../lib/supabase"
 import {
   heartbeatAppSession,
@@ -7,14 +7,24 @@ import {
 } from "../lib/appSessions"
 import { getVoiceTrafficInCall, subscribeVoiceTrafficInCall } from "../lib/voiceTrafficGuard"
 
+const HEARTBEAT_MS = 60_000
+/** Focus/visibility can fire in bursts; never let them heartbeat faster than this. */
+const MIN_HEARTBEAT_GAP_MS = 30_000
+
 /**
  * Main app common-login guard: registers this device, heartbeats, soft-takes over
  * when another main session wins. Never interrupts live voice (defers sign-out).
+ *
+ * Polls rather than subscribing to user_app_sessions. A realtime subscription here fed
+ * itself — each heartbeat wrote last_seen, which published a change, which triggered the
+ * next heartbeat — and the resulting write storm took the Supabase instance down with it.
  */
 export default function MainAppSessionGuard({ userId }: { userId: string | null }) {
   const [inCall, setInCall] = useState(getVoiceTrafficInCall)
   const [takeoverPending, setTakeoverPending] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+  const lastTickRef = useRef(0)
+  const inFlightRef = useRef(false)
 
   useEffect(() => subscribeVoiceTrafficInCall(setInCall), [])
 
@@ -42,18 +52,27 @@ export default function MainAppSessionGuard({ userId }: { userId: string | null 
       if (!r.ok && r.error) console.warn("[sessions] register main:", r.error)
     })
 
-    const tick = () => {
-      void heartbeatAppSession(sb, "main").then((r) => {
-        if (cancelled) return
-        if (r.missing) {
-          void registerAppSession(sb, "main")
-          return
-        }
-        if (r.superseded) applySuperseded()
-      })
+    const tick = (force = false) => {
+      if (inFlightRef.current) return
+      const now = Date.now()
+      if (!force && now - lastTickRef.current < MIN_HEARTBEAT_GAP_MS) return
+      lastTickRef.current = now
+      inFlightRef.current = true
+      void heartbeatAppSession(sb, "main")
+        .then((r) => {
+          if (cancelled) return
+          if (r.missing) {
+            void registerAppSession(sb, "main")
+            return
+          }
+          if (r.superseded) applySuperseded()
+        })
+        .finally(() => {
+          inFlightRef.current = false
+        })
     }
 
-    const interval = window.setInterval(tick, 25_000)
+    const interval = window.setInterval(() => tick(true), HEARTBEAT_MS)
     const onFocus = () => tick()
     window.addEventListener("focus", onFocus)
     const onVis = () => {
@@ -61,23 +80,13 @@ export default function MainAppSessionGuard({ userId }: { userId: string | null 
     }
     document.addEventListener("visibilitychange", onVis)
 
-    const channel = sb
-      .channel(`user-app-sessions-main-${userId}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "user_app_sessions", filter: `user_id=eq.${userId}` },
-        () => tick(),
-      )
-      .subscribe()
-
-    tick()
+    tick(true)
 
     return () => {
       cancelled = true
       window.clearInterval(interval)
       window.removeEventListener("focus", onFocus)
       document.removeEventListener("visibilitychange", onVis)
-      void sb.removeChannel(channel)
     }
   }, [userId])
 

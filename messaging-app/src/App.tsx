@@ -69,7 +69,7 @@ export default function App() {
         }
       })
     }
-    const id = window.setInterval(tick, 30_000)
+    const id = window.setInterval(tick, 60_000)
     tick()
     return () => {
       cancelled = true

@@ -1,6 +1,11 @@
 -- App-level session registry for common login (main = 1 device, messaging = up to 3).
 -- Soft takeover: supersede rows without killing all Supabase refresh tokens (so Messaging
 -- can stay signed in when Main switches devices). Run in Supabase SQL editor.
+--
+-- This table is deliberately NOT in the realtime publication and heartbeats deliberately
+-- skip the write while last_seen is fresh. An earlier version did the opposite, and every
+-- heartbeat UPDATE published a change that woke each client into another heartbeat — a
+-- self-feeding write loop that saturated the instance and stalled Auth. Clients poll instead.
 
 create table if not exists public.user_app_sessions (
   id uuid primary key default gen_random_uuid(),
@@ -107,6 +112,8 @@ $$;
 revoke all on function public.register_app_session(text, text, text, int) from public;
 grant execute on function public.register_app_session(text, text, text, int) to authenticated;
 
+-- Heartbeat is read-mostly on purpose: last_seen is only written when it is already stale,
+-- so routine polling costs a select instead of an UPDATE + WAL record on every tick.
 create or replace function public.heartbeat_app_session(p_app text, p_device_id text)
 returns jsonb
 language plpgsql
@@ -117,18 +124,25 @@ declare
   v_uid uuid := auth.uid();
   v_status text;
   v_in_call boolean;
+  v_last_seen timestamptz;
 begin
   if v_uid is null then
     raise exception 'Not authenticated';
   end if;
 
-  update public.user_app_sessions
-    set last_seen = now()
-    where user_id = v_uid and app = p_app and device_id = trim(p_device_id)
-  returning status, in_call into v_status, v_in_call;
+  select status, in_call, last_seen
+    into v_status, v_in_call, v_last_seen
+    from public.user_app_sessions
+    where user_id = v_uid and app = p_app and device_id = trim(p_device_id);
 
   if v_status is null then
     return jsonb_build_object('ok', false, 'missing', true);
+  end if;
+
+  if v_last_seen < now() - interval '45 seconds' then
+    update public.user_app_sessions
+      set last_seen = now()
+      where user_id = v_uid and app = p_app and device_id = trim(p_device_id);
   end if;
 
   return jsonb_build_object(
@@ -180,9 +194,10 @@ $$;
 revoke all on function public.revoke_app_session(text, text) from public;
 grant execute on function public.revoke_app_session(text, text) to authenticated;
 
+-- Keep this table off realtime. Clients learn about takeover by polling heartbeat_app_session.
 do $$
 begin
-  begin alter publication supabase_realtime add table public.user_app_sessions; exception when others then null; end;
+  begin alter publication supabase_realtime drop table public.user_app_sessions; exception when others then null; end;
 end $$;
 
 comment on table public.user_app_sessions is 'Common login registry: main=1 active device (soft supersede); messaging<=3; in_call protects live voice.';

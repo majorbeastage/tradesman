@@ -13,6 +13,10 @@ import { repairSandboxProfile } from "../../lib/sandboxApi"
 import { useLocale } from "../../i18n/LocaleContext"
 import { PasswordFieldWithReveal } from "../../components/PasswordFieldWithReveal"
 import { PublicLegalNav } from "../public/PublicLegalNav"
+import { settledWithin, withTimeout } from "../../lib/promiseTimeout"
+
+const SIGN_IN_TIMEOUT_MS = 20_000
+const POST_SIGN_IN_STEP_TIMEOUT_MS = 8000
 
 type LoginPageProps = {
   /** When true, admin portal sign-in (separate from contractor login). */
@@ -68,9 +72,15 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
       setSubmitting(true)
       try {
         const redirectTo = getPasswordRecoveryRedirectTo() || undefined
-        const { error: err } = await supabase.auth.resetPasswordForEmail(email.trim(), redirectTo ? { redirectTo } : undefined)
-        if (err) setError(err.message)
-        else setMessage(t("login.msg.resetSent"))
+        const outcome = await withTimeout<{ ok: boolean; message?: string }>(
+          supabase.auth
+            .resetPasswordForEmail(email.trim(), redirectTo ? { redirectTo } : undefined)
+            .then(({ error: err }) => (err ? { ok: false, message: err.message } : { ok: true })),
+          SIGN_IN_TIMEOUT_MS,
+          { ok: false, message: t("login.err.timeout") },
+        )
+        if (outcome.ok) setMessage(t("login.msg.resetSent"))
+        else setError(outcome.message ?? t("login.err.timeout"))
       } finally {
         setSubmitting(false)
       }
@@ -82,18 +92,28 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
     }
     setSubmitting(true)
     try {
-      const { error: err } = await signIn(email.trim(), password)
+      const timedOut = Symbol("timeout")
+      const signInResult = await withTimeout<{ error: Error | null } | typeof timedOut>(
+        signIn(email.trim(), password),
+        SIGN_IN_TIMEOUT_MS,
+        timedOut,
+      )
+      if (signInResult === timedOut) {
+        setError(t("login.err.timeout"))
+        return
+      }
+      const { error: err } = signInResult
       if (err) setError(err.message)
       else {
         clearSandboxLoginEmail()
         setSandboxLoginHint(false)
         setMessage(t("login.msg.signingIn"))
-        try {
-          await repairSandboxProfile()
-        } catch {
-          /* best effort */
-        }
-        const { role: freshRole } = await refetchProfile()
+        // Trial-account repair is best-effort and must not hold the button hostage.
+        await settledWithin(repairSandboxProfile(), POST_SIGN_IN_STEP_TIMEOUT_MS)
+        // On timeout the AuthProvider profile effect still resolves the role and redirects.
+        const { role: freshRole } = await withTimeout(refetchProfile(), POST_SIGN_IN_STEP_TIMEOUT_MS, {
+          role: null,
+        })
         if (freshRole) {
           didRedirect.current = true
           onSuccess(freshRole)

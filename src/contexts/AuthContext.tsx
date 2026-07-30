@@ -220,8 +220,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!supabase) return { error: new Error("Supabase not configured") }
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) return { error }
-    // Soft single-device for Main (does not kill Messaging refresh tokens).
-    await registerAppSession(supabase, "main")
+    // Soft single-device for Main (does not kill Messaging refresh tokens). Fire-and-forget:
+    // MainAppSessionGuard registers again on mount, so this must never gate the login screen.
+    void registerAppSession(supabase, "main")
     return { error: null }
   }, [])
 
@@ -229,7 +230,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!supabase) return { error: new Error("Supabase not configured") }
     const { data, error } = await supabase.auth.signUp({ email, password })
     if (error) return { error }
-    if (data.session) await registerAppSession(supabase, "main")
+    if (data.session) void registerAppSession(supabase, "main")
     return { error: null }
   }, [])
 

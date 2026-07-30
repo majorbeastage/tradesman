@@ -7,7 +7,10 @@ import {
   registerAppSession,
   setMessagingStaySignedIn,
 } from "../lib/appSessions"
+import { withTimeout } from "../lib/promiseTimeout"
 import icon from "../assets/icon.png"
+
+const SIGN_IN_TIMEOUT_MS = 20_000
 
 export default function LoginScreen() {
   const [email, setEmail] = useState("")
@@ -26,12 +29,19 @@ export default function LoginScreen() {
     setBusy(true)
     setError(null)
     await setMessagingStaySignedIn(staySignedIn)
-    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
-    if (!error) {
-      await registerAppSession(supabase, "messaging")
+    const result = await withTimeout(
+      supabase.auth.signInWithPassword({ email: email.trim(), password }).then(({ error }) => ({
+        message: error?.message ?? null,
+      })),
+      SIGN_IN_TIMEOUT_MS,
+      { message: "Sign-in timed out. Check your connection and try again in a moment." },
+    )
+    if (!result.message) {
+      // App.tsx registers again on SIGNED_IN; never let the registry gate the login screen.
+      void registerAppSession(supabase, "messaging")
     }
     setBusy(false)
-    if (error) setError(error.message)
+    setError(result.message)
   }
 
   return (
