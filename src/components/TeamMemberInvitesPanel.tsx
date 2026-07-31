@@ -14,7 +14,7 @@ import {
 } from "../lib/teamMembers"
 import { resolveAccountStructureOwnerId } from "../lib/accountStructureOwner"
 import { isManagedUserRole } from "../lib/profileRoles"
-import { usePortalViewReadOnly } from "../contexts/PortalViewContext"
+import { usePortalViewOptional, usePortalViewReadOnly } from "../contexts/PortalViewContext"
 import type { AccountSettingsCategory } from "../modules/account/accountSettingsLayout"
 import { accountSettingsCategoryStyle, accountSettingsFoldButtonStyle } from "../modules/account/accountSettingsLayout"
 
@@ -36,6 +36,7 @@ function statusLabel(status: string, acceptedAt: string | null): string {
 export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed = true }: Props) {
   const { session, role: authRole } = useAuth()
   const portalReadOnly = usePortalViewReadOnly()
+  const portalView = usePortalViewOptional()
   const [open, setOpen] = useState(!defaultCollapsed)
   const [accountOwnerId, setAccountOwnerId] = useState(ownerUserId)
   const [canManageTeam, setCanManageTeam] = useState(true)
@@ -68,7 +69,8 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
     setActiveMembers(bundle.activeMembers)
     setProfileMetadata(bundle.ownerMetadata)
     setOwnerDisplayName(bundle.ownerDisplayName)
-  }, [ownerUserId, session?.access_token, authRole, portalReadOnly])
+    await portalView?.refreshManageableUsers?.()
+  }, [ownerUserId, session?.access_token, authRole, portalReadOnly, portalView])
 
   useEffect(() => {
     void load().catch(() => {})

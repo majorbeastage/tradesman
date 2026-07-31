@@ -66,19 +66,34 @@ export async function assignOfficeManagerClient(
 ): Promise<void> {
   if (!managedUserId.trim()) throw new Error("managedUserId required")
 
+  const { data: prevLinks } = await sb
+    .from("office_manager_clients")
+    .select("office_manager_id")
+    .eq("user_id", managedUserId)
+  const prevOwnerIds = [
+    ...new Set(
+      (prevLinks ?? [])
+        .map((row) => (row as { office_manager_id?: string }).office_manager_id)
+        .filter((id): id is string => typeof id === "string" && id.trim() !== ""),
+    ),
+  ]
+
   await sb.from("office_manager_clients").delete().eq("user_id", managedUserId)
 
   if (!officeManagerId?.trim()) {
-    const { data: staleInvites } = await sb
-      .from("team_member_invites")
-      .select("id")
-      .eq("shell_profile_id", managedUserId)
-      .in("status", ["accepted", "pending", "shell"])
-    for (const row of staleInvites ?? []) {
-      await sb
+    for (const ownerId of prevOwnerIds) {
+      const { data: staleInvites } = await sb
         .from("team_member_invites")
-        .update({ status: "revoked", shell_profile_id: null })
-        .eq("id", (row as { id: string }).id)
+        .select("id")
+        .eq("account_owner_id", ownerId)
+        .eq("shell_profile_id", managedUserId)
+        .in("status", ["accepted", "pending", "shell"])
+      for (const row of staleInvites ?? []) {
+        await sb
+          .from("team_member_invites")
+          .update({ status: "revoked", shell_profile_id: null })
+          .eq("id", (row as { id: string }).id)
+      }
     }
     return
   }

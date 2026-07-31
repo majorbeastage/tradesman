@@ -8,6 +8,7 @@ import {
   snapMinutesToIncrement,
 } from "../../lib/numericFormInput"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
+import { resolveAccountStructureOwnerId } from "../../lib/accountStructureOwner"
 import { filterRealUserIds, isSandboxDemoUserId, parseSandboxDemoTeam, resolveSandboxDataUserId } from "../../lib/sandboxDemoTeam"
 import {
   buildDefaultSandboxDemoLocations,
@@ -406,6 +407,20 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const isMobile = useIsMobile()
   const scopeCtx = useOfficeManagerScopeOptional()
   const userId = useScopedUserId()
+  const [teamStructureOwnerId, setTeamStructureOwnerId] = useState(authUserId ?? "")
+  useEffect(() => {
+    if (!supabase || !userId) {
+      setTeamStructureOwnerId(authUserId ?? "")
+      return
+    }
+    let cancelled = false
+    void resolveAccountStructureOwnerId(supabase, userId).then((ownerId) => {
+      if (!cancelled) setTeamStructureOwnerId(ownerId)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [userId, authUserId])
   const calendarDbUserId = useMemo(
     () => resolveSandboxDataUserId(userId, authUserId || userId),
     [userId, authUserId],
@@ -4512,8 +4527,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 <strong>Team management → Team member options</strong> so this page stays focused on punches and hours.
               </p>
               <CalendarTeamManagementPanel
-                officeManagerUserId={authUserId}
-                viewerUserId={authUserId}
+                officeManagerUserId={teamStructureOwnerId}
+                viewerUserId={userId}
                 roster={
                   scopeCtx?.clients?.length
                     ? scopeCtx.clients
@@ -4527,8 +4542,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           ) : null}
           {calendarSuite.id === "team_management" && calendarSuite.panel === "team_members" && authUserId ? (
             <CalendarTeamManagementPanel
-              officeManagerUserId={authUserId}
-              viewerUserId={authUserId}
+              officeManagerUserId={teamStructureOwnerId}
+              viewerUserId={userId}
               roster={
                 scopeCtx?.clients?.length
                   ? scopeCtx.clients

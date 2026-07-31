@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react"
 import { useAuth, type UserRole } from "../../contexts/AuthContext"
+import { usePortalViewOptional } from "../../contexts/PortalViewContext"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
 import { createUserViaAdminUsersEdge, graduateSandboxToLiveViaAdminUsersEdge, patchAccountDisabledViaAdminUsersEdge, assignOfficeManagerViaAdminUsersEdge } from "../../lib/adminCreateUserViaEdge"
@@ -51,6 +52,7 @@ function userRowSearchText(u: UserRow): string {
 
 export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUsersSectionProps) {
   const { session, user: currentAuthUser } = useAuth()
+  const portalView = usePortalViewOptional()
   const [users, setUsers] = useState<UserRow[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState("") // loading user list (don't overwrite create success)
@@ -413,6 +415,7 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
       return next
     })
     setUpdatingOmUserId(null)
+    void portalView?.refreshManageableUsers?.()
   }
 
   async function handleCreate(e: React.FormEvent) {

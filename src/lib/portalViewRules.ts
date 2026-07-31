@@ -102,7 +102,13 @@ export function filterUsersForViewRole(users: ManageableUserRow[], viewRole: Use
     case "demo_user":
       return users.filter((u) => u.role === "demo_user")
     case "user":
-      return users.filter((u) => u.role === "user" || u.role === "corporate_external")
+      return users.filter(
+        (u) =>
+          u.role === "user" ||
+          u.role === "corporate_external" ||
+          u.role === "corporate_internal" ||
+          u.role === "new_user",
+      )
     default:
       return users
   }

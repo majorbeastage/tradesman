@@ -24,6 +24,8 @@ import {
   type PortalShell,
 } from "../lib/portalViewRules"
 import { resolveInternalMemberLabel } from "../lib/profileContactMeta"
+import { resolveAccountStructureOwnerId } from "../lib/accountStructureOwner"
+import { isOfficeManagerAssignmentRole } from "../lib/profileRoles"
 import {
   isSandboxDemoUserId,
   parseSandboxDemoTeam,
@@ -49,6 +51,8 @@ type PortalViewValue = {
   loadingUsers: boolean
   loadingPortalConfig: boolean
   refreshScopedPortalConfig: () => Promise<void>
+  /** Reload view-as user list after Admin OM assign or Team members change. */
+  refreshManageableUsers: () => Promise<void>
   error: string
   showViewBar: boolean
   /** True when previewing a real profile other than your own (not the role default or a sandbox persona). */
@@ -186,6 +190,44 @@ async function loadManagedOrgUsers(authUserId: string): Promise<ManageableUserRo
   return rows
 }
 
+/** Admin view-as: current account org (owner + office_manager_clients) plus other account owners to switch business. */
+async function loadAdminOrgScopedUsers(
+  authUserId: string,
+  targetUserId: string | null,
+  accessToken: string,
+): Promise<ManageableUserRow[]> {
+  const all = await loadAllUsersForAdmin(accessToken)
+  const accountOwners = all.filter(
+    (u) => isOfficeManagerAssignmentRole(u.role) || u.role === "corporate_management",
+  )
+
+  let orgOwnerId: string | null = null
+  if (
+    targetUserId &&
+    !isPortalViewDefaultTarget(targetUserId) &&
+    !isSandboxDemoUserId(targetUserId) &&
+    supabase
+  ) {
+    try {
+      orgOwnerId = await resolveAccountStructureOwnerId(supabase, targetUserId)
+    } catch {
+      orgOwnerId = null
+    }
+  }
+
+  if (orgOwnerId && supabase) {
+    const orgRows = await loadManagedOrgUsers(orgOwnerId)
+    const orgIds = new Set(orgRows.map((r) => r.userId))
+    const switchTargets = accountOwners.filter((o) => !orgIds.has(o.userId))
+    return [
+      ...orgRows,
+      ...switchTargets.map((r) => ({ ...r, isSelf: r.userId === authUserId })),
+    ]
+  }
+
+  return accountOwners.map((r) => ({ ...r, isSelf: r.userId === authUserId }))
+}
+
 type Props = {
   children: ReactNode
   /** Sync app vs office shell when preview role changes. */
@@ -265,8 +307,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
       try {
         let rows: ManageableUserRow[] = []
         if (authRole === "admin" && session?.access_token) {
-          rows = await loadAllUsersForAdmin(session.access_token)
-          rows = rows.map((r) => ({ ...r, isSelf: r.userId === authUserId }))
+          rows = await loadAdminOrgScopedUsers(authUserId, targetUserId, session.access_token)
         } else if (authRole === "corporate_management" || authRole === "office_manager") {
           rows = await loadManagedOrgUsers(authUserId)
         } else if (authRole) {
@@ -316,7 +357,54 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
     return () => {
       cancelled = true
     }
-  }, [authUserId, authRole, session?.access_token, user?.email, authPortalConfig?.sandbox_account])
+  }, [authUserId, authRole, session?.access_token, user?.email, authPortalConfig?.sandbox_account, targetUserId])
+
+  const refreshManageableUsers = useCallback(async () => {
+    if (!authUserId) {
+      setManageableUsers([])
+      return
+    }
+    setLoadingUsers(true)
+    setError("")
+    try {
+      let rows: ManageableUserRow[] = []
+      if (authRole === "admin" && session?.access_token) {
+        rows = await loadAdminOrgScopedUsers(authUserId, targetUserId, session.access_token)
+      } else if (authRole === "corporate_management" || authRole === "office_manager") {
+        rows = await loadManagedOrgUsers(authUserId)
+      } else if (authRole) {
+        rows = [
+          {
+            userId: authUserId,
+            label: "Me",
+            email: user?.email ?? null,
+            role: authRole,
+            clientId: null,
+            isSelf: true,
+          },
+        ]
+      }
+      if (authPortalConfig?.sandbox_account === true && supabase) {
+        const { data: metaRow } = await supabase
+          .from("profiles")
+          .select("metadata")
+          .eq("id", authUserId)
+          .maybeSingle()
+        const meta =
+          metaRow?.metadata && typeof metaRow.metadata === "object" && !Array.isArray(metaRow.metadata)
+            ? (metaRow.metadata as Record<string, unknown>)
+            : {}
+        const team = parseSandboxDemoTeam(meta.sandbox_demo_team)
+        setSandboxDemoTeam(team)
+        rows = [...rows, ...sandboxDemoTeamToManageableRows(team)]
+      }
+      setManageableUsers(rows)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not load users.")
+    } finally {
+      setLoadingUsers(false)
+    }
+  }, [authUserId, authRole, session?.access_token, user?.email, authPortalConfig?.sandbox_account, targetUserId])
 
   useEffect(() => {
     if (!isSandboxDemoUserId(targetUserId)) return
@@ -435,6 +523,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
       loadingUsers,
       loadingPortalConfig,
       refreshScopedPortalConfig,
+      refreshManageableUsers,
       error,
       showViewBar,
       viewingOtherProfile,
@@ -456,6 +545,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
       loadingUsers,
       loadingPortalConfig,
       refreshScopedPortalConfig,
+      refreshManageableUsers,
       error,
       showViewBar,
       viewingOtherProfile,
