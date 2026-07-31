@@ -3,6 +3,10 @@
 // Requires: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (set in Supabase Dashboard for the function)
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import {
+  buildGraduateSandboxUpdates,
+  isSandboxProfileRow,
+} from "../_shared/graduate-sandbox.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -53,17 +57,21 @@ Deno.serve(async (req) => {
     const ids = users.users.map((u) => u.id)
     const { data: profiles } = await adminClient
       .from("profiles")
-      .select("id, email, role, display_name, account_disabled")
+      .select("id, email, role, display_name, account_disabled, portal_config, metadata")
       .in("id", ids)
     const profileMap = new Map((profiles || []).map((p) => [p.id, p]))
-    const list = users.users.map((u) => ({
-      id: u.id,
-      email: u.email,
-      created_at: u.created_at,
-      role: profileMap.get(u.id)?.role ?? "user",
-      display_name: profileMap.get(u.id)?.display_name ?? null,
-      account_disabled: profileMap.get(u.id)?.account_disabled === true,
-    }))
+    const list = users.users.map((u) => {
+      const prof = profileMap.get(u.id)
+      return {
+        id: u.id,
+        email: u.email,
+        created_at: u.created_at,
+        role: prof?.role ?? "user",
+        display_name: prof?.display_name ?? null,
+        account_disabled: prof?.account_disabled === true,
+        is_sandbox: isSandboxProfileRow(prof ?? null),
+      }
+    })
     return new Response(JSON.stringify({ users: list }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
@@ -164,7 +172,11 @@ Deno.serve(async (req) => {
   }
 
   if (req.method === "PATCH") {
-    let body: { user_id?: string; account_disabled?: boolean }
+    let body: {
+      user_id?: string
+      account_disabled?: boolean
+      action?: string
+    }
     try {
       body = await req.json()
     } catch {
@@ -180,6 +192,79 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
     }
+
+    if (body.action === "graduate_sandbox_to_live") {
+      const { data: prof, error: profErr } = await adminClient
+        .from("profiles")
+        .select("id, role, portal_config, metadata")
+        .eq("id", targetId)
+        .maybeSingle()
+      if (profErr) {
+        return new Response(JSON.stringify({ error: profErr.message }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+      if (!prof?.id) {
+        return new Response(JSON.stringify({ error: "No profile row for that user." }), {
+          status: 422,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+      const updates = buildGraduateSandboxUpdates(prof as {
+        role?: string
+        portal_config?: Record<string, unknown> | null
+        metadata?: Record<string, unknown> | null
+      })
+      if (!updates) {
+        return new Response(JSON.stringify({ error: "This account is not in sandbox mode." }), {
+          status: 409,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+      const nowIso = new Date().toISOString()
+      const { data: updated, error: patchErr } = await adminClient
+        .from("profiles")
+        .update({
+          role: updates.role,
+          portal_config: updates.portal_config,
+          metadata: updates.metadata,
+          updated_at: nowIso,
+        })
+        .eq("id", targetId)
+        .select("id, role, portal_config, metadata")
+        .maybeSingle()
+      if (patchErr) {
+        return new Response(JSON.stringify({ error: patchErr.message }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+      if (!updated?.id) {
+        return new Response(JSON.stringify({ error: "Profile update did not apply." }), {
+          status: 422,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+      try {
+        await adminClient.auth.admin.updateUserById(targetId, {
+          user_metadata: { sandbox_account: null },
+        })
+      } catch {
+        /* best-effort auth metadata cleanup */
+      }
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          id: updated.id,
+          role: updates.role,
+          portal_config: updates.portal_config,
+          is_sandbox: false,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      )
+    }
+
     if (typeof body.account_disabled !== "boolean") {
       return new Response(JSON.stringify({ error: "account_disabled must be true or false" }), {
         status: 400,

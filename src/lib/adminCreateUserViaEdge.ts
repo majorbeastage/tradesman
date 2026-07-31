@@ -47,6 +47,50 @@ export async function createUserViaAdminUsersEdge(
   }
 }
 
+export type GraduateSandboxEdgeOk = {
+  ok: true
+  role: string
+  portal_config: Record<string, unknown>
+}
+
+/** Graduate a training sandbox account to live production mode via admin-users Edge. */
+export async function graduateSandboxToLiveViaAdminUsersEdge(
+  supabaseUrl: string,
+  accessToken: string,
+  userId: string,
+): Promise<GraduateSandboxEdgeOk | { ok: false; error: string; tryDirectDb: boolean }> {
+  const base = supabaseUrl.replace(/\/$/, "")
+  if (!base) return { ok: false, error: "Missing Supabase URL", tryDirectDb: true }
+  try {
+    const res = await fetch(`${base}/functions/v1/admin-users`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ user_id: userId, action: "graduate_sandbox_to_live" }),
+    })
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean
+      error?: string
+      role?: string
+      portal_config?: Record<string, unknown>
+    }
+    if (res.ok && data.ok === true && typeof data.role === "string") {
+      return {
+        ok: true,
+        role: data.role,
+        portal_config: data.portal_config && typeof data.portal_config === "object" ? data.portal_config : {},
+      }
+    }
+    const errMsg = typeof data.error === "string" ? data.error : `HTTP ${res.status}`
+    if (res.status === 404) return { ok: false, error: errMsg, tryDirectDb: true }
+    return { ok: false, error: errMsg, tryDirectDb: false }
+  } catch {
+    return { ok: false, error: "Network error", tryDirectDb: true }
+  }
+}
+
 /** Set profiles.account_disabled via admin-users Edge (service role; bypasses RLS). */
 export async function patchAccountDisabledViaAdminUsersEdge(
   supabaseUrl: string,

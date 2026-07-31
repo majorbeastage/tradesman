@@ -1,5 +1,7 @@
 /** Organization chart — stored on profiles.metadata.organization_chart_v1 */
 
+import { isSandboxDemoUserId } from "./sandboxDemoTeam"
+
 export type OrgChartNode = {
   id: string
   label: string
@@ -147,6 +149,24 @@ export function mergeOrganizationChartMetadata(
   return {
     ...prevMeta,
     [ORG_CHART_META_KEY]: { ...doc, v: 1, updated_at: new Date().toISOString() },
+  }
+}
+
+/** Remove fictional sandbox-demo-* links from a live production org chart. */
+export function stripSandboxDemoLinksFromOrgChart(doc: OrganizationChartDoc): {
+  doc: OrganizationChartDoc
+  changed: boolean
+} {
+  let changed = false
+  const nodes = doc.nodes.map((node) => {
+    if (!node.linkedUserId || !isSandboxDemoUserId(node.linkedUserId)) return node
+    changed = true
+    return { ...node, linkedUserId: null }
+  })
+  if (!changed) return { doc, changed: false }
+  return {
+    doc: { ...doc, nodes, updated_at: new Date().toISOString() },
+    changed: true,
   }
 }
 

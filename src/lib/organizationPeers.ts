@@ -3,6 +3,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { UserRole } from "../contexts/AuthContext"
 import { resolveInternalMemberLabel } from "./profileContactMeta"
+import { isProductionLinkableProfile } from "./productionOrgMembers"
 
 /** Matches AuthContext DEFAULT_CLIENT_ID — Tradesman platform org. */
 export const TRADESMAN_PLATFORM_ORG_CLIENT_ID = "00000000-0000-0000-0000-000000000001"
@@ -125,10 +126,14 @@ export async function loadOrganizationPeers(client: SupabaseClient, userId: stri
   const peerIds = await loadOrganizationPeerIds(client, userId)
   if (!peerIds.length) return []
 
-  const { data, error } = await client.from("profiles").select("id, display_name, email, role, metadata").in("id", peerIds)
+  const { data, error } = await client
+    .from("profiles")
+    .select("id, display_name, email, role, metadata, portal_config, account_disabled")
+    .in("id", peerIds)
   if (error) throw error
 
   return (data as ProfileRow[])
+    .filter((row) => isProductionLinkableProfile(row))
     .map((row) => ({
       id: row.id,
       displayName: resolveInternalMemberLabel(row),

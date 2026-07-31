@@ -5,6 +5,8 @@ import { parseJobTitleNickname } from "./jobTitleNickname"
 import { labelForProfileRole } from "./profileRoles"
 import { loadOrganizationPeerIds } from "./organizationPeers"
 import { parseSandboxDemoTeam, type SandboxDemoTeamMember } from "./sandboxDemoTeam"
+import { isProductionLinkableProfile, isSandboxTrainingOwner } from "./productionOrgMembers"
+import type { PortalConfig } from "../types/portal-builder"
 
 export type LinkableOrgUser = {
   id: string
@@ -15,10 +17,20 @@ export type LinkableOrgUser = {
   isDemo?: boolean
 }
 
+type ProfilePick = {
+  id: string
+  display_name?: string | null
+  email?: string | null
+  metadata?: unknown
+  role?: string | null
+  portal_config?: unknown
+  account_disabled?: boolean | null
+}
+
 function pushProfileRow(
   out: LinkableOrgUser[],
   seen: Set<string>,
-  row: { id: string; display_name?: string | null; email?: string | null; metadata?: unknown },
+  row: ProfilePick,
   displayNameOverride?: string,
 ): void {
   if (!row.id || seen.has(row.id)) return
@@ -41,24 +53,6 @@ function pushDemoMember(out: LinkableOrgUser[], seen: Set<string>, member: Sandb
     jobTitle: member.title?.trim() || labelForProfileRole(member.role),
     isDemo: true,
   })
-}
-
-function isSandboxProfileRow(
-  metadata: unknown,
-  portalConfig: unknown,
-): boolean {
-  const meta =
-    metadata && typeof metadata === "object" && !Array.isArray(metadata)
-      ? (metadata as Record<string, unknown>)
-      : {}
-  const pc =
-    portalConfig && typeof portalConfig === "object" && !Array.isArray(portalConfig)
-      ? (portalConfig as Record<string, unknown>)
-      : {}
-  if (pc.sandbox_account === true || meta.sandbox_account === true) return true
-  if (typeof meta.sandbox_expires_at === "string" && meta.sandbox_expires_at.trim()) return true
-  if (parseSandboxDemoTeam(meta.sandbox_demo_team).length > 0 && meta.sandbox_demo_team != null) return true
-  return false
 }
 
 async function loadManagedOrgProfileIds(client: SupabaseClient, accountOwnerId: string): Promise<string[]> {
@@ -87,15 +81,15 @@ export async function loadLinkableOrgUsers(
   if (owner) pushProfileRow(out, seen, owner)
 
   const ownerRole = typeof owner?.role === "string" ? (owner.role as UserRole) : null
-  const ownerMeta = owner?.metadata
-  const ownerPortal = owner?.portal_config
+  const ownerMeta =
+    owner?.metadata && typeof owner.metadata === "object" && !Array.isArray(owner.metadata)
+      ? (owner.metadata as Record<string, unknown>)
+      : null
+  const ownerPortal = (owner?.portal_config as PortalConfig | null | undefined) ?? null
+  const ownerIsSandbox = isSandboxTrainingOwner(ownerPortal, ownerMeta, owner?.role)
 
-  if (isSandboxProfileRow(ownerMeta, ownerPortal)) {
-    const demoTeam = parseSandboxDemoTeam(
-      ownerMeta && typeof ownerMeta === "object" && !Array.isArray(ownerMeta)
-        ? (ownerMeta as Record<string, unknown>).sandbox_demo_team
-        : null,
-    )
+  if (ownerIsSandbox) {
+    const demoTeam = parseSandboxDemoTeam(ownerMeta?.sandbox_demo_team)
     for (const member of demoTeam) pushDemoMember(out, seen, member)
   }
 
@@ -110,10 +104,13 @@ export async function loadLinkableOrgUsers(
   if (shellIds.length) {
     const { data: shells, error: shellErr } = await client
       .from("profiles")
-      .select("id, display_name, email, metadata")
+      .select("id, display_name, email, metadata, role, portal_config, account_disabled")
       .in("id", shellIds)
     if (shellErr) throw shellErr
-    for (const row of shells ?? []) pushProfileRow(out, seen, row)
+    for (const row of shells ?? []) {
+      if (!isProductionLinkableProfile(row)) continue
+      pushProfileRow(out, seen, row)
+    }
   }
 
   if (ownerRole === "corporate_management" || ownerRole === "office_manager") {
@@ -121,10 +118,13 @@ export async function loadLinkableOrgUsers(
     if (managedIds.length) {
       const { data: managed, error: managedErr } = await client
         .from("profiles")
-        .select("id, display_name, email, metadata")
+        .select("id, display_name, email, metadata, role, portal_config, account_disabled")
         .in("id", managedIds)
       if (managedErr) throw managedErr
-      for (const row of managed ?? []) pushProfileRow(out, seen, row)
+      for (const row of managed ?? []) {
+        if (!isProductionLinkableProfile(row)) continue
+        pushProfileRow(out, seen, row)
+      }
     }
   }
 
@@ -133,10 +133,13 @@ export async function loadLinkableOrgUsers(
   if (missingPeerIds.length) {
     const { data: peers, error: peerErr } = await client
       .from("profiles")
-      .select("id, display_name, email, metadata")
+      .select("id, display_name, email, metadata, role, portal_config, account_disabled")
       .in("id", missingPeerIds)
     if (peerErr) throw peerErr
-    for (const row of peers ?? []) pushProfileRow(out, seen, row)
+    for (const row of peers ?? []) {
+      if (!isProductionLinkableProfile(row)) continue
+      pushProfileRow(out, seen, row)
+    }
   }
 
   return out.sort((a, b) => a.displayName.localeCompare(b.displayName))

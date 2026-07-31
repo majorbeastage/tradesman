@@ -2,9 +2,10 @@ import { useState, useEffect, useMemo } from "react"
 import { useAuth, type UserRole } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
-import { createUserViaAdminUsersEdge, patchAccountDisabledViaAdminUsersEdge } from "../../lib/adminCreateUserViaEdge"
+import { createUserViaAdminUsersEdge, graduateSandboxToLiveViaAdminUsersEdge, patchAccountDisabledViaAdminUsersEdge } from "../../lib/adminCreateUserViaEdge"
 import { AdminSettingBlock } from "../../components/admin/AdminSettingChrome"
 import { getDefaultPortalConfigForNewUser, upgradePortalConfigFromNewUserToUser, type PortalConfig } from "../../types/portal-builder"
+import { buildGraduateSandboxProfileUpdates, isGraduateSandboxCandidate } from "../../lib/graduateSandboxToLive"
 import {
   isManagedUserRole,
   isOfficeManagerAssignmentRole,
@@ -21,6 +22,7 @@ type UserRow = {
   role: string
   display_name: string | null
   account_disabled: boolean
+  isSandbox: boolean
 }
 
 type AdminUsersSectionProps = {
@@ -43,7 +45,8 @@ function userRowSearchText(u: UserRow): string {
   const first = parts[0] ?? ""
   const last = parts.length > 1 ? parts.slice(1).join(" ") : ""
   const access = u.account_disabled ? "inactive" : "active"
-  return [dn, first, last, u.email ?? "", u.role, u.id, access].join(" ").toLowerCase()
+  const mode = u.isSandbox ? "sandbox" : "live"
+  return [dn, first, last, u.email ?? "", u.role, u.id, access, mode].join(" ").toLowerCase()
 }
 
 export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUsersSectionProps) {
@@ -64,6 +67,7 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
   const [omByUserId, setOmByUserId] = useState<Record<string, string>>({})
   const [updatingOmUserId, setUpdatingOmUserId] = useState<string | null>(null)
   const [userTableSearch, setUserTableSearch] = useState("")
+  const [graduatingUserId, setGraduatingUserId] = useState<string | null>(null)
 
   async function loadUsers() {
     if (!session?.access_token) {
@@ -79,7 +83,7 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
             method: "GET",
             headers: { Authorization: `Bearer ${session.access_token}` },
           })
-          const data = (await res.json().catch(() => ({}))) as { users?: Partial<UserRow>[] }
+          const data = (await res.json().catch(() => ({}))) as { users?: Partial<UserRow & { is_sandbox?: boolean }>[] }
           if (res.ok && Array.isArray(data.users) && data.users.length > 0) {
             const rows: UserRow[] = data.users.map((u) => ({
               id: u.id as string,
@@ -88,6 +92,7 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
               role: (u.role as string) ?? "user",
               display_name: u.display_name ?? null,
               account_disabled: (u as { account_disabled?: boolean }).account_disabled === true,
+              isSandbox: (u as { is_sandbox?: boolean }).is_sandbox === true,
             }))
             setUsers(rows)
             return
@@ -107,13 +112,14 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
         .select("id, email, created_at, role, display_name, account_disabled")
       const { data: profiles, error: profilesError } = await supabase
         .from("profiles")
-        .select("id, email, role, display_name, created_at, account_disabled")
+        .select("id, email, role, display_name, created_at, account_disabled, portal_config, metadata")
 
       const merged = new Map<string, UserRow>()
-      for (const row of (list ?? []) as Array<Omit<UserRow, "account_disabled"> & { account_disabled?: boolean }>) {
+      for (const row of (list ?? []) as Array<Omit<UserRow, "account_disabled" | "isSandbox"> & { account_disabled?: boolean }>) {
         merged.set(row.id, {
           ...row,
           account_disabled: row.account_disabled === true,
+          isSandbox: false,
         })
       }
       for (const p of (profiles ?? []) as Array<{
@@ -123,8 +129,15 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
         display_name: string | null
         created_at?: string
         account_disabled?: boolean | null
+        portal_config?: PortalConfig | null
+        metadata?: Record<string, unknown> | null
       }>) {
         const prev = merged.get(p.id)
+        const portalConfig = p.portal_config ?? null
+        const metadata =
+          p.metadata && typeof p.metadata === "object" && !Array.isArray(p.metadata)
+            ? (p.metadata as Record<string, unknown>)
+            : null
         merged.set(p.id, {
           id: p.id,
           email: prev?.email ?? p.email ?? null,
@@ -132,6 +145,7 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
           role: p.role ?? prev?.role ?? "user",
           display_name: p.display_name ?? prev?.display_name ?? null,
           account_disabled: p.account_disabled === true || prev?.account_disabled === true,
+          isSandbox: isGraduateSandboxCandidate(portalConfig, metadata, p.role),
         })
       }
 
@@ -231,6 +245,95 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
   }
 
   const [accessSavingUserId, setAccessSavingUserId] = useState<string | null>(null)
+
+  async function handleGraduateSandboxToLive(userId: string) {
+    if (!supabase) return
+    const row = users.find((u) => u.id === userId)
+    if (!row?.isSandbox) return
+    const label = row.email ?? row.display_name ?? userId.slice(0, 8)
+    const ok = window.confirm(
+      `Graduate ${label} from sandbox to live?\n\n` +
+        "• Training banner and simulated SMS/email will stop\n" +
+        "• Leads and Conversations tabs will be turned on\n" +
+        "• Sample CRM data is kept\n" +
+        "• Configure Twilio in Admin → Communications before the client sends real texts or calls\n\n" +
+        "Continue?",
+    )
+    if (!ok) return
+
+    setGraduatingUserId(userId)
+    setError("")
+    setMessage("")
+    try {
+      if (session?.access_token && supabaseUrl) {
+        const edge = await graduateSandboxToLiveViaAdminUsersEdge(supabaseUrl, session.access_token, userId)
+        if (edge.ok) {
+          setUsers((prev) =>
+            prev.map((u) =>
+              u.id === userId ? { ...u, role: edge.role, isSandbox: false } : u,
+            ),
+          )
+          if (onUserPortalConfigUpdated) {
+            onUserPortalConfigUpdated(userId, edge.portal_config as PortalConfig)
+          }
+          setMessage(`${label} is now a live account. Have them sign out and back in, then finish Communications setup.`)
+          return
+        }
+        if (!edge.tryDirectDb) {
+          setError(edge.error)
+          return
+        }
+      }
+
+      const { data: prof, error: profErr } = await supabase
+        .from("profiles")
+        .select("role, portal_config, metadata")
+        .eq("id", userId)
+        .maybeSingle()
+      if (profErr) {
+        setError(profErr.message)
+        return
+      }
+      const portalConfig = (prof?.portal_config as PortalConfig | null | undefined) ?? null
+      const metadata =
+        prof?.metadata && typeof prof.metadata === "object" && !Array.isArray(prof.metadata)
+          ? (prof.metadata as Record<string, unknown>)
+          : null
+      const updates = buildGraduateSandboxProfileUpdates({
+        role: prof?.role,
+        portal_config: portalConfig,
+        metadata,
+      })
+      if (!updates) {
+        setError("This account is not in sandbox mode.")
+        return
+      }
+      const { error: err } = await supabase
+        .from("profiles")
+        .update({
+          role: updates.role,
+          portal_config: updates.portal_config,
+          metadata: updates.metadata,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", userId)
+      if (err) {
+        setError(err.message)
+        return
+      }
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.id === userId ? { ...u, role: updates.role, isSandbox: false } : u,
+        ),
+      )
+      if (onUserPortalConfigUpdated) {
+        onUserPortalConfigUpdated(userId, updates.portal_config)
+      }
+      setMessage(`${label} is now a live account. Have them sign out and back in, then finish Communications setup.`)
+    } finally {
+      setGraduatingUserId(null)
+    }
+  }
 
   async function handleTableAccessChange(userId: string, disabled: boolean) {
     if (!supabase) return
@@ -415,6 +518,7 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
               role,
               display_name: displayName,
               account_disabled: false,
+              isSandbox: false,
             },
             ...prev,
           ]
@@ -472,6 +576,7 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
               role,
               display_name: displayName,
               account_disabled: false,
+              isSandbox: false,
             },
             ...prev,
           ]
@@ -681,13 +786,14 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
           )}
           <AdminSettingBlock id="admin:users:user_table">
           <div style={{ width: "100%", overflowX: "auto" }}>
-        <table style={{ width: "100%", minWidth: 1080, borderCollapse: "collapse", background: "white", borderRadius: 8, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
+        <table style={{ width: "100%", minWidth: 1180, borderCollapse: "collapse", background: "white", borderRadius: 8, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
           <thead>
             <tr style={{ background: theme.charcoalSmoke, color: "white" }}>
               <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>First name</th>
               <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Last name</th>
               <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Email</th>
               <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Role</th>
+              <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Mode</th>
               <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Access</th>
               <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Office manager</th>
               <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Customer</th>
@@ -696,10 +802,10 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
           </thead>
           <tbody>
             {users.length === 0 ? (
-              <tr><td colSpan={8} style={{ padding: 16, color: theme.text, opacity: 0.8 }}>No users in list. Create one above — they will appear here.</td></tr>
+              <tr><td colSpan={9} style={{ padding: 16, color: theme.text, opacity: 0.8 }}>No users in list. Create one above — they will appear here.</td></tr>
             ) : filteredUsers.length === 0 ? (
               <tr>
-                <td colSpan={8} style={{ padding: 16, color: theme.text, opacity: 0.8 }}>
+                <td colSpan={9} style={{ padding: 16, color: theme.text, opacity: 0.8 }}>
                   No users match your search. Clear the search box to see everyone.
                 </td>
               </tr>
@@ -737,6 +843,58 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
                     <option value="admin">{PROFILE_ROLE_LABELS.admin}</option>
                   </select>
                   {roleSavingUserId === u.id && <span style={{ fontSize: 11, marginLeft: 6, opacity: 0.8 }}>Saving…</span>}
+                </td>
+                <td style={{ padding: "12px", color: theme.text, minWidth: 132 }}>
+                  {u.isSandbox ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
+                      <span
+                        style={{
+                          display: "inline-block",
+                          padding: "2px 8px",
+                          borderRadius: 999,
+                          fontSize: 11,
+                          fontWeight: 700,
+                          background: "rgba(251, 191, 36, 0.25)",
+                          color: "#92400e",
+                          border: "1px solid #fbbf24",
+                        }}
+                      >
+                        Sandbox
+                      </span>
+                      <button
+                        type="button"
+                        disabled={graduatingUserId === u.id}
+                        onClick={() => void handleGraduateSandboxToLive(u.id)}
+                        style={{
+                          padding: "5px 10px",
+                          borderRadius: 6,
+                          border: "none",
+                          background: theme.primary,
+                          color: "white",
+                          fontSize: 12,
+                          fontWeight: 600,
+                          cursor: graduatingUserId === u.id ? "wait" : "pointer",
+                        }}
+                      >
+                        {graduatingUserId === u.id ? "Graduating…" : "Go live"}
+                      </button>
+                    </div>
+                  ) : (
+                    <span
+                      style={{
+                        display: "inline-block",
+                        padding: "2px 8px",
+                        borderRadius: 999,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        background: "rgba(16, 185, 129, 0.12)",
+                        color: "#047857",
+                        border: "1px solid #6ee7b7",
+                      }}
+                    >
+                      Live
+                    </span>
+                  )}
                 </td>
                 <td style={{ padding: "12px", color: theme.text, minWidth: 120 }}>
                   <select

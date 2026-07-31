@@ -7,6 +7,7 @@ import { formatAppError } from "../../lib/formatAppError"
 import { saveJobTitleNicknameForProfile } from "../../lib/jobTitleNickname"
 import { isSandboxDemoUserId } from "../../lib/sandboxDemoTeam"
 import { loadLinkableOrgUsers, type LinkableOrgUser } from "../../lib/orgChartMembers"
+import { isSandboxTrainingOwner } from "../../lib/productionOrgMembers"
 import {
   canvasPointFromEvent,
   connectorIn,
@@ -24,6 +25,7 @@ import {
   downloadOrgChartSvg,
   loadOrganizationChartFromMetadata,
   mergeOrganizationChartMetadata,
+  stripSandboxDemoLinksFromOrgChart,
   newOrgChartEdge,
   newOrgChartNode,
   orgChartEdgeGeometry,
@@ -42,6 +44,7 @@ import {
   type ExternalContact,
   type ExternalContactsDoc,
 } from "../../lib/externalContacts"
+import type { PortalConfig } from "../../types/portal-builder"
 
 type Props = {
   setPage: (page: string) => void
@@ -84,6 +87,7 @@ export default function OrganizationChartPage({ setPage }: Props) {
     loadExternalContactsFromMetadata(null),
   )
   const [members, setMembers] = useState<LinkableOrgUser[]>([])
+  const [ownerIsSandbox, setOwnerIsSandbox] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saveFlash, setSaveFlash] = useState("")
@@ -122,13 +126,22 @@ export default function OrganizationChartPage({ setPage }: Props) {
         if (cancelled) return
         setCanEditStructure(editable)
         const [profileRes, team] = await Promise.all([
-          supabase.from("profiles").select("metadata").eq("id", ownerId).maybeSingle(),
+          supabase.from("profiles").select("metadata, portal_config, role").eq("id", ownerId).maybeSingle(),
           loadLinkableOrgUsers(supabase, ownerId),
         ])
         if (cancelled) return
         if (profileRes.error) setErr(profileRes.error.message)
         else {
-          setDoc(loadOrganizationChartFromMetadata(profileRes.data?.metadata))
+          const ownerMeta =
+            profileRes.data?.metadata && typeof profileRes.data.metadata === "object" && !Array.isArray(profileRes.data.metadata)
+              ? (profileRes.data.metadata as Record<string, unknown>)
+              : null
+          const ownerPortal = (profileRes.data?.portal_config as PortalConfig | null) ?? null
+          const sandboxOwner = isSandboxTrainingOwner(ownerPortal, ownerMeta, profileRes.data?.role)
+          setOwnerIsSandbox(sandboxOwner)
+          const loaded = loadOrganizationChartFromMetadata(profileRes.data?.metadata)
+          const { doc: cleaned } = stripSandboxDemoLinksFromOrgChart(loaded)
+          setDoc(cleaned)
           setExternalContacts(loadExternalContactsFromMetadata(profileRes.data?.metadata))
         }
         setMembers(team)
@@ -505,6 +518,7 @@ export default function OrganizationChartPage({ setPage }: Props) {
     const map = new Map(members.map((m) => [m.id, m]))
     for (const n of doc.nodes) {
       if (!n.linkedUserId || map.has(n.linkedUserId)) continue
+      if (!ownerIsSandbox && isSandboxDemoUserId(n.linkedUserId)) continue
       map.set(n.linkedUserId, {
         id: n.linkedUserId,
         displayName: isSandboxDemoUserId(n.linkedUserId) ? "Demo team member" : "Linked user",
@@ -514,7 +528,7 @@ export default function OrganizationChartPage({ setPage }: Props) {
       })
     }
     return map
-  }, [members, doc.nodes])
+  }, [members, doc.nodes, ownerIsSandbox])
 
   const orgNodeLinkedLabel = useCallback(
     (n: OrgChartNode): string | null => {
