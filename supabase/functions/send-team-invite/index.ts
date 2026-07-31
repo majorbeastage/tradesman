@@ -4,6 +4,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
 import { resolveEffectiveEntitlementsFromMetadata } from "../_shared/effective-entitlements.ts"
+import { assignOfficeManagerClient } from "../_shared/team-office-manager-sync.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -47,7 +48,7 @@ Deno.serve(async (req) => {
   }
 
   const ownerId = authUser.user.id
-  let body: { invite_email?: string; invite_role?: string; invite_id?: string }
+  let body: { invite_email?: string; invite_role?: string; invite_id?: string; account_owner_id?: string }
   try {
     body = await req.json()
   } catch {
@@ -55,6 +56,32 @@ Deno.serve(async (req) => {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
+  }
+
+  const requestedOwnerId =
+    typeof body.account_owner_id === "string" && body.account_owner_id.trim()
+      ? body.account_owner_id.trim()
+      : ""
+  let teamOwnerId = ownerId
+  if (requestedOwnerId && requestedOwnerId !== ownerId) {
+    const { data: actorProf, error: actorErr } = await admin
+      .from("profiles")
+      .select("role")
+      .eq("id", ownerId)
+      .maybeSingle()
+    if (actorErr) {
+      return new Response(JSON.stringify({ error: actorErr.message }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      })
+    }
+    if (actorProf?.role !== "admin") {
+      return new Response(JSON.stringify({ error: "Not authorized to invite for another account." }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      })
+    }
+    teamOwnerId = requestedOwnerId
   }
 
   const inviteEmail = typeof body.invite_email === "string" ? body.invite_email.trim().toLowerCase() : ""
@@ -74,12 +101,19 @@ Deno.serve(async (req) => {
 
   const { data: ownerProf, error: ownerProfErr } = await admin
     .from("profiles")
-    .select("metadata, display_name")
-    .eq("id", ownerId)
+    .select("metadata, display_name, role")
+    .eq("id", teamOwnerId)
     .maybeSingle()
   if (ownerProfErr) {
     return new Response(JSON.stringify({ error: ownerProfErr.message }), {
       status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    })
+  }
+  const ownerRole = typeof ownerProf?.role === "string" ? ownerProf.role : ""
+  if (ownerRole !== "office_manager" && ownerRole !== "corporate_management" && ownerRole !== "admin") {
+    return new Response(JSON.stringify({ error: "Only account owners can invite team members." }), {
+      status: 403,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
   }
@@ -92,7 +126,7 @@ Deno.serve(async (req) => {
   const { data: inviteRows, error: inviteListErr } = await admin
     .from("team_member_invites")
     .select("id, invite_role, status, accepted_at, shell_profile_id")
-    .eq("account_owner_id", ownerId)
+    .eq("account_owner_id", teamOwnerId)
   if (inviteListErr) {
     return new Response(JSON.stringify({ error: inviteListErr.message }), {
       status: 500,
@@ -100,7 +134,7 @@ Deno.serve(async (req) => {
     })
   }
 
-  const { data: omLinks } = await admin.from("office_manager_clients").select("user_id").eq("office_manager_id", ownerId)
+  const { data: omLinks } = await admin.from("office_manager_clients").select("user_id").eq("office_manager_id", teamOwnerId)
   const activeMemberIds = new Set<string>()
   for (const inv of inviteRows ?? []) {
     const shellId = (inv as { shell_profile_id?: string | null }).shell_profile_id
@@ -108,7 +142,7 @@ Deno.serve(async (req) => {
   }
   for (const row of omLinks ?? []) {
     const uid = (row as { user_id?: string }).user_id
-    if (uid && uid !== ownerId) activeMemberIds.add(uid)
+    if (uid && uid !== teamOwnerId) activeMemberIds.add(uid)
   }
 
   const pending = (inviteRows ?? []).filter((i) => (i as { status?: string }).status === "pending").length
@@ -157,7 +191,7 @@ Deno.serve(async (req) => {
   const { data: inviteRow, error: insErr } = await admin
     .from("team_member_invites")
     .insert({
-      account_owner_id: ownerId,
+      account_owner_id: teamOwnerId,
       invite_email: inviteEmail,
       invite_role: inviteRole,
       token_hash: tokenHash,
@@ -172,6 +206,19 @@ Deno.serve(async (req) => {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
+  }
+
+  const { data: existingProf } = await admin.from("profiles").select("id").eq("email", inviteEmail).maybeSingle()
+  if (existingProf?.id && existingProf.id !== teamOwnerId) {
+    try {
+      await assignOfficeManagerClient(admin, existingProf.id, teamOwnerId)
+      await admin
+        .from("team_member_invites")
+        .update({ shell_profile_id: existingProf.id })
+        .eq("id", inviteRow.id)
+    } catch (e) {
+      console.warn("[send-team-invite] office_manager_clients sync", e instanceof Error ? e.message : e)
+    }
   }
 
   const resendKey = Deno.env.get("RESEND_API_KEY")?.trim()

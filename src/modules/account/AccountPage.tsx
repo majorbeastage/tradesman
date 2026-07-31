@@ -868,8 +868,8 @@ export function AccountProfilePanel({
                 ) : null
               const sectionBody = (() => {
               if (sectionId === "team_members") {
-                if (adminContext || !user?.id) return null
-                return <TeamMemberInvitesPanel ownerUserId={user.id} category={cat} defaultCollapsed />
+                if (adminContext || !profileUserId) return null
+                return <TeamMemberInvitesPanel ownerUserId={profileUserId} category={cat} defaultCollapsed />
               }
               if (sectionId === "profile") return (
             <Fragment key={sectionId}>

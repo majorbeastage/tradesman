@@ -14,6 +14,7 @@ import {
 } from "../lib/teamMembers"
 import { resolveAccountStructureOwnerId } from "../lib/accountStructureOwner"
 import { isManagedUserRole } from "../lib/profileRoles"
+import { usePortalViewReadOnly } from "../contexts/PortalViewContext"
 import type { AccountSettingsCategory } from "../modules/account/accountSettingsLayout"
 import { accountSettingsCategoryStyle, accountSettingsFoldButtonStyle } from "../modules/account/accountSettingsLayout"
 
@@ -34,6 +35,7 @@ function statusLabel(status: string, acceptedAt: string | null): string {
 
 export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed = true }: Props) {
   const { session, role: authRole } = useAuth()
+  const portalReadOnly = usePortalViewReadOnly()
   const [open, setOpen] = useState(!defaultCollapsed)
   const [accountOwnerId, setAccountOwnerId] = useState(ownerUserId)
   const [canManageTeam, setCanManageTeam] = useState(true)
@@ -58,14 +60,15 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
       resolvedOwner = ownerUserId
     }
     setAccountOwnerId(resolvedOwner)
-    setCanManageTeam(ownerUserId === resolvedOwner && !isManagedUserRole(authRole ?? ""))
+    const isAccountOwnerView = ownerUserId === resolvedOwner
+    setCanManageTeam(isAccountOwnerView && !isManagedUserRole(authRole ?? "") && !portalReadOnly)
 
     const bundle = await loadTeamMembersBundle(supabase, resolvedOwner, session?.access_token ?? null)
     setInvites(bundle.invites)
     setActiveMembers(bundle.activeMembers)
     setProfileMetadata(bundle.ownerMetadata)
     setOwnerDisplayName(bundle.ownerDisplayName)
-  }, [ownerUserId, session?.access_token, authRole])
+  }, [ownerUserId, session?.access_token, authRole, portalReadOnly])
 
   useEffect(() => {
     void load().catch(() => {})
@@ -109,7 +112,11 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
         Authorization: `Bearer ${token}`,
         apikey: import.meta.env.VITE_SUPABASE_ANON_KEY as string,
       },
-      body: JSON.stringify({ invite_email: email.trim(), invite_role: role }),
+      body: JSON.stringify({
+        invite_email: email.trim(),
+        invite_role: role,
+        account_owner_id: accountOwnerId,
+      }),
     })
     const json = (await res.json().catch(() => ({}))) as { error?: string }
     setBusy(false)
@@ -187,25 +194,34 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
         <div style={{ padding: 16, display: "grid", gap: 14, borderTop: category ? `1px solid ${category.color.border}` : `1px solid ${theme.border}` }}>
           <div style={{ fontSize: 12, color: "#475569", lineHeight: 1.5 }}>
             <strong>{seats.packageLabel}</strong>
-            {" · "}
-            <span>{seats.seatSummaryLabel}</span>
-            <br />
-            <span style={{ marginTop: 4, display: "inline-block" }}>
-              {seats.usedSeats} of {seats.totalSeats} team seat{seats.totalSeats === 1 ? "" : "s"} in use
-              {seats.officeManagerLimit > 0
-                ? ` · Office managers ${seats.officeManagersUsed}/${seats.officeManagerLimit}`
-                : ""}
-              {seats.userLimit > 0 ? ` · Users ${seats.usersUsed}/${seats.userLimit}` : ""}
-            </span>
+            {seats.seatSummaryLabel ? (
+              <>
+                {" · "}
+                <span>{seats.seatSummaryLabel}</span>
+              </>
+            ) : null}
+            {(seats.officeManagerLimit > 0 || seats.userLimit > 0) ? (
+              <span style={{ marginTop: 4, display: "inline-block" }}>
+                {seats.officeManagerLimit > 0
+                  ? `Office managers ${seats.officeManagersUsed}/${seats.officeManagerLimit}`
+                  : null}
+                {seats.officeManagerLimit > 0 && seats.userLimit > 0 ? " · " : null}
+                {seats.userLimit > 0 ? `Users ${seats.usersUsed}/${seats.userLimit}` : null}
+              </span>
+            ) : null}
           </div>
 
-          {!canManageTeam && accountOwnerId !== ownerUserId ? (
+          {ownerUserId !== accountOwnerId ? (
             <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-              Team seats and members are managed by <strong>{ownerDisplayName}</strong>. Contact your account owner to add or remove people.
+              Team members for this account are managed by <strong>{ownerDisplayName}</strong>. Contact your account owner to add or remove people.
             </p>
           ) : null}
 
-          {seats.totalSeats <= 0 ? (
+          {ownerUserId === accountOwnerId &&
+          canManageTeam &&
+          seats.userLimit <= 0 &&
+          seats.officeManagerLimit <= 0 &&
+          !seats.teamInvitesAllowed ? (
             <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
               Your current plan includes only the account owner sign-in. Upgrade to an Office Manager or Corporate package to invite team members.
             </p>
