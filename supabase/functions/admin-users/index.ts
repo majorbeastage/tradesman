@@ -7,6 +7,7 @@ import {
   buildGraduateSandboxUpdates,
   isSandboxProfileRow,
 } from "../_shared/graduate-sandbox.ts"
+import { assignOfficeManagerClient } from "../_shared/team-office-manager-sync.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -188,7 +189,7 @@ Deno.serve(async (req) => {
     }
     const targetId = typeof body.user_id === "string" ? body.user_id.trim() : ""
 
-    if (body.action === "sync_team_member") {
+    if (body.action === "assign_office_manager" || body.action === "sync_team_member") {
       const managedUserId = targetId
       const officeManagerId =
         typeof body.office_manager_id === "string" && body.office_manager_id.trim()
@@ -200,64 +201,16 @@ Deno.serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         })
       }
-      if (!officeManagerId) {
-        await adminClient
-          .from("team_member_invites")
-          .update({ status: "revoked", shell_profile_id: null })
-          .eq("shell_profile_id", managedUserId)
-        return new Response(JSON.stringify({ ok: true, synced: false }), {
+      try {
+        await assignOfficeManagerClient(adminClient, managedUserId, officeManagerId)
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e)
+        return new Response(JSON.stringify({ error: message }), {
+          status: 500,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         })
       }
-      const { data: managedProf, error: managedErr } = await adminClient
-        .from("profiles")
-        .select("email, role")
-        .eq("id", managedUserId)
-        .maybeSingle()
-      if (managedErr || !managedProf) {
-        return new Response(JSON.stringify({ error: managedErr?.message ?? "Managed user profile not found" }), {
-          status: managedErr ? 500 : 422,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        })
-      }
-      const inviteRole =
-        managedProf.role === "office_manager" ||
-        managedProf.role === "corporate_internal" ||
-        managedProf.role === "corporate_external"
-          ? managedProf.role
-          : "user"
-      const nowIso = new Date().toISOString()
-      const tokenHash = crypto.randomUUID()
-      const { data: existingInvite } = await adminClient
-        .from("team_member_invites")
-        .select("id")
-        .eq("account_owner_id", officeManagerId)
-        .eq("shell_profile_id", managedUserId)
-        .maybeSingle()
-      if (existingInvite?.id) {
-        await adminClient
-          .from("team_member_invites")
-          .update({
-            invite_email: managedProf.email ?? null,
-            invite_role: inviteRole,
-            status: "accepted",
-            accepted_at: nowIso,
-            expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-          })
-          .eq("id", existingInvite.id)
-      } else {
-        await adminClient.from("team_member_invites").insert({
-          account_owner_id: officeManagerId,
-          invite_email: managedProf.email ?? null,
-          invite_role: inviteRole,
-          shell_profile_id: managedUserId,
-          token_hash: tokenHash,
-          status: "accepted",
-          accepted_at: nowIso,
-          expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-        })
-      }
-      return new Response(JSON.stringify({ ok: true, synced: true }), {
+      return new Response(JSON.stringify({ ok: true, synced: Boolean(officeManagerId) }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
     }

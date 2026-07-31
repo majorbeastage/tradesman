@@ -53,8 +53,8 @@ export type GraduateSandboxEdgeOk = {
   portal_config: Record<string, unknown>
 }
 
-/** Sync office_manager_clients admin assignment into team_member_invites for Team members UI. */
-export async function syncTeamMemberViaAdminUsersEdge(
+/** Assign office manager (Admin Users ↔ MyT Team members stay in sync). */
+export async function assignOfficeManagerViaAdminUsersEdge(
   supabaseUrl: string,
   accessToken: string,
   managedUserId: string,
@@ -71,7 +71,7 @@ export async function syncTeamMemberViaAdminUsersEdge(
       },
       body: JSON.stringify({
         user_id: managedUserId,
-        action: "sync_team_member",
+        action: "assign_office_manager",
         office_manager_id: officeManagerId,
       }),
     })
@@ -81,6 +81,16 @@ export async function syncTeamMemberViaAdminUsersEdge(
   } catch {
     return { ok: false, error: "Network error" }
   }
+}
+
+/** @deprecated Use assignOfficeManagerViaAdminUsersEdge */
+export async function syncTeamMemberViaAdminUsersEdge(
+  supabaseUrl: string,
+  accessToken: string,
+  managedUserId: string,
+  officeManagerId: string | null,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  return assignOfficeManagerViaAdminUsersEdge(supabaseUrl, accessToken, managedUserId, officeManagerId)
 }
 
 /** Graduate a training sandbox account to live production mode via admin-users Edge. */

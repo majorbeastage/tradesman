@@ -6,20 +6,14 @@ import {
   pickSupabaseUrlForServer,
 } from "./_communications.js"
 import { resolveInternalMemberLabel } from "./_organizationPeers.js"
+import {
+  loadLinkedTeamMemberIds,
+  parseTeamMemberRole,
+  reconcileTeamMembershipForOwner,
+  type TeamMemberRole,
+} from "./_teamOfficeManagerSync.js"
 
 type Json = Record<string, unknown>
-type TeamMemberRole = "user" | "office_manager" | "corporate_internal" | "corporate_external"
-
-function parseTeamMemberRole(value: unknown): TeamMemberRole {
-  if (
-    value === "office_manager" ||
-    value === "corporate_internal" ||
-    value === "corporate_external"
-  ) {
-    return value
-  }
-  return "user"
-}
 
 function cors(res: VercelResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*")
@@ -81,6 +75,9 @@ async function handleLoad(req: VercelRequest, res: VercelResponse) {
   }
   await assertAccountOwner(sb, ownerId)
 
+  // Align team_member_invites with office_manager_clients (Admin OM column = Active team).
+  await reconcileTeamMembershipForOwner(sb, ownerId)
+
   const { data: ownerProf, error: ownerErr } = await sb
     .from("profiles")
     .select("metadata, display_name")
@@ -106,20 +103,7 @@ async function handleLoad(req: VercelRequest, res: VercelResponse) {
     created_at?: string
   }>
 
-  const profileIds = new Set<string>()
-  for (const inv of invites) {
-    if (inv.shell_profile_id) profileIds.add(inv.shell_profile_id)
-  }
-  const { data: links, error: linkErr } = await sb
-    .from("office_manager_clients")
-    .select("user_id")
-    .eq("office_manager_id", ownerId)
-  if (linkErr) throw linkErr
-  for (const row of links ?? []) {
-    const uid = (row as { user_id?: string }).user_id
-    if (uid && uid !== ownerId) profileIds.add(uid)
-  }
-
+  const linkedIds = await loadLinkedTeamMemberIds(sb, ownerId)
   const inviteByProfile = new Map<string, (typeof invites)[number]>()
   for (const inv of invites) {
     if (inv.shell_profile_id) inviteByProfile.set(inv.shell_profile_id, inv)
@@ -134,11 +118,11 @@ async function handleLoad(req: VercelRequest, res: VercelResponse) {
     status: "active"
   }> = []
 
-  if (profileIds.size) {
+  if (linkedIds.length) {
     const { data: profiles, error: profErr } = await sb
       .from("profiles")
       .select("id, email, display_name, role, metadata")
-      .in("id", [...profileIds])
+      .in("id", linkedIds)
     if (profErr) throw profErr
     for (const row of profiles ?? []) {
       const r = row as { id: string; email?: string | null; display_name?: string | null; role?: string | null; metadata?: unknown }

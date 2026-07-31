@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react"
 import { useAuth, type UserRole } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
-import { createUserViaAdminUsersEdge, graduateSandboxToLiveViaAdminUsersEdge, patchAccountDisabledViaAdminUsersEdge, syncTeamMemberViaAdminUsersEdge } from "../../lib/adminCreateUserViaEdge"
+import { createUserViaAdminUsersEdge, graduateSandboxToLiveViaAdminUsersEdge, patchAccountDisabledViaAdminUsersEdge, assignOfficeManagerViaAdminUsersEdge } from "../../lib/adminCreateUserViaEdge"
 import { AdminSettingBlock } from "../../components/admin/AdminSettingChrome"
 import { getDefaultPortalConfigForNewUser, upgradePortalConfigFromNewUserToUser, type PortalConfig } from "../../types/portal-builder"
 import { buildGraduateSandboxProfileUpdates, isGraduateSandboxCandidate } from "../../lib/graduateSandboxToLive"
@@ -389,39 +389,22 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
   }, [users, userTableSearch])
 
   async function handleSetOfficeManager(managedUserId: string, officeManagerId: string | null) {
-    if (!supabase) return
-    setError("")
-    setUpdatingOmUserId(managedUserId)
-    const { error: delErr } = await supabase.from("office_manager_clients").delete().eq("user_id", managedUserId)
-    if (delErr) {
-      setError(delErr.message)
-      setUpdatingOmUserId(null)
+    if (!session?.access_token || !supabaseUrl) {
+      setError("Sign in required to assign office manager.")
       return
     }
-    if (officeManagerId) {
-      const { error: insErr } = await supabase
-        .from("office_manager_clients")
-        .insert({ office_manager_id: officeManagerId, user_id: managedUserId })
-      if (insErr) {
-        setError(insErr.message)
-        setUpdatingOmUserId(null)
-        return
-      }
-      if (session?.access_token && supabaseUrl) {
-        const sync = await syncTeamMemberViaAdminUsersEdge(
-          supabaseUrl,
-          session.access_token,
-          managedUserId,
-          officeManagerId,
-        )
-        if (!sync.ok) {
-          setError(`Office manager saved, but team invite sync failed: ${sync.error}`)
-          setUpdatingOmUserId(null)
-          return
-        }
-      }
-    } else if (session?.access_token && supabaseUrl) {
-      void syncTeamMemberViaAdminUsersEdge(supabaseUrl, session.access_token, managedUserId, null)
+    setError("")
+    setUpdatingOmUserId(managedUserId)
+    const result = await assignOfficeManagerViaAdminUsersEdge(
+      supabaseUrl,
+      session.access_token,
+      managedUserId,
+      officeManagerId,
+    )
+    if (!result.ok) {
+      setError(result.error)
+      setUpdatingOmUserId(null)
+      return
     }
     setOmByUserId((prev) => {
       const next = { ...prev }

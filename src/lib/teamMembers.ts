@@ -79,8 +79,7 @@ export function teamSeatSummary(
   const pendingOm = invites.filter((i) => i.status === "pending" && i.invite_role === "office_manager").length
   const pendingUsers = invites.filter((i) => i.status === "pending" && i.invite_role !== "office_manager").length
   const shells = invites.filter((i) => i.status === "shell").length
-  const acceptedInvites = invites.filter((i) => i.status === "accepted" || i.accepted_at).length
-  const usedSeats = activeMembers.length + pending + Math.max(0, acceptedInvites - activeMembers.length)
+  const usedSeats = activeMembers.length + pending
   const totalSeats = entitlements.teamMemberSlots
   const officeManagersUsed = activeMembers.filter((m) => m.role === "office_manager").length + pendingOm
   const usersUsed =
@@ -126,28 +125,24 @@ export async function loadTeamInvites(client: SupabaseClient, ownerUserId: strin
 
 export async function loadActiveTeamMembers(client: SupabaseClient, ownerUserId: string): Promise<ActiveTeamMember[]> {
   const invites = await loadTeamInvites(client, ownerUserId)
-  const profileIds = new Set<string>()
-
-  for (const inv of invites) {
-    if (inv.shell_profile_id) profileIds.add(inv.shell_profile_id)
-  }
 
   const { data: links, error: linkErr } = await client
     .from("office_manager_clients")
     .select("user_id")
     .eq("office_manager_id", ownerUserId)
   if (linkErr) throw linkErr
-  for (const row of links ?? []) {
-    const uid = (row as { user_id?: string }).user_id
-    if (uid && uid !== ownerUserId) profileIds.add(uid)
-  }
 
-  if (!profileIds.size) return []
+  const linkedIds = [...new Set(
+    (links ?? [])
+      .map((row) => (row as { user_id?: string }).user_id)
+      .filter((id): id is string => typeof id === "string" && id.trim() !== "" && id !== ownerUserId),
+  )]
+  if (!linkedIds.length) return []
 
   const { data: profiles, error: profErr } = await client
     .from("profiles")
     .select("id, email, display_name, role, metadata")
-    .in("id", [...profileIds])
+    .in("id", linkedIds)
   if (profErr) throw profErr
 
   const inviteByProfile = new Map<string, TeamInviteRow>()
