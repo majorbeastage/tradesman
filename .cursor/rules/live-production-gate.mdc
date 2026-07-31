@@ -1,0 +1,36 @@
+---
+description: Paying live clients — no production deploy without explicit approval
+alwaysApply: true
+---
+
+# Live production gate (paying clients)
+
+Tradesman has **paying live clients**. Treat production as deliberate, not automatic.
+
+## Do NOT push or deploy unless
+
+1. The user **explicitly asks** to push, deploy, go live, or ship in that message, **or**
+2. The work was **planned ahead of time** together (e.g. a named launch checklist, agreed release, or standing instruction for that session).
+
+## What counts as “going live”
+
+- **`git push`** to `main` (or the branch Vercel/production uses)
+- **Supabase Edge Function deploy** (`supabase functions deploy …`, `npm run supabase:deploy:*`)
+- **SQL migrations** run against production Supabase
+- **Vercel env / secret changes** that affect production behavior
+
+## Default after completing work
+
+1. **`npm run build`** when frontend/API changed (validate locally).
+2. **Summarize** what changed and what would go live if pushed.
+3. **Stop** and ask before commit/push/deploy unless the user already authorized it in that thread.
+
+## Exceptions
+
+- User says “don’t push” → never push for that task.
+- User says “push when done” / “ship it” / “push live” → commit, push, and deploy Edge Functions as needed for that task only.
+- Local-only fixes, docs the user did not ask for, and scratch files → do not commit or push.
+
+## Do not commit junk
+
+Never push workspace-root `.txt` drafts, one-off scripts, or local notes unless the user asked to include them.
