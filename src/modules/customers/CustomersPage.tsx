@@ -24,7 +24,7 @@ import CustomerCallButton from "../../components/CustomerCallButton"
 
 import ConversationAutoRepliesModal from "../../components/ConversationAutoRepliesModal"
 import AddCustomerModal from "../../components/AddCustomerModal"
-import CustomerSmsOptInSection from "../../components/CustomerSmsOptInSection"
+import CustomerSmsOptInSection, { CustomerSmsConsentOnFileDisplay } from "../../components/CustomerSmsOptInSection"
 import { EMPTY_MANUAL_SMS_CONSENT_SOURCE } from "../../components/CustomerSmsConsentSourceFields"
 import {
   buildConsentAuditNote,
@@ -435,7 +435,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const [detailSmsConsentSaving, setDetailSmsConsentSaving] = useState(false)
   const [detailEditMode, setDetailEditMode] = useState(false)
   const [customerInsightOpen, setCustomerInsightOpen] = useState(false)
-  const [customerCommunicationsOpen, setCustomerCommunicationsOpen] = useState(true)
   const [contactJobDetailsOpen, setContactJobDetailsOpen] = useState(false)
   const [detailSaving, setDetailSaving] = useState(false)
   const [serviceGeocodeBusy, setServiceGeocodeBusy] = useState(false)
@@ -660,8 +659,11 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     showManualSmsOptInSection && !selectedCustomerSmsConsent
 
   useEffect(() => {
-    setCustomerCommunicationsOpen(!selectedCustomerSmsConsent)
-  }, [selectedCustomer?.id, selectedCustomerSmsConsent])
+    if (!selectedCustomer?.id || customerActivityLoading) return
+    if (!smsBlockedPendingManualOptIn) return
+    setQuickViewTab("communications")
+    setCommCardOpen((m) => ({ ...m, sms: true }))
+  }, [selectedCustomer?.id, smsBlockedPendingManualOptIn, customerActivityLoading])
 
   useEffect(() => {
     if (!supabase || !selectedCustomer || selectedCustomerSmsConsent || customerActivityLoading) return
@@ -1628,7 +1630,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   async function sendCustomerSms() {
     if (!userId || !selectedCustomer?.id) return
     if (smsBlockedPendingManualOptIn) {
-      alert("SMS is blocked until you complete SMS opt-in consent for this customer (checkbox + consent source).")
+      alert("SMS is blocked until you complete SMS opt-in consent in the SMS section below.")
       return
     }
     const trimmed = clampSmsUserPortion(customerReplySms, smsComposeMaxChars)
@@ -3397,7 +3399,11 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                             >
                                               <span style={{ color: "#64748b", fontSize: 13 }}>{open ? "▾" : "▸"}</span>
                                               <span style={{ flex: 1, minWidth: 0 }}>
-                                                {commChannelOneLineSummary(chan, list, contactHint)}
+                                                {chan === "sms" &&
+                                                smsBlockedPendingManualOptIn &&
+                                                selectedCustomer?.id === c.id
+                                                  ? `SMS · Opt-in required${contactHint ? ` · ${contactHint}` : ""}`
+                                                  : commChannelOneLineSummary(chan, list, contactHint)}
                                               </span>
                                             </button>
                                             {open ? (
@@ -3493,80 +3499,74 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                                       value={outboundPhone || phoneOptions[0] || ""}
                                                       onChange={setOutboundPhone}
                                                     />
-                                                    {smsBlockedPendingManualOptIn ? (
-                                                      <p
-                                                        style={{
-                                                          margin: 0,
-                                                          padding: "10px 12px",
-                                                          borderRadius: 8,
-                                                          background: "#fef2f2",
-                                                          border: "1px solid #fecaca",
-                                                          fontSize: 12,
-                                                          fontWeight: 600,
-                                                          color: "#991b1b",
-                                                          lineHeight: 1.45,
-                                                        }}
-                                                      >
-                                                        SMS compose is disabled — complete <strong>SMS opt-in consent</strong>{" "}
-                                                        in <strong>Opt In status</strong> on the right first.
-                                                      </p>
-                                                    ) : (
-                                                      <SmsFirstOutboundCallout variant={smsFirstComplianceVariant} />
-                                                    )}
-                                                    <textarea
-                                                      id="tradesman-customer-sms-compose"
-                                                      placeholder={
-                                                        smsBlockedPendingManualOptIn
-                                                          ? "Complete SMS opt-in above to enable texting"
-                                                          : "SMS reply…"
-                                                      }
-                                                      value={customerReplySms}
-                                                      maxLength={smsComposeMaxChars}
-                                                      onChange={(e) => setCustomerReplySms(e.target.value.slice(0, smsComposeMaxChars))}
-                                                      rows={2}
-                                                      disabled={smsBlockedPendingManualOptIn || customerSmsSending}
-                                                      style={{
-                                                        ...theme.formInput,
-                                                        resize: "vertical",
-                                                        maxWidth: "100%",
-                                                        color: "#0f172a",
-                                                        opacity: smsBlockedPendingManualOptIn ? 0.55 : 1,
-                                                        cursor: smsBlockedPendingManualOptIn ? "not-allowed" : "text",
-                                                      }}
-                                                    />
-                                                    {!smsBlockedPendingManualOptIn ? (
-                                                      <SmsComposeCharBudget
-                                                        variant={smsFirstComplianceVariant}
-                                                        bodyLength={customerReplySms.length}
-                                                        maxChars={smsComposeMaxChars}
+                                                    {showSmsOptInSection && !selectedCustomerSmsConsent ? (
+                                                      <CustomerSmsOptInSection
+                                                        businessName={contractorSmsDisplayName.trim() || "Your business"}
+                                                        consent={selectedCustomerSmsConsent}
+                                                        phoneOnFile={selectedCustomerPhoneOnFile}
+                                                        draftPhone={detailForm.phone}
+                                                        recordChecked={detailRecordSmsConsent || customerInboundGrantsSmsConsent}
+                                                        onRecordCheckedChange={setDetailRecordSmsConsent}
+                                                        consentSource={detailConsentSource}
+                                                        onConsentSourceChange={setDetailConsentSource}
+                                                        showSourceValidation={detailConsentSourceTouched}
+                                                        onSave={() => void recordDetailSmsConsent()}
+                                                        saving={detailSmsConsentSaving}
+                                                        compact
+                                                        showDisclosureSnapshot={false}
+                                                      />
+                                                    ) : selectedCustomerSmsConsent ? (
+                                                      <CustomerSmsConsentOnFileDisplay
+                                                        consent={selectedCustomerSmsConsent}
+                                                        showDisclosureSnapshot={false}
                                                       />
                                                     ) : null}
-                                                    <button
-                                                      type="button"
-                                                      onClick={() => void sendCustomerSms()}
-                                                      disabled={customerSmsSending || smsBlockedPendingManualOptIn}
-                                                      title={
-                                                        smsBlockedPendingManualOptIn
-                                                          ? "Complete SMS opt-in consent before sending texts"
-                                                          : undefined
-                                                      }
-                                                      style={{
-                                                        alignSelf: "flex-start",
-                                                        padding: "8px 14px",
-                                                        background: smsBlockedPendingManualOptIn ? "#94a3b8" : theme.primary,
-                                                        color: "white",
-                                                        border: "none",
-                                                        borderRadius: "6px",
-                                                        cursor:
-                                                          customerSmsSending || smsBlockedPendingManualOptIn
-                                                            ? "not-allowed"
-                                                            : "pointer",
-                                                        fontWeight: 600,
-                                                        opacity: smsBlockedPendingManualOptIn ? 0.7 : 1,
-                                                      }}
-                                                    >
-                                                      {customerSmsSending ? "Sending…" : "Send text"}
-                                                    </button>
+                                                    {!smsBlockedPendingManualOptIn ? (
+                                                      <>
+                                                        <SmsFirstOutboundCallout variant={smsFirstComplianceVariant} />
+                                                        <textarea
+                                                          id="tradesman-customer-sms-compose"
+                                                          placeholder="SMS reply…"
+                                                          value={customerReplySms}
+                                                          maxLength={smsComposeMaxChars}
+                                                          onChange={(e) => setCustomerReplySms(e.target.value.slice(0, smsComposeMaxChars))}
+                                                          rows={2}
+                                                          disabled={customerSmsSending}
+                                                          style={{
+                                                            ...theme.formInput,
+                                                            resize: "vertical",
+                                                            maxWidth: "100%",
+                                                            color: "#0f172a",
+                                                          }}
+                                                        />
+                                                        <SmsComposeCharBudget
+                                                          variant={smsFirstComplianceVariant}
+                                                          bodyLength={customerReplySms.length}
+                                                          maxChars={smsComposeMaxChars}
+                                                        />
+                                                        <button
+                                                          type="button"
+                                                          onClick={() => void sendCustomerSms()}
+                                                          disabled={customerSmsSending}
+                                                          style={{
+                                                            alignSelf: "flex-start",
+                                                            padding: "8px 14px",
+                                                            background: theme.primary,
+                                                            color: "white",
+                                                            border: "none",
+                                                            borderRadius: "6px",
+                                                            cursor: customerSmsSending ? "not-allowed" : "pointer",
+                                                            fontWeight: 600,
+                                                          }}
+                                                        >
+                                                          {customerSmsSending ? "Sending…" : "Send text"}
+                                                        </button>
+                                                      </>
+                                                    ) : (
+                                                      <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                                                        Complete SMS opt-in above to enable texting this customer.
+                                                      </p>
+                                                    )}
                                                   </div>
                                                 ) : null}
                                                 {chan === "email" ? (
@@ -3919,7 +3919,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                   gap: 12,
                                 }}
                               >
-                                {!selectedCustomerSmsConsent && selectedCustomer?.id === c.id ? (
+                                {selectedCustomer?.id === c.id ? (
                                   <div
                                     onClick={(e) => e.stopPropagation()}
                                     style={{
@@ -3931,7 +3931,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                   >
                                     <button
                                       type="button"
-                                      onClick={() => setCustomerCommunicationsOpen((v) => !v)}
+                                      onClick={() => setCustomerInsightOpen((v) => !v)}
                                       style={{
                                         width: "100%",
                                         display: "flex",
@@ -3940,100 +3940,81 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                         gap: 10,
                                         padding: "10px 14px",
                                         border: "none",
-                                        background: customerCommunicationsOpen ? "#f8fafc" : "#fff",
+                                        background: customerInsightOpen ? "#f8fafc" : "#fff",
                                         cursor: "pointer",
                                         textAlign: "left",
                                       }}
                                     >
-                                      <span style={{ fontWeight: 800, fontSize: 14, color: theme.text }}>Opt In status</span>
+                                      <span style={{ fontWeight: 800, fontSize: 14, color: theme.text }}>Lead score</span>
                                       <span style={{ fontSize: 12, color: "#64748b", flexShrink: 0 }}>
-                                        {customerCommunicationsOpen ? "Hide" : "SMS / lead score · Show"}
+                                        {customerInsightOpen ? "Hide" : "Show"}
                                       </span>
                                     </button>
-                                    {customerCommunicationsOpen ? (
-                                      <div style={{ padding: "12px 14px 14px", borderTop: `1px solid ${theme.border}`, display: "grid", gap: 12 }}>
-                                        {showSmsOptInSection ? (
-                                          <CustomerSmsOptInSection
-                                            businessName={contractorSmsDisplayName.trim() || "Your business"}
-                                            consent={selectedCustomerSmsConsent}
-                                            phoneOnFile={selectedCustomerPhoneOnFile}
-                                            draftPhone={detailForm.phone}
-                                            recordChecked={detailRecordSmsConsent || customerInboundGrantsSmsConsent}
-                                            onRecordCheckedChange={setDetailRecordSmsConsent}
-                                            consentSource={detailConsentSource}
-                                            onConsentSourceChange={setDetailConsentSource}
-                                            showSourceValidation={detailConsentSourceTouched}
-                                            onSave={() => void recordDetailSmsConsent()}
-                                            saving={detailSmsConsentSaving}
-                                            compact
-                                          />
-                                        ) : null}
-                                        <div>
-                                          <div style={{ fontWeight: 800, fontSize: 14, color: theme.text, marginBottom: 8 }}>Lead score</div>
-                                          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                                            {leadFitBadgeEl((c.fit_classification as "hot" | "maybe" | "bad" | null) ?? null)}
-                                            {c.fit_confidence != null && typeof c.fit_confidence === "number" ? (
-                                              <span style={{ fontSize: 12, color: "#6b7280" }}>
-                                                Confidence: {Math.round(c.fit_confidence * 100)}%
-                                              </span>
-                                            ) : null}
-                                            {c.fit_source ? (
-                                              <span style={{ fontSize: 12, color: "#6b7280" }}>Source: {c.fit_source}</span>
-                                            ) : null}
-                                          </div>
-                                          {c.fit_reason ? (
-                                            <p style={{ margin: "0 0 10px", fontSize: 13, color: "#374151", lineHeight: 1.45 }}>{c.fit_reason}</p>
-                                          ) : (
-                                            <p style={{ margin: "0 0 10px", fontSize: 13, color: "#6b7280" }}>
-                                              No score yet — run auto scoring or set manually below.
-                                            </p>
-                                          )}
-                                          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                                            <select
-                                              value={manualFitChoice}
-                                              onChange={(e) => setManualFitChoice(e.target.value as "hot" | "maybe" | "bad" | "")}
-                                              style={{ ...theme.formInput, padding: "6px 10px", fontSize: 13, maxWidth: 160 }}
-                                            >
-                                              <option value="">Set manually…</option>
-                                              <option value="hot">Hot</option>
-                                              <option value="maybe">Maybe</option>
-                                              <option value="bad">Bad</option>
-                                            </select>
-                                            <button
-                                              type="button"
-                                              disabled={!manualFitChoice || fitOverrideBusy}
-                                              onClick={() => void applyManualCustomerFit()}
-                                              style={{
-                                                padding: "6px 12px",
-                                                fontSize: 12,
-                                                fontWeight: 600,
-                                                borderRadius: 6,
-                                                border: "none",
-                                                background: theme.primary,
-                                                color: "#fff",
-                                                cursor: fitOverrideBusy ? "wait" : "pointer",
-                                              }}
-                                            >
-                                              {fitOverrideBusy ? "Saving…" : "Apply"}
-                                            </button>
-                                            <button
-                                              type="button"
-                                              disabled={fitReRunBusy || !supabase || !aiAutomationsEnabled}
-                                              onClick={() => void reRunCustomerFit()}
-                                              style={{
-                                                padding: "6px 12px",
-                                                fontSize: 12,
-                                                fontWeight: 600,
-                                                borderRadius: 6,
-                                                border: `1px solid ${theme.border}`,
-                                                background: "#fff",
-                                                color: theme.text,
-                                                cursor: fitReRunBusy ? "wait" : "pointer",
-                                              }}
-                                            >
-                                              {fitReRunBusy ? "Running…" : "Re-run auto scoring"}
-                                            </button>
-                                          </div>
+                                    {customerInsightOpen ? (
+                                      <div style={{ padding: "12px 14px 14px", borderTop: `1px solid ${theme.border}` }}>
+                                        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                                          {leadFitBadgeEl((c.fit_classification as "hot" | "maybe" | "bad" | null) ?? null)}
+                                          {c.fit_confidence != null && typeof c.fit_confidence === "number" ? (
+                                            <span style={{ fontSize: 12, color: "#6b7280" }}>
+                                              Confidence: {Math.round(c.fit_confidence * 100)}%
+                                            </span>
+                                          ) : null}
+                                          {c.fit_source ? (
+                                            <span style={{ fontSize: 12, color: "#6b7280" }}>Source: {c.fit_source}</span>
+                                          ) : null}
+                                        </div>
+                                        {c.fit_reason ? (
+                                          <p style={{ margin: "0 0 10px", fontSize: 13, color: "#374151", lineHeight: 1.45 }}>{c.fit_reason}</p>
+                                        ) : (
+                                          <p style={{ margin: "0 0 10px", fontSize: 13, color: "#6b7280" }}>
+                                            No score yet — run auto scoring or set manually below.
+                                          </p>
+                                        )}
+                                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                                          <select
+                                            value={manualFitChoice}
+                                            onChange={(e) => setManualFitChoice(e.target.value as "hot" | "maybe" | "bad" | "")}
+                                            style={{ ...theme.formInput, padding: "6px 10px", fontSize: 13, maxWidth: 160 }}
+                                          >
+                                            <option value="">Set manually…</option>
+                                            <option value="hot">Hot</option>
+                                            <option value="maybe">Maybe</option>
+                                            <option value="bad">Bad</option>
+                                          </select>
+                                          <button
+                                            type="button"
+                                            disabled={!manualFitChoice || fitOverrideBusy}
+                                            onClick={() => void applyManualCustomerFit()}
+                                            style={{
+                                              padding: "6px 12px",
+                                              fontSize: 12,
+                                              fontWeight: 600,
+                                              borderRadius: 6,
+                                              border: "none",
+                                              background: theme.primary,
+                                              color: "#fff",
+                                              cursor: fitOverrideBusy ? "wait" : "pointer",
+                                            }}
+                                          >
+                                            {fitOverrideBusy ? "Saving…" : "Apply"}
+                                          </button>
+                                          <button
+                                            type="button"
+                                            disabled={fitReRunBusy || !supabase || !aiAutomationsEnabled}
+                                            onClick={() => void reRunCustomerFit()}
+                                            style={{
+                                              padding: "6px 12px",
+                                              fontSize: 12,
+                                              fontWeight: 600,
+                                              borderRadius: 6,
+                                              border: `1px solid ${theme.border}`,
+                                              background: "#fff",
+                                              color: theme.text,
+                                              cursor: fitReRunBusy ? "wait" : "pointer",
+                                            }}
+                                          >
+                                            {fitReRunBusy ? "Running…" : "Re-run auto scoring"}
+                                          </button>
                                         </div>
                                       </div>
                                     ) : null}
