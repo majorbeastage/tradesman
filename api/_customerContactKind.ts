@@ -25,6 +25,28 @@ export function parseEmailAddress(email: string): { local: string; domain: strin
   return { local: norm.slice(0, at), domain: norm.slice(at + 1) }
 }
 
+const TRANSACTIONAL_RELAY_DOMAINS = new Set([
+  "amazonses.com",
+  "sendgrid.net",
+  "sendgrid.com",
+  "mailgun.org",
+  "mailgun.net",
+  "mandrillapp.com",
+  "postmarkapp.com",
+  "sparkpostmail.com",
+  "email.govdelivery.com",
+])
+
+function isTransactionalRelayDomain(domain: string): boolean {
+  const d = domain.trim().toLowerCase()
+  if (!d) return false
+  if (TRANSACTIONAL_RELAY_DOMAINS.has(d)) return true
+  if (d.endsWith(".amazonses.com")) return true
+  if (d.endsWith(".sendgrid.net")) return true
+  if (d.endsWith(".mailgun.org")) return true
+  return false
+}
+
 export function isPromotionalEmailAddress(email: string): boolean {
   const parsed = parseEmailAddress(email)
   if (!parsed) return false
@@ -35,12 +57,14 @@ export function isPromotionalEmailAddress(email: string): boolean {
   if (local.includes("noreply") || local.includes("donotreply") || local.includes("no-reply")) return true
   if (local.includes("unsubscribe") || local.includes("special-offer") || local.includes("specialoffer")) return true
   if (domain === "resend.dev" || domain.endsWith(".resend.dev")) return true
+  if (isTransactionalRelayDomain(domain)) return true
   return false
 }
 
 export function organizationRootFromDomain(domain: string): string | null {
   const d = domain.trim().toLowerCase()
   if (!d || CONSUMER_MAIL_DOMAINS.has(d)) return null
+  if (isTransactionalRelayDomain(d)) return null
   const parts = d.split(".").filter(Boolean)
   if (parts.length === 0) return null
   const tld = parts[parts.length - 1] ?? ""

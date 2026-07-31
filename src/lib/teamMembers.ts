@@ -83,7 +83,8 @@ export function teamSeatSummary(
   const usedSeats = activeMembers.length + pending + Math.max(0, acceptedInvites - activeMembers.length)
   const totalSeats = entitlements.teamMemberSlots
   const officeManagersUsed = activeMembers.filter((m) => m.role === "office_manager").length + pendingOm
-  const usersUsed = activeMembers.filter((m) => m.role === "user").length + pendingUsers
+  const usersUsed =
+    activeMembers.filter((m) => m.role !== "office_manager").length + pendingUsers
   const omLimit = entitlements.officeManagerInviteLimit
   const userLimit = entitlements.userInviteLimit
 
@@ -173,6 +174,13 @@ export async function loadActiveTeamMembers(client: SupabaseClient, ownerUserId:
   return out.sort((a, b) => a.displayName.localeCompare(b.displayName))
 }
 
+export type TeamMembersLoadResult = {
+  invites: TeamInviteRow[]
+  activeMembers: ActiveTeamMember[]
+  ownerMetadata: Record<string, unknown>
+  ownerDisplayName: string
+}
+
 export async function teamMembersApiFetch(
   action: string,
   payload: Record<string, unknown>,
@@ -198,4 +206,60 @@ export async function teamMembersApiFetch(
     }
   }
   throw new Error(lastErr)
+}
+
+/** Server-backed load — bypasses missing RLS on team_member_invites for account owners. */
+export async function loadTeamMembersBundle(
+  client: SupabaseClient,
+  accountOwnerId: string,
+  accessToken: string | null,
+): Promise<TeamMembersLoadResult> {
+  if (accessToken) {
+    const origins = [typeof window !== "undefined" ? window.location.origin : ""].filter(Boolean)
+    for (const origin of origins) {
+      try {
+        const res = await fetch(`${origin}/api/team-members?__action=load`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ userId: accountOwnerId, accountOwnerId }),
+        })
+        const data = (await res.json().catch(() => ({}))) as {
+          error?: string
+          invites?: TeamInviteRow[]
+          activeMembers?: ActiveTeamMember[]
+          ownerMetadata?: Record<string, unknown>
+          ownerDisplayName?: string
+        }
+        if (res.ok && Array.isArray(data.invites) && Array.isArray(data.activeMembers)) {
+          return {
+            invites: data.invites,
+            activeMembers: data.activeMembers,
+            ownerMetadata: data.ownerMetadata ?? {},
+            ownerDisplayName: data.ownerDisplayName?.trim() || "Your team admin",
+          }
+        }
+      } catch {
+        /* fall through to direct DB reads */
+      }
+    }
+  }
+
+  const [invites, activeMembers, prof] = await Promise.all([
+    loadTeamInvites(client, accountOwnerId),
+    loadActiveTeamMembers(client, accountOwnerId),
+    client.from("profiles").select("metadata, display_name").eq("id", accountOwnerId).maybeSingle(),
+  ])
+  const ownerMetadata =
+    prof.data?.metadata && typeof prof.data.metadata === "object" && !Array.isArray(prof.data.metadata)
+      ? (prof.data.metadata as Record<string, unknown>)
+      : {}
+  return {
+    invites,
+    activeMembers,
+    ownerMetadata,
+    ownerDisplayName: prof.data?.display_name?.trim() || "Your team admin",
+  }
 }

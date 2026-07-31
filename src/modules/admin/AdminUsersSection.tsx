@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react"
 import { useAuth, type UserRole } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
-import { createUserViaAdminUsersEdge, graduateSandboxToLiveViaAdminUsersEdge, patchAccountDisabledViaAdminUsersEdge } from "../../lib/adminCreateUserViaEdge"
+import { createUserViaAdminUsersEdge, graduateSandboxToLiveViaAdminUsersEdge, patchAccountDisabledViaAdminUsersEdge, syncTeamMemberViaAdminUsersEdge } from "../../lib/adminCreateUserViaEdge"
 import { AdminSettingBlock } from "../../components/admin/AdminSettingChrome"
 import { getDefaultPortalConfigForNewUser, upgradePortalConfigFromNewUserToUser, type PortalConfig } from "../../types/portal-builder"
 import { buildGraduateSandboxProfileUpdates, isGraduateSandboxCandidate } from "../../lib/graduateSandboxToLive"
@@ -407,6 +407,21 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
         setUpdatingOmUserId(null)
         return
       }
+      if (session?.access_token && supabaseUrl) {
+        const sync = await syncTeamMemberViaAdminUsersEdge(
+          supabaseUrl,
+          session.access_token,
+          managedUserId,
+          officeManagerId,
+        )
+        if (!sync.ok) {
+          setError(`Office manager saved, but team invite sync failed: ${sync.error}`)
+          setUpdatingOmUserId(null)
+          return
+        }
+      }
+    } else if (session?.access_token && supabaseUrl) {
+      void syncTeamMemberViaAdminUsersEdge(supabaseUrl, session.access_token, managedUserId, null)
     }
     setOmByUserId((prev) => {
       const next = { ...prev }

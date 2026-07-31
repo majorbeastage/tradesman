@@ -8,6 +8,7 @@ import {
 } from "../lib/voiceAutoAttendant"
 import { useLocale } from "../i18n/LocaleContext"
 import { voiceStudioUserRequest } from "../lib/voicePromptStudio"
+import { AttendantStepRecorder } from "./AttendantStepRecorder"
 
 type PlatformVoicePrompt = {
   id: string
@@ -36,6 +37,8 @@ function promptMatchesKind(prompt: PlatformVoicePrompt, kind: VoiceScreeningStep
   if (kind === "callback_number") return /\bcallback|phone|number\b/.test(searchable)
   return /\bsms|text|consent|opt.?in\b/.test(searchable)
 }
+
+const RECORD_OWN_PROMPT = "__record_own__"
 
 type Props = {
   mode: "ai_menu" | "recorded_menu"
@@ -242,14 +245,30 @@ export function CallScreeningMenuBuilder({ mode, steps, collectContactInfo, onCh
                 <span style={{ fontSize: 11, fontWeight: 600, color: "#64748b" }}>{t("account.callScreening.recordingUrl")}</span>
                 {platformPrompts.length > 0 ? (
                   <select
-                    value={platformPrompts.some((prompt) => prompt.playback_url === step.recordingUrl) ? step.recordingUrl : ""}
+                    value={
+                      step.recordingUrl &&
+                      !platformPrompts.some((prompt) => prompt.playback_url === step.recordingUrl)
+                        ? RECORD_OWN_PROMPT
+                        : platformPrompts.some((prompt) => prompt.playback_url === step.recordingUrl)
+                          ? step.recordingUrl
+                          : step.recordingUrl
+                            ? RECORD_OWN_PROMPT
+                            : ""
+                    }
                     onChange={(event) => {
-                      const selected = platformPrompts.find((prompt) => prompt.playback_url === event.target.value)
+                      const value = event.target.value
+                      if (value === RECORD_OWN_PROMPT) return
+                      if (!value) {
+                        updateStep(index, { recordingUrl: undefined })
+                        return
+                      }
+                      const selected = platformPrompts.find((prompt) => prompt.playback_url === value)
                       if (selected) updateStep(index, { recordingUrl: selected.playback_url, prompt: selected.script_text })
                     }}
                     style={theme.formInput}
                   >
                     <option value="">Choose an approved auto-attendant prompt…</option>
+                    <option value={RECORD_OWN_PROMPT}>Record my own question (browser)</option>
                     {platformPrompts
                       .filter((prompt) => promptMatchesKind(prompt, step.kind))
                       .map((prompt) => (
@@ -258,6 +277,23 @@ export function CallScreeningMenuBuilder({ mode, steps, collectContactInfo, onCh
                         </option>
                       ))}
                   </select>
+                ) : (
+                  <select
+                    value={step.recordingUrl ? RECORD_OWN_PROMPT : ""}
+                    onChange={(event) => {
+                      if (event.target.value !== RECORD_OWN_PROMPT) updateStep(index, { recordingUrl: undefined })
+                    }}
+                    style={theme.formInput}
+                  >
+                    <option value="">Choose prompt source…</option>
+                    <option value={RECORD_OWN_PROMPT}>Record my own question (browser)</option>
+                  </select>
+                )}
+                {(step.recordingUrl && !platformPrompts.some((p) => p.playback_url === step.recordingUrl)) ||
+                (!step.recordingUrl && platformPrompts.length === 0) ? (
+                  <AttendantStepRecorder
+                    onRecorded={(publicUrl) => updateStep(index, { recordingUrl: publicUrl, kind: step.kind === "custom" ? "custom" : step.kind })}
+                  />
                 ) : null}
                 <input
                   type="url"

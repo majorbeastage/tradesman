@@ -53,6 +53,36 @@ export type GraduateSandboxEdgeOk = {
   portal_config: Record<string, unknown>
 }
 
+/** Sync office_manager_clients admin assignment into team_member_invites for Team members UI. */
+export async function syncTeamMemberViaAdminUsersEdge(
+  supabaseUrl: string,
+  accessToken: string,
+  managedUserId: string,
+  officeManagerId: string | null,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const base = supabaseUrl.replace(/\/$/, "")
+  if (!base) return { ok: false, error: "Missing Supabase URL" }
+  try {
+    const res = await fetch(`${base}/functions/v1/admin-users`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        user_id: managedUserId,
+        action: "sync_team_member",
+        office_manager_id: officeManagerId,
+      }),
+    })
+    const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string }
+    if (res.ok && data.ok === true) return { ok: true }
+    return { ok: false, error: typeof data.error === "string" ? data.error : `HTTP ${res.status}` }
+  } catch {
+    return { ok: false, error: "Network error" }
+  }
+}
+
 /** Graduate a training sandbox account to live production mode via admin-users Edge. */
 export async function graduateSandboxToLiveViaAdminUsersEdge(
   supabaseUrl: string,

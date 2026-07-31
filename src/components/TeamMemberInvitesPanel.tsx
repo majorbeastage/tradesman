@@ -3,8 +3,7 @@ import { supabase } from "../lib/supabase"
 import { theme } from "../styles/theme"
 import { useAuth } from "../contexts/AuthContext"
 import {
-  loadActiveTeamMembers,
-  loadTeamInvites,
+  loadTeamMembersBundle,
   isTeamMemberRole,
   teamMemberRoleLabel,
   teamMembersApiFetch,
@@ -13,6 +12,8 @@ import {
   type TeamInviteRow,
   type TeamMemberRole,
 } from "../lib/teamMembers"
+import { resolveAccountStructureOwnerId } from "../lib/accountStructureOwner"
+import { isManagedUserRole } from "../lib/profileRoles"
 import type { AccountSettingsCategory } from "../modules/account/accountSettingsLayout"
 import { accountSettingsCategoryStyle, accountSettingsFoldButtonStyle } from "../modules/account/accountSettingsLayout"
 
@@ -32,8 +33,10 @@ function statusLabel(status: string, acceptedAt: string | null): string {
 }
 
 export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed = true }: Props) {
-  const { session } = useAuth()
+  const { session, role: authRole } = useAuth()
   const [open, setOpen] = useState(!defaultCollapsed)
+  const [accountOwnerId, setAccountOwnerId] = useState(ownerUserId)
+  const [canManageTeam, setCanManageTeam] = useState(true)
   const [invites, setInvites] = useState<TeamInviteRow[]>([])
   const [activeMembers, setActiveMembers] = useState<ActiveTeamMember[]>([])
   const [profileMetadata, setProfileMetadata] = useState<Record<string, unknown>>({})
@@ -48,20 +51,21 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
 
   const load = useCallback(async () => {
     if (!supabase) return
-    const [inv, active, prof] = await Promise.all([
-      loadTeamInvites(supabase, ownerUserId),
-      loadActiveTeamMembers(supabase, ownerUserId),
-      supabase.from("profiles").select("metadata, display_name").eq("id", ownerUserId).maybeSingle(),
-    ])
-    setInvites(inv)
-    setActiveMembers(active)
-    const meta =
-      prof.data?.metadata && typeof prof.data.metadata === "object" && !Array.isArray(prof.data.metadata)
-        ? (prof.data.metadata as Record<string, unknown>)
-        : {}
-    setProfileMetadata(meta)
-    setOwnerDisplayName(prof.data?.display_name?.trim() || "Your team admin")
-  }, [ownerUserId])
+    let resolvedOwner = ownerUserId
+    try {
+      resolvedOwner = await resolveAccountStructureOwnerId(supabase, ownerUserId)
+    } catch {
+      resolvedOwner = ownerUserId
+    }
+    setAccountOwnerId(resolvedOwner)
+    setCanManageTeam(ownerUserId === resolvedOwner && !isManagedUserRole(authRole ?? ""))
+
+    const bundle = await loadTeamMembersBundle(supabase, resolvedOwner, session?.access_token ?? null)
+    setInvites(bundle.invites)
+    setActiveMembers(bundle.activeMembers)
+    setProfileMetadata(bundle.ownerMetadata)
+    setOwnerDisplayName(bundle.ownerDisplayName)
+  }, [ownerUserId, session?.access_token, authRole])
 
   useEffect(() => {
     void load().catch(() => {})
@@ -125,7 +129,7 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
     try {
       await teamMembersApiFetch(
         "remove",
-        { userId: ownerUserId, memberProfileId: member.profileId },
+        { userId: accountOwnerId, memberProfileId: member.profileId },
         session?.access_token ?? null,
       )
       setMessage(`${member.displayName} removed.`)
@@ -143,7 +147,7 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
     try {
       await teamMembersApiFetch(
         "update-role",
-        { userId: ownerUserId, memberProfileId: member.profileId, inviteRole: nextRole },
+        { userId: accountOwnerId, memberProfileId: member.profileId, inviteRole: nextRole },
         session?.access_token ?? null,
       )
       setMessage("Role updated.")
@@ -159,7 +163,7 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
     setRowBusy(invite.id)
     setError("")
     try {
-      await teamMembersApiFetch("cancel-invite", { userId: ownerUserId, inviteId: invite.id }, session?.access_token ?? null)
+      await teamMembersApiFetch("cancel-invite", { userId: accountOwnerId, inviteId: invite.id }, session?.access_token ?? null)
       setMessage("Invite cancelled.")
       await load()
     } catch (e) {
@@ -195,6 +199,12 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
             </span>
           </div>
 
+          {!canManageTeam && accountOwnerId !== ownerUserId ? (
+            <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+              Team seats and members are managed by <strong>{ownerDisplayName}</strong>. Contact your account owner to add or remove people.
+            </p>
+          ) : null}
+
           {seats.totalSeats <= 0 ? (
             <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
               Your current plan includes only the account owner sign-in. Upgrade to an Office Manager or Corporate package to invite team members.
@@ -226,7 +236,7 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
                     <select
                       value={m.role}
-                      disabled={rowBusy === m.profileId}
+                      disabled={rowBusy === m.profileId || !canManageTeam}
                       onChange={(e) => {
                         const nextRole = e.target.value
                         if (isTeamMemberRole(nextRole)) void updateMemberRole(m, nextRole)
@@ -240,7 +250,7 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
                     </select>
                     <button
                       type="button"
-                      disabled={rowBusy === m.profileId}
+                      disabled={rowBusy === m.profileId || !canManageTeam}
                       onClick={() => void removeMember(m)}
                       style={{
                         padding: "6px 10px",
@@ -303,6 +313,7 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
             </p>
           ) : null}
 
+          {canManageTeam && seats.totalSeats > 0 ? (
           <form onSubmit={(e) => void sendInvite(e)} style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             <input
               type="email"
@@ -365,6 +376,7 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
               Preview invite email
             </button>
           </form>
+          ) : null}
           {error ? <p style={{ margin: 0, color: "#b91c1c", fontSize: 13 }}>{error}</p> : null}
           {message ? <p style={{ margin: 0, color: "#059669", fontSize: 13 }}>{message}</p> : null}
           {previewOpen ? (

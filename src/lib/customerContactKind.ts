@@ -36,6 +36,28 @@ const CONSUMER_MAIL_DOMAINS = new Set([
 /** Reserved / test TLDs — never org-group (e.g. RFC 2606 example.invalid). */
 const NON_ORG_GROUP_EMAIL_TLDS = new Set(["invalid", "test", "example", "localhost"])
 
+const TRANSACTIONAL_RELAY_DOMAINS = new Set([
+  "amazonses.com",
+  "sendgrid.net",
+  "sendgrid.com",
+  "mailgun.org",
+  "mailgun.net",
+  "mandrillapp.com",
+  "postmarkapp.com",
+  "sparkpostmail.com",
+  "email.govdelivery.com",
+])
+
+function isTransactionalRelayDomain(domain: string): boolean {
+  const d = domain.trim().toLowerCase()
+  if (!d) return false
+  if (TRANSACTIONAL_RELAY_DOMAINS.has(d)) return true
+  if (d.endsWith(".amazonses.com")) return true
+  if (d.endsWith(".sendgrid.net")) return true
+  if (d.endsWith(".mailgun.org")) return true
+  return false
+}
+
 export function normalizeCustomerEmail(email: string): string {
   return String(email ?? "").trim().toLowerCase()
 }
@@ -57,6 +79,7 @@ export function isPromotionalEmailAddress(email: string): boolean {
   if (local.includes("noreply") || local.includes("donotreply") || local.includes("no-reply")) return true
   if (local.includes("unsubscribe") || local.includes("special-offer") || local.includes("specialoffer")) return true
   if (domain === "resend.dev" || domain.endsWith(".resend.dev")) return true
+  if (isTransactionalRelayDomain(domain)) return true
   return false
 }
 
@@ -64,6 +87,7 @@ export function isPromotionalEmailAddress(email: string): boolean {
 export function organizationRootFromDomain(domain: string): string | null {
   const d = domain.trim().toLowerCase()
   if (!d || CONSUMER_MAIL_DOMAINS.has(d)) return null
+  if (isTransactionalRelayDomain(d)) return null
   const parts = d.split(".").filter(Boolean)
   if (parts.length === 0) return null
   const tld = parts[parts.length - 1] ?? ""
