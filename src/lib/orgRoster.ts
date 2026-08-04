@@ -29,7 +29,7 @@ export async function loadOrgRosterForUser(
   const profileIds = Array.from(new Set([ownerId, ...managedIds]))
   const { data: profs, error: e2 } = await supabase
     .from("profiles")
-    .select("id, display_name, email, role, metadata")
+    .select("id, display_name, email, role")
     .in("id", profileIds)
   if (e2) throw new Error(e2.message)
   const byId = new Map((profs ?? []).map((p) => [p.id as string, p]))

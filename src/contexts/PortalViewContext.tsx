@@ -66,6 +66,17 @@ const PortalViewContext = createContext<PortalViewValue | null>(null)
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? ""
 
+const ADMIN_ACCOUNT_OWNERS_CACHE_MS = 5 * 60 * 1000
+let adminAccountOwnersCache: {
+  token: string
+  at: number
+  rows: ManageableUserRow[]
+} | null = null
+
+function invalidateAdminAccountOwnersCache(): void {
+  adminAccountOwnersCache = null
+}
+
 function readStoredViewRole(fallback: UserRole): UserRole {
   try {
     const raw = sessionStorage.getItem(STORAGE_VIEW_ROLE)
@@ -86,7 +97,16 @@ function readStoredTargetUser(fallback: string | null): string | null {
   return fallback
 }
 
-async function loadAllUsersForAdmin(accessToken: string): Promise<ManageableUserRow[]> {
+async function loadAdminAccountOwners(accessToken: string): Promise<ManageableUserRow[]> {
+  const now = Date.now()
+  if (
+    adminAccountOwnersCache &&
+    adminAccountOwnersCache.token === accessToken &&
+    now - adminAccountOwnersCache.at < ADMIN_ACCOUNT_OWNERS_CACHE_MS
+  ) {
+    return adminAccountOwnersCache.rows
+  }
+
   if (supabaseUrl) {
     try {
       const res = await fetch(`${supabaseUrl}/functions/v1/admin-users`, {
@@ -108,41 +128,28 @@ async function loadAllUsersForAdmin(accessToken: string): Promise<ManageableUser
           role: roleFromProfileRow(u.role),
           clientId: null as string | null,
         }))
+        let rows = base
         if (supabase && base.length > 0) {
           const { data: profs } = await supabase
             .from("profiles")
-            .select("id, client_id, display_name, email, metadata")
+            .select("id, client_id")
             .in("id", base.map((b) => b.userId))
-          const profById = new Map(
-            (profs ?? []).map((p) => [
-              p.id as string,
-              p as { id: string; client_id: string | null; display_name?: string | null; email?: string | null; metadata?: unknown },
-            ]),
+          const clientById = new Map(
+            (profs ?? []).map((p) => [p.id as string, (p.client_id as string | null) ?? null]),
           )
-          return base.map((b) => {
-            const prof = profById.get(b.userId)
-            return {
-              ...b,
-              clientId: (prof?.client_id as string | null) ?? null,
-              label: prof ? resolveInternalMemberLabel(prof) : b.label,
-            }
-          })
+          rows = base.map((b) => ({
+            ...b,
+            clientId: clientById.get(b.userId) ?? null,
+          }))
         }
-        return base
+        adminAccountOwnersCache = { token: accessToken, at: now, rows }
+        return rows
       }
     } catch {
       /* fall through */
     }
   }
-  if (!supabase) return []
-  const { data } = await supabase.from("profiles").select("id, display_name, email, role, client_id, metadata")
-  return (data ?? []).map((p) => ({
-    userId: p.id as string,
-    label: resolveInternalMemberLabel(p as { display_name?: string | null; email?: string | null; metadata?: unknown }),
-    email: (p.email as string | null) ?? null,
-    role: roleFromProfileRow(p.role as string),
-    clientId: (p.client_id as string | null) ?? null,
-  }))
+  return []
 }
 
 async function loadManagedOrgUsers(authUserId: string): Promise<ManageableUserRow[]> {
@@ -156,7 +163,7 @@ async function loadManagedOrgUsers(authUserId: string): Promise<ManageableUserRo
   const profileIds = Array.from(new Set([authUserId, ...managedIds]))
   const { data: profs, error: e2 } = await supabase
     .from("profiles")
-    .select("id, display_name, email, role, client_id, metadata")
+    .select("id, display_name, email, role, client_id")
     .in("id", profileIds)
   if (e2) throw new Error(e2.message)
   const profileById = new Map(
@@ -196,7 +203,7 @@ async function loadAdminOrgScopedUsers(
   targetUserId: string | null,
   accessToken: string,
 ): Promise<ManageableUserRow[]> {
-  const all = await loadAllUsersForAdmin(accessToken)
+  const all = await loadAdminAccountOwners(accessToken)
   const accountOwners = all.filter(
     (u) => isOfficeManagerAssignmentRole(u.role) || u.role === "corporate_management",
   )
@@ -362,6 +369,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
       setManageableUsers([])
       return
     }
+    invalidateAdminAccountOwnersCache()
     setLoadingUsers(true)
     setError("")
     try {

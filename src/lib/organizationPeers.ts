@@ -100,12 +100,29 @@ export async function loadOrganizationPeerIds(client: SupabaseClient, userId: st
   const peerIds = new Set<string>()
   const role = typeof self.role === "string" ? self.role : null
   const clientId = typeof self.client_id === "string" && self.client_id.trim() ? self.client_id.trim() : TRADESMAN_PLATFORM_ORG_CLIENT_ID
+  const isPlatformOrg = clientId === TRADESMAN_PLATFORM_ORG_CLIENT_ID
+  const isInternalRole = role === "admin" || role === "corporate_management" || role === "office_manager"
 
-  const { data: sameClient, error: clientErr } = await client.from("profiles").select("id").eq("client_id", clientId).neq("id", userId)
-  if (clientErr) throw clientErr
-  for (const row of sameClient ?? []) peerIds.add(row.id as string)
+  if (!isPlatformOrg) {
+    const { data: sameClient, error: clientErr } = await client
+      .from("profiles")
+      .select("id")
+      .eq("client_id", clientId)
+      .neq("id", userId)
+    if (clientErr) throw clientErr
+    for (const row of sameClient ?? []) peerIds.add(row.id as string)
+  } else if (isInternalRole) {
+    const { data: platformStaff, error: staffErr } = await client
+      .from("profiles")
+      .select("id")
+      .eq("client_id", TRADESMAN_PLATFORM_ORG_CLIENT_ID)
+      .in("role", ["admin", "corporate_management", "office_manager"])
+      .neq("id", userId)
+    if (staffErr) throw staffErr
+    for (const row of platformStaff ?? []) peerIds.add(row.id as string)
+  }
 
-  if (role === "admin" || role === "corporate_management" || role === "office_manager") {
+  if (isInternalRole) {
     const { data: admins, error: adminErr } = await client.from("profiles").select("id").eq("role", "admin").neq("id", userId)
     if (adminErr) throw adminErr
     for (const row of admins ?? []) peerIds.add(row.id as string)
@@ -128,7 +145,7 @@ export async function loadOrganizationPeers(client: SupabaseClient, userId: stri
 
   const { data, error } = await client
     .from("profiles")
-    .select("id, display_name, email, role, metadata, portal_config, account_disabled")
+    .select("id, display_name, email, role, portal_config, account_disabled")
     .in("id", peerIds)
   if (error) throw error
 
