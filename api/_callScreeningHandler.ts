@@ -64,7 +64,8 @@ function screeningBaseQuery(req: VercelRequest, channel: CommunicationChannel | 
 }
 
 function promptVerb(settings: VoiceAutoAttendantSettings, step: { prompt: string; recordingUrl?: string }): string {
-  const useRecording = settings.mode === "recorded_menu" && step.recordingUrl?.trim()
+  const useRecording =
+    (settings.mode === "recorded_menu" || settings.mode === "record_own_menu") && step.recordingUrl?.trim()
   if (useRecording) return `<Play>${xmlEscape(step.recordingUrl!.trim())}</Play>`
   return `<Say ${SAY}>${xmlEscape(step.prompt)}</Say>`
 }

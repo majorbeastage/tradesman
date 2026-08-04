@@ -68,6 +68,42 @@ export async function resolveAccountStructureOwnerId(client: SupabaseClient, use
   return userId
 }
 
+/**
+ * Account owner for org membership rosters, comm lines, and view-as — never falls back to platform ops (Justin/Joe).
+ * Use this for Schedule For / viewing-as user lists and per-user Twilio line resolution.
+ */
+export async function resolveOrgRosterOwnerId(client: SupabaseClient, userId: string): Promise<string> {
+  const { data, error } = await client.from("profiles").select("role, email").eq("id", userId).maybeSingle()
+  if (error) throw error
+  const role = typeof data?.role === "string" ? data.role : null
+
+  if (role === "office_manager" || role === "corporate_management") return userId
+
+  const { data: link, error: linkErr } = await client
+    .from("office_manager_clients")
+    .select("office_manager_id")
+    .eq("user_id", userId)
+    .limit(1)
+    .maybeSingle()
+  if (linkErr) throw linkErr
+  if (typeof link?.office_manager_id === "string" && link.office_manager_id.trim()) {
+    return link.office_manager_id.trim()
+  }
+
+  const { data: invite, error: inviteErr } = await client
+    .from("team_member_invites")
+    .select("account_owner_id")
+    .eq("shell_profile_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (!inviteErr && typeof invite?.account_owner_id === "string" && invite.account_owner_id.trim()) {
+    return invite.account_owner_id.trim()
+  }
+
+  return userId
+}
+
 /** @deprecated Prefer resolveAccountStructureOwnerId — kept for existing imports. */
 export async function resolveWorkflowMetadataUserId(client: SupabaseClient, userId: string): Promise<string> {
   return resolveAccountStructureOwnerId(client, userId)

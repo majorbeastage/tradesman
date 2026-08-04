@@ -126,6 +126,7 @@ export function CallScreeningSettingsPanel({ profileUserId }: Props) {
             >
               <option value="ai_menu">{t("account.callScreening.modeAi")}</option>
               <option value="recorded_menu">{t("account.callScreening.modeRecorded")}</option>
+              <option value="record_own_menu">{t("account.callScreening.modeRecordOwn")}</option>
             </select>
           </label>
 
@@ -140,7 +141,13 @@ export function CallScreeningSettingsPanel({ profileUserId }: Props) {
             }}
           >
             <CallScreeningMenuBuilder
-              mode={settings.mode === "recorded_menu" ? "recorded_menu" : "ai_menu"}
+              mode={
+                settings.mode === "recorded_menu"
+                  ? "recorded_menu"
+                  : settings.mode === "record_own_menu"
+                    ? "record_own_menu"
+                    : "ai_menu"
+              }
               steps={menuDraft}
               collectContactInfo={settings.collectContactInfo}
               onChange={(steps) => {

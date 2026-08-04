@@ -24,7 +24,7 @@ import {
   type PortalShell,
 } from "../lib/portalViewRules"
 import { resolveInternalMemberLabel } from "../lib/profileContactMeta"
-import { resolveAccountStructureOwnerId } from "../lib/accountStructureOwner"
+import { resolveOrgRosterOwnerId } from "../lib/accountStructureOwner"
 import { isOfficeManagerAssignmentRole } from "../lib/profileRoles"
 import {
   isSandboxDemoUserId,
@@ -208,10 +208,13 @@ async function loadAdminOrgScopedUsers(
     !isSandboxDemoUserId(targetUserId) &&
     supabase
   ) {
-    try {
-      orgOwnerId = await resolveAccountStructureOwnerId(supabase, targetUserId)
-    } catch {
-      orgOwnerId = null
+    // Platform admin viewing as themselves: account-owner list only until they pick a business profile.
+    if (targetUserId !== authUserId) {
+      try {
+        orgOwnerId = await resolveOrgRosterOwnerId(supabase, targetUserId)
+      } catch {
+        orgOwnerId = null
+      }
     }
   }
 
@@ -340,11 +343,6 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
         }
         if (cancelled) return
         setManageableUsers(rows)
-        setTargetUserIdState((prev) => {
-          if (isPortalViewDefaultTarget(prev)) return PORTAL_VIEW_DEFAULT_USER
-          if (prev && rows.some((r) => r.userId === prev)) return prev
-          return authUserId
-        })
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : "Could not load users.")
@@ -425,6 +423,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
   )
 
   useEffect(() => {
+    if (loadingUsers) return
     if (isPortalViewDefaultTarget(targetUserId)) return
     if (viewRole === authRole && targetUserId === authUserId) return
     if (targetUserId && usersForCurrentViewRole.some((u) => u.userId === targetUserId)) return
@@ -433,7 +432,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
       return
     }
     setTargetUserIdState(PORTAL_VIEW_DEFAULT_USER)
-  }, [usersForCurrentViewRole, targetUserId, authUserId, viewRole, authRole])
+  }, [usersForCurrentViewRole, targetUserId, authUserId, viewRole, authRole, loadingUsers])
 
   const setViewRole = useCallback(
     (role: UserRole) => {

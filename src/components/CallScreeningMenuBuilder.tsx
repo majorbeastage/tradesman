@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react"
 import { theme } from "../styles/theme"
 import {
-  newScreeningStepId,
   recommendedStepsWithContact,
   type VoiceScreeningStep,
   type VoiceScreeningStepKind,
@@ -38,10 +37,10 @@ function promptMatchesKind(prompt: PlatformVoicePrompt, kind: VoiceScreeningStep
   return /\bsms|text|consent|opt.?in\b/.test(searchable)
 }
 
-const RECORD_OWN_PROMPT = "__record_own__"
+export type CallScreeningMenuMode = "ai_menu" | "recorded_menu" | "record_own_menu"
 
 type Props = {
-  mode: "ai_menu" | "recorded_menu"
+  mode: CallScreeningMenuMode
   steps: VoiceScreeningStep[]
   collectContactInfo: boolean
   onChange: (steps: VoiceScreeningStep[]) => void
@@ -54,7 +53,6 @@ const STEP_KINDS: VoiceScreeningStepKind[] = [
   "caller_name",
   "callback_number",
   "sms_opt_in",
-  "custom",
 ]
 
 const card: CSSProperties = {
@@ -86,11 +84,12 @@ const btnPrimarySmall: CSSProperties = {
 
 export function CallScreeningMenuBuilder({ mode, steps, collectContactInfo, onChange, onCollectContactChange }: Props) {
   const { t } = useLocale()
-  const isRecorded = mode === "recorded_menu"
+  const isLibraryPrompts = mode === "recorded_menu"
+  const isRecordOwn = mode === "record_own_menu"
   const [platformPrompts, setPlatformPrompts] = useState<PlatformVoicePrompt[]>([])
 
   useEffect(() => {
-    if (!isRecorded) return
+    if (!isLibraryPrompts) return
     let cancelled = false
     void voiceStudioUserRequest("client-library")
       .then((payload) => {
@@ -109,7 +108,7 @@ export function CallScreeningMenuBuilder({ mode, steps, collectContactInfo, onCh
     return () => {
       cancelled = true
     }
-  }, [isRecorded])
+  }, [isLibraryPrompts])
 
   const kindLabel = useMemo(
     () =>
@@ -154,18 +153,6 @@ export function CallScreeningMenuBuilder({ mode, steps, collectContactInfo, onCh
     onChange(steps.filter((_, i) => i !== index))
   }
 
-  function addCustomStep() {
-    onChange([
-      ...steps,
-      {
-        id: newScreeningStepId(),
-        kind: "custom",
-        prompt: t("account.callScreening.customPromptPlaceholder"),
-        enabled: true,
-      },
-    ])
-  }
-
   function loadRecommended() {
     onChange(recommendedStepsWithContact(collectContactInfo))
   }
@@ -176,9 +163,6 @@ export function CallScreeningMenuBuilder({ mode, steps, collectContactInfo, onCh
         <span style={{ fontSize: 13, fontWeight: 700, color: theme.text }}>{t("account.callScreening.menuHeading")}</span>
         <button type="button" style={btnPrimarySmall} onClick={loadRecommended}>
           {t("account.callScreening.loadTemplate")}
-        </button>
-        <button type="button" style={btnSmall} onClick={addCustomStep}>
-          {t("account.callScreening.addQuestion")}
         </button>
       </div>
 
@@ -215,7 +199,7 @@ export function CallScreeningMenuBuilder({ mode, steps, collectContactInfo, onCh
             <label style={{ display: "grid", gap: 4 }}>
               <span style={{ fontSize: 11, fontWeight: 600, color: "#64748b" }}>{t("account.callScreening.stepKind")}</span>
               <select
-                value={step.kind}
+                value={step.kind === "custom" ? "service_intent" : step.kind}
                 onChange={(e) => changeStepKind(index, e.target.value as VoiceScreeningStepKind)}
                 style={theme.formInput}
               >
@@ -229,7 +213,7 @@ export function CallScreeningMenuBuilder({ mode, steps, collectContactInfo, onCh
 
             <label style={{ display: "grid", gap: 4 }}>
               <span style={{ fontSize: 11, fontWeight: 600, color: "#64748b" }}>
-                {isRecorded ? t("account.callScreening.promptTranscript") : t("account.callScreening.promptText")}
+                {isLibraryPrompts || isRecordOwn ? t("account.callScreening.promptTranscript") : t("account.callScreening.promptText")}
               </span>
               <textarea
                 value={step.prompt}
@@ -240,61 +224,47 @@ export function CallScreeningMenuBuilder({ mode, steps, collectContactInfo, onCh
               />
             </label>
 
-            {isRecorded ? (
+            {isLibraryPrompts ? (
               <label style={{ display: "grid", gap: 4 }}>
                 <span style={{ fontSize: 11, fontWeight: 600, color: "#64748b" }}>{t("account.callScreening.recordingUrl")}</span>
-                {platformPrompts.length > 0 ? (
-                  <select
-                    value={
-                      step.recordingUrl &&
-                      !platformPrompts.some((prompt) => prompt.playback_url === step.recordingUrl)
-                        ? RECORD_OWN_PROMPT
-                        : platformPrompts.some((prompt) => prompt.playback_url === step.recordingUrl)
-                          ? step.recordingUrl
-                          : step.recordingUrl
-                            ? RECORD_OWN_PROMPT
-                            : ""
+                <select
+                  value={platformPrompts.some((prompt) => prompt.playback_url === step.recordingUrl) ? step.recordingUrl ?? "" : ""}
+                  onChange={(event) => {
+                    const value = event.target.value
+                    if (!value) {
+                      updateStep(index, { recordingUrl: undefined })
+                      return
                     }
-                    onChange={(event) => {
-                      const value = event.target.value
-                      if (value === RECORD_OWN_PROMPT) return
-                      if (!value) {
-                        updateStep(index, { recordingUrl: undefined })
-                        return
-                      }
-                      const selected = platformPrompts.find((prompt) => prompt.playback_url === value)
-                      if (selected) updateStep(index, { recordingUrl: selected.playback_url, prompt: selected.script_text })
-                    }}
-                    style={theme.formInput}
-                  >
-                    <option value="">Choose an approved auto-attendant prompt…</option>
-                    <option value={RECORD_OWN_PROMPT}>Record my own question (browser)</option>
-                    {platformPrompts
-                      .filter((prompt) => promptMatchesKind(prompt, step.kind))
-                      .map((prompt) => (
-                        <option key={prompt.id} value={prompt.playback_url}>
-                          {prompt.title}
-                        </option>
-                      ))}
-                  </select>
-                ) : (
-                  <select
-                    value={step.recordingUrl ? RECORD_OWN_PROMPT : ""}
-                    onChange={(event) => {
-                      if (event.target.value !== RECORD_OWN_PROMPT) updateStep(index, { recordingUrl: undefined })
-                    }}
-                    style={theme.formInput}
-                  >
-                    <option value="">Choose prompt source…</option>
-                    <option value={RECORD_OWN_PROMPT}>Record my own question (browser)</option>
-                  </select>
-                )}
-                {(step.recordingUrl && !platformPrompts.some((p) => p.playback_url === step.recordingUrl)) ||
-                (!step.recordingUrl && platformPrompts.length === 0) ? (
-                  <AttendantStepRecorder
-                    onRecorded={(publicUrl) => updateStep(index, { recordingUrl: publicUrl, kind: step.kind === "custom" ? "custom" : step.kind })}
-                  />
-                ) : null}
+                    const selected = platformPrompts.find((prompt) => prompt.playback_url === value)
+                    if (selected) updateStep(index, { recordingUrl: selected.playback_url, prompt: selected.script_text })
+                  }}
+                  style={theme.formInput}
+                >
+                  <option value="">Choose a pre-recorded prompt…</option>
+                  {platformPrompts
+                    .filter((prompt) => promptMatchesKind(prompt, step.kind === "custom" ? "service_intent" : step.kind))
+                    .map((prompt) => (
+                      <option key={prompt.id} value={prompt.playback_url}>
+                        {prompt.title}
+                      </option>
+                    ))}
+                </select>
+                {step.recordingUrl ? <audio controls preload="none" src={step.recordingUrl} style={{ width: "100%" }} /> : null}
+                <span style={{ fontSize: 11, color: "#94a3b8" }}>{t("account.callScreening.recordingUrlHelp")}</span>
+              </label>
+            ) : null}
+
+            {isRecordOwn ? (
+              <label style={{ display: "grid", gap: 4 }}>
+                <span style={{ fontSize: 11, fontWeight: 600, color: "#64748b" }}>Your recording</span>
+                <AttendantStepRecorder
+                  onRecorded={(publicUrl) =>
+                    updateStep(index, {
+                      recordingUrl: publicUrl,
+                      kind: step.kind === "custom" ? "service_intent" : step.kind,
+                    })
+                  }
+                />
                 <input
                   type="url"
                   value={step.recordingUrl ?? ""}
@@ -303,7 +273,6 @@ export function CallScreeningMenuBuilder({ mode, steps, collectContactInfo, onCh
                   placeholder="https://…"
                 />
                 {step.recordingUrl ? <audio controls preload="none" src={step.recordingUrl} style={{ width: "100%" }} /> : null}
-                <span style={{ fontSize: 11, color: "#94a3b8" }}>{t("account.callScreening.recordingUrlHelp")}</span>
               </label>
             ) : null}
 

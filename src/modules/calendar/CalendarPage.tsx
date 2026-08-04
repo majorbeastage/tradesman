@@ -56,6 +56,7 @@ import SetupWizardLaunchButton from "../../components/SetupWizardLaunchButton"
 import TeamLocationsMapModal from "../../components/TeamLocationsMapModal"
 import { CalendarEventEmailCompose, calendarEventEmailDetailsStyle } from "../../components/CalendarEventEmailCompose"
 import CalendarTeamManagementPanel from "./CalendarTeamManagementPanel"
+import { CallSchedulePanel } from "./CallSchedulePanel"
 import { useManagedByOfficeManager } from "../../hooks/useManagedByOfficeManager"
 import { parseOmCalendarPolicy } from "../../lib/teamCalendarPolicy"
 import { geocodeAddressToLatLng, mergeJobSiteIntoMetadata, parseJobSiteFromEventMetadata } from "../../lib/jobSiteLocation"
@@ -354,6 +355,7 @@ function formatOutboundError(raw: string): string {
 type CalendarSuiteState =
   | { id: "calendar" }
   | { id: "time_clock" }
+  | { id: "call_schedule" }
   | { id: "team_management"; panel: "team_members" | "job_types" | "team_map" | "scheduling_settings" }
   | { id: "scheduling_tools"; panel: "job_types" | "customer_map" }
   | { id: "managed_job_types" }
@@ -3794,7 +3796,13 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   return (
     <div className="scheme-page scheme-calendar-page" style={{ display: "flex", flexDirection: "column", gap: "16px" }} data-calendar-app="tradesman">
       <h1 style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-        {calendarSuite.id === "time_clock" ? "Time clock workspace" : calendarSuite.id === "team_management" ? "Team Management" : "Scheduling"}
+        {calendarSuite.id === "time_clock"
+          ? "Time clock workspace"
+          : calendarSuite.id === "team_management"
+            ? "Team Management"
+            : calendarSuite.id === "call_schedule"
+              ? "Call Schedule"
+              : "Scheduling"}
         <span style={{ fontSize: "12px", fontWeight: 400, color: "#9ca3af" }}>(tradesman)</span>
       </h1>
 
@@ -3833,6 +3841,14 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   Map
                 </button>
               ) : null}
+              <button
+                type="button"
+                onClick={() => setCalendarSuite({ id: "call_schedule" })}
+                style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "#f0fdf4", cursor: "pointer", color: theme.text, fontWeight: 700 }}
+                title="Ring groups, forwarding, and voicemail by day"
+              >
+                Call Schedule
+              </button>
             </div>
             {showCalAutoResponse ? (
               <button
@@ -3986,6 +4002,27 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               >
                 Back to calendar
               </button>
+            ) : calendarSuite.id === "call_schedule" ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setCalendarSuite({ id: "calendar" })}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: "6px",
+                    border: `2px solid ${theme.primary}`,
+                    background: "#eff6ff",
+                    cursor: "pointer",
+                    color: theme.text,
+                    fontWeight: 700,
+                  }}
+                >
+                  Back to calendar
+                </button>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>
+                  Ring groups, forwarding & voicemail by day — synced with MyT call settings.
+                </span>
+              </>
             ) : (
               <button
                 type="button"
@@ -4520,6 +4557,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             boxSizing: "border-box",
           }}
         >
+          {calendarSuite.id === "call_schedule" && userId ? (
+            <CallSchedulePanel profileUserId={userId} onOpenMyT={setPage ? () => setPage("account") : undefined} />
+          ) : null}
           {calendarSuite.id === "time_clock" && authUserId ? (
             <>
               <p style={{ margin: "0 0 16px", fontSize: 14, color: theme.text, lineHeight: 1.55 }}>

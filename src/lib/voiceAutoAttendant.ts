@@ -1,6 +1,6 @@
 /** Optional inbound call screening / auto-attendant (off by default). Stored on profiles.metadata.voice_auto_attendant_v1 */
 
-export type VoiceAutoAttendantMode = "off" | "ai_menu" | "recorded_menu"
+export type VoiceAutoAttendantMode = "off" | "ai_menu" | "recorded_menu" | "record_own_menu"
 
 export type VoiceScreeningStepKind =
   | "service_intent"
@@ -138,7 +138,9 @@ export function parseVoiceAutoAttendant(raw: unknown): VoiceAutoAttendantSetting
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ...DEFAULT_VOICE_AUTO_ATTENDANT, menuSteps: [...RECOMMENDED_SCREENING_STEPS] }
   const o = raw as Record<string, unknown>
   const mode =
-    o.mode === "ai_menu" || o.mode === "recorded_menu" || o.mode === "off" ? o.mode : DEFAULT_VOICE_AUTO_ATTENDANT.mode
+    o.mode === "ai_menu" || o.mode === "recorded_menu" || o.mode === "record_own_menu" || o.mode === "off"
+      ? o.mode
+      : DEFAULT_VOICE_AUTO_ATTENDANT.mode
   const menuStepsRaw = Array.isArray(o.menuSteps) ? o.menuSteps : null
   const menuSteps =
     menuStepsRaw && menuStepsRaw.length > 0
