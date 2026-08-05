@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react"
@@ -95,6 +96,15 @@ function readStoredTargetUser(fallback: string | null): string | null {
     /* ignore */
   }
   return fallback
+}
+
+function writeStoredTargetUser(id: string | null): void {
+  try {
+    if (!id) sessionStorage.removeItem(STORAGE_TARGET_USER)
+    else sessionStorage.setItem(STORAGE_TARGET_USER, id)
+  } catch {
+    /* ignore */
+  }
 }
 
 async function loadAdminAccountOwners(accessToken: string): Promise<ManageableUserRow[]> {
@@ -197,31 +207,41 @@ async function loadManagedOrgUsers(authUserId: string): Promise<ManageableUserRo
   return rows
 }
 
-/** Admin view-as: current account org (owner + office_manager_clients) plus other account owners to switch business. */
+/** Admin view-as: account owners to switch business; org roster merged separately (no full reload loop). */
 async function loadAdminOrgScopedUsers(
   authUserId: string,
   targetUserId: string | null,
   accessToken: string,
+  selfRow?: ManageableUserRow | null,
 ): Promise<ManageableUserRow[]> {
   const all = await loadAdminAccountOwners(accessToken)
   const accountOwners = all.filter(
     (u) => isOfficeManagerAssignmentRole(u.role) || u.role === "corporate_management",
   )
 
+  const withSelf = (rows: ManageableUserRow[]): ManageableUserRow[] => {
+    const ids = new Set(rows.map((r) => r.userId))
+    const out = rows.map((r) => ({ ...r, isSelf: r.userId === authUserId }))
+    if (selfRow && !ids.has(selfRow.userId)) {
+      out.unshift({ ...selfRow, isSelf: true })
+    } else if (!ids.has(authUserId) && selfRow) {
+      out.unshift({ ...selfRow, isSelf: true })
+    }
+    return out
+  }
+
   let orgOwnerId: string | null = null
   if (
     targetUserId &&
     !isPortalViewDefaultTarget(targetUserId) &&
     !isSandboxDemoUserId(targetUserId) &&
+    targetUserId !== authUserId &&
     supabase
   ) {
-    // Platform admin viewing as themselves: account-owner list only until they pick a business profile.
-    if (targetUserId !== authUserId) {
-      try {
-        orgOwnerId = await resolveOrgRosterOwnerId(supabase, targetUserId)
-      } catch {
-        orgOwnerId = null
-      }
+    try {
+      orgOwnerId = await resolveOrgRosterOwnerId(supabase, targetUserId)
+    } catch {
+      orgOwnerId = null
     }
   }
 
@@ -229,13 +249,13 @@ async function loadAdminOrgScopedUsers(
     const orgRows = await loadManagedOrgUsers(orgOwnerId)
     const orgIds = new Set(orgRows.map((r) => r.userId))
     const switchTargets = accountOwners.filter((o) => !orgIds.has(o.userId))
-    return [
-      ...orgRows,
+    return withSelf([
+      ...orgRows.map((r) => ({ ...r, isSelf: r.userId === authUserId })),
       ...switchTargets.map((r) => ({ ...r, isSelf: r.userId === authUserId })),
-    ]
+    ])
   }
 
-  return accountOwners.map((r) => ({ ...r, isSelf: r.userId === authUserId }))
+  return withSelf(accountOwners)
 }
 
 type Props = {
@@ -261,6 +281,22 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
   const [loadingPortalConfig, setLoadingPortalConfig] = useState(false)
   const [error, setError] = useState("")
   const [editMode, setEditMode] = useState(false)
+  const targetValidatedRef = useRef<string | null>(null)
+  const adminSelfRowRef = useRef<ManageableUserRow | null>(null)
+  const lastOrgOwnerRef = useRef<string | null>(null)
+  const adminTargetHydratedRef = useRef(false)
+
+  // Platform admin: start as self — do not restore a stale view-as id from sessionStorage.
+  useEffect(() => {
+    if (!authUserId || authRole !== "admin") return
+    if (adminTargetHydratedRef.current) return
+    adminTargetHydratedRef.current = true
+    setTargetUserIdState((prev) => {
+      if (prev === authUserId || isSandboxDemoUserId(prev)) return prev ?? authUserId
+      writeStoredTargetUser(authUserId)
+      return authUserId
+    })
+  }, [authUserId, authRole])
 
   const viewingOtherProfile = Boolean(
     showViewBar &&
@@ -308,6 +344,8 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
   useEffect(() => {
     if (!authUserId) {
       setManageableUsers([])
+      adminSelfRowRef.current = null
+      lastOrgOwnerRef.current = null
       return
     }
     let cancelled = false
@@ -315,22 +353,24 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
       setLoadingUsers(true)
       setError("")
       try {
+        const selfRow: ManageableUserRow = {
+          userId: authUserId,
+          label: user?.email ? resolveInternalMemberLabel({ display_name: null, email: user.email, metadata: null }) : "Me",
+          email: user?.email ?? null,
+          role: authRole ?? "user",
+          clientId: null,
+          isSelf: true,
+        }
+        if (authRole === "admin") adminSelfRowRef.current = selfRow
+
         let rows: ManageableUserRow[] = []
         if (authRole === "admin" && session?.access_token) {
-          rows = await loadAdminOrgScopedUsers(authUserId, targetUserId, session.access_token)
+          rows = await loadAdminOrgScopedUsers(authUserId, authUserId, session.access_token, selfRow)
+          lastOrgOwnerRef.current = null
         } else if (authRole === "corporate_management" || authRole === "office_manager") {
           rows = await loadManagedOrgUsers(authUserId)
         } else if (authRole) {
-          rows = [
-            {
-              userId: authUserId,
-              label: "Me",
-              email: user?.email ?? null,
-              role: authRole,
-              clientId: null,
-              isSelf: true,
-            },
-          ]
+          rows = [selfRow]
         }
         if (authPortalConfig?.sandbox_account === true && supabase) {
           const { data: metaRow } = await supabase
@@ -362,7 +402,43 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
     return () => {
       cancelled = true
     }
-  }, [authUserId, authRole, session?.access_token, user?.email, authPortalConfig?.sandbox_account, targetUserId])
+  }, [authUserId, authRole, session?.access_token, user?.email, authPortalConfig?.sandbox_account])
+
+  // Admin: merge org roster when view-as target changes — without toggling loadingUsers (avoids bar loop).
+  useEffect(() => {
+    if (authRole !== "admin" || !authUserId || !session?.access_token) return
+    if (!targetUserId || isPortalViewDefaultTarget(targetUserId) || isSandboxDemoUserId(targetUserId)) {
+      lastOrgOwnerRef.current = null
+      return
+    }
+    if (targetUserId === authUserId) {
+      lastOrgOwnerRef.current = null
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        let orgOwnerId: string | null = null
+        if (supabase) {
+          orgOwnerId = await resolveOrgRosterOwnerId(supabase, targetUserId)
+        }
+        if (cancelled || orgOwnerId === lastOrgOwnerRef.current) return
+        lastOrgOwnerRef.current = orgOwnerId
+        const rows = await loadAdminOrgScopedUsers(
+          authUserId,
+          targetUserId,
+          session.access_token,
+          adminSelfRowRef.current,
+        )
+        if (!cancelled) setManageableUsers(rows)
+      } catch {
+        /* keep prior list */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [authRole, authUserId, session?.access_token, targetUserId])
 
   const refreshManageableUsers = useCallback(async () => {
     if (!authUserId) {
@@ -375,7 +451,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
     try {
       let rows: ManageableUserRow[] = []
       if (authRole === "admin" && session?.access_token) {
-        rows = await loadAdminOrgScopedUsers(authUserId, targetUserId, session.access_token)
+        rows = await loadAdminOrgScopedUsers(authUserId, targetUserId, session.access_token, adminSelfRowRef.current)
       } else if (authRole === "corporate_management" || authRole === "office_manager") {
         rows = await loadManagedOrgUsers(authUserId)
       } else if (authRole) {
@@ -432,15 +508,36 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
 
   useEffect(() => {
     if (loadingUsers) return
-    if (isPortalViewDefaultTarget(targetUserId)) return
-    if (viewRole === authRole && targetUserId === authUserId) return
-    if (targetUserId && usersForCurrentViewRole.some((u) => u.userId === targetUserId)) return
-    if (viewRole === authRole) {
+    const validationKey = `${viewRole}:${targetUserId ?? ""}:${usersForCurrentViewRole.map((u) => u.userId).join(",")}`
+    if (targetValidatedRef.current === validationKey) return
+
+    if (isPortalViewDefaultTarget(targetUserId)) {
+      targetValidatedRef.current = validationKey
+      return
+    }
+    if (viewRole === authRole && targetUserId === authUserId) {
+      targetValidatedRef.current = validationKey
+      return
+    }
+    if (targetUserId && usersForCurrentViewRole.some((u) => u.userId === targetUserId)) {
+      targetValidatedRef.current = validationKey
+      return
+    }
+    // Also accept target if present in full manageable list (role filter may lag).
+    if (targetUserId && manageableUsers.some((u) => u.userId === targetUserId)) {
+      targetValidatedRef.current = validationKey
+      return
+    }
+
+    targetValidatedRef.current = validationKey
+    if (viewRole === authRole && authUserId) {
       setTargetUserIdState(authUserId)
+      writeStoredTargetUser(authUserId)
       return
     }
     setTargetUserIdState(PORTAL_VIEW_DEFAULT_USER)
-  }, [usersForCurrentViewRole, targetUserId, authUserId, viewRole, authRole, loadingUsers])
+    writeStoredTargetUser(PORTAL_VIEW_DEFAULT_USER)
+  }, [usersForCurrentViewRole, manageableUsers, targetUserId, authUserId, viewRole, authRole, loadingUsers])
 
   const setViewRole = useCallback(
     (role: UserRole) => {
@@ -460,12 +557,10 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
   )
 
   const setTargetUserId = useCallback((id: string) => {
+    targetValidatedRef.current = null
+    lastOrgOwnerRef.current = null
     setTargetUserIdState(id)
-    try {
-      sessionStorage.setItem(STORAGE_TARGET_USER, id)
-    } catch {
-      /* ignore */
-    }
+    writeStoredTargetUser(id)
   }, [])
 
   const effectiveShell = portalShellForViewRole(viewRole)

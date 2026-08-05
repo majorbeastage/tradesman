@@ -168,8 +168,11 @@ export default function PortalViewBar() {
             Default — {labelForViewRoleOption(viewRole, false)}
           </option>
         ) : null}
-        {usersForCurrentViewRole.length === 0 && viewRole === authRole ? (
-          <option value={authUserId ?? ""}>No users for this role</option>
+        {usersForCurrentViewRole.length === 0 && viewRole === authRole && authUserId ? (
+          <option value={authUserId}>
+            {labelForViewRoleOption(viewRole, true)}
+            {selectedUser?.email ? ` · ${selectedUser.email}` : ""} (you)
+          </option>
         ) : (
           usersForCurrentViewRole.map((u) => (
             <option key={u.userId} value={u.userId}>
