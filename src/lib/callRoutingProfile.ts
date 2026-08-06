@@ -2,6 +2,11 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { mergeCallHuntingMetadata, parseCallHunting, type CallHuntingSettings } from "./callHunting"
+import {
+  mergeCallScheduleVisualMetadata,
+  parseCallScheduleVisual,
+  type CallScheduleVisualSettings,
+} from "./callScheduleLanes"
 import { mergeVoiceAutoAttendantMetadata, parseVoiceAutoAttendant, type VoiceAutoAttendantSettings } from "./voiceAutoAttendant"
 import { resolveOrgRosterOwnerId } from "./accountStructureOwner"
 
@@ -86,9 +91,15 @@ export type CallRoutingProfile = {
   businessHours: BusinessHours
   callForwardingEnabled: boolean
   callForwardingOutsideBusinessHours: boolean
+  forwardDialCallerIdMode: "caller_number" | "twilio_number"
+  forwardWhisperOnAnswer: boolean
+  forwardWhisperOnlyOutsideBusinessHours: boolean
+  forwardWhisperRequireKeypress: boolean
+  forwardWhisperAnnouncementTemplate: string
   callHunting: CallHuntingSettings
   autoAttendant: VoiceAutoAttendantSettings
   communicationLine: CommunicationLine | null
+  scheduleVisual: CallScheduleVisualSettings
 }
 
 export type CallRoutingProfilePatch = {
@@ -96,8 +107,14 @@ export type CallRoutingProfilePatch = {
   timezone?: string
   callForwardingEnabled?: boolean
   callForwardingOutsideBusinessHours?: boolean
+  forwardDialCallerIdMode?: "caller_number" | "twilio_number"
+  forwardWhisperOnAnswer?: boolean
+  forwardWhisperOnlyOutsideBusinessHours?: boolean
+  forwardWhisperRequireKeypress?: boolean
+  forwardWhisperAnnouncementTemplate?: string
   callHunting?: CallHuntingSettings
   autoAttendant?: Partial<VoiceAutoAttendantSettings>
+  scheduleVisual?: CallScheduleVisualSettings
 }
 
 /** User's own channel row, then account owner's shared line for managed team members. */
@@ -159,7 +176,7 @@ export async function loadCallRoutingProfile(
   const { data, error } = await supabase
     .from("profiles")
     .select(
-      "display_name, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours, metadata",
+      "display_name, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours, forward_dial_caller_id_mode, forward_whisper_on_answer, forward_whisper_announcement_template, forward_whisper_only_outside_business_hours, forward_whisper_require_keypress, metadata",
     )
     .eq("id", profileUserId)
     .maybeSingle()
@@ -176,9 +193,24 @@ export async function loadCallRoutingProfile(
     businessHours: parseBusinessHours(data.business_hours),
     callForwardingEnabled: data.call_forwarding_enabled !== false,
     callForwardingOutsideBusinessHours: data.call_forwarding_outside_business_hours === true,
+    forwardDialCallerIdMode:
+      (data as { forward_dial_caller_id_mode?: string }).forward_dial_caller_id_mode === "twilio_number"
+        ? "twilio_number"
+        : "caller_number",
+    forwardWhisperOnAnswer: (data as { forward_whisper_on_answer?: boolean }).forward_whisper_on_answer === true,
+    forwardWhisperOnlyOutsideBusinessHours:
+      (data as { forward_whisper_only_outside_business_hours?: boolean }).forward_whisper_only_outside_business_hours === true,
+    forwardWhisperRequireKeypress:
+      (data as { forward_whisper_require_keypress?: boolean }).forward_whisper_require_keypress === true,
+    forwardWhisperAnnouncementTemplate:
+      typeof (data as { forward_whisper_announcement_template?: string | null }).forward_whisper_announcement_template ===
+      "string"
+        ? (data as { forward_whisper_announcement_template: string }).forward_whisper_announcement_template
+        : "",
     callHunting: parseCallHunting(meta.call_hunting_v1),
     autoAttendant: parseVoiceAutoAttendant(meta.voice_auto_attendant_v1),
     communicationLine: line,
+    scheduleVisual: parseCallScheduleVisual(meta.call_schedule_visual_v1),
   }
 }
 
@@ -195,8 +227,19 @@ export async function saveCallRoutingProfile(
   if (patch.callForwardingOutsideBusinessHours !== undefined) {
     updates.call_forwarding_outside_business_hours = patch.callForwardingOutsideBusinessHours
   }
+  if (patch.forwardDialCallerIdMode !== undefined) updates.forward_dial_caller_id_mode = patch.forwardDialCallerIdMode
+  if (patch.forwardWhisperOnAnswer !== undefined) updates.forward_whisper_on_answer = patch.forwardWhisperOnAnswer
+  if (patch.forwardWhisperOnlyOutsideBusinessHours !== undefined) {
+    updates.forward_whisper_only_outside_business_hours = patch.forwardWhisperOnlyOutsideBusinessHours
+  }
+  if (patch.forwardWhisperRequireKeypress !== undefined) {
+    updates.forward_whisper_require_keypress = patch.forwardWhisperRequireKeypress
+  }
+  if (patch.forwardWhisperAnnouncementTemplate !== undefined) {
+    updates.forward_whisper_announcement_template = patch.forwardWhisperAnnouncementTemplate.trim() || null
+  }
 
-  if (patch.callHunting !== undefined || patch.autoAttendant !== undefined) {
+  if (patch.callHunting !== undefined || patch.autoAttendant !== undefined || patch.scheduleVisual !== undefined) {
     const { data, error: readErr } = await supabase
       .from("profiles")
       .select("metadata")
@@ -209,6 +252,7 @@ export async function saveCallRoutingProfile(
         : {}
     if (patch.callHunting !== undefined) meta = mergeCallHuntingMetadata(meta, patch.callHunting)
     if (patch.autoAttendant !== undefined) meta = mergeVoiceAutoAttendantMetadata(meta, patch.autoAttendant)
+    if (patch.scheduleVisual !== undefined) meta = mergeCallScheduleVisualMetadata(meta, patch.scheduleVisual)
     updates.metadata = meta
   }
 
@@ -244,5 +288,6 @@ export function cloneCallRoutingProfile(p: CallRoutingProfile): CallRoutingProfi
     callHunting: JSON.parse(JSON.stringify(p.callHunting)) as CallHuntingSettings,
     autoAttendant: JSON.parse(JSON.stringify(p.autoAttendant)) as VoiceAutoAttendantSettings,
     communicationLine: p.communicationLine ? { ...p.communicationLine } : null,
+    scheduleVisual: JSON.parse(JSON.stringify(p.scheduleVisual)) as CallScheduleVisualSettings,
   }
 }

@@ -12,6 +12,7 @@ import {
 import { voiceStudioUserRequest } from "../lib/voicePromptStudio"
 import { useLocale } from "../i18n/LocaleContext"
 import { CallScreeningMenuBuilder } from "./CallScreeningMenuBuilder"
+import { CallScheduleCalendarLink } from "./CallScheduleCalendarLink"
 
 type Props = {
   profileUserId: string
@@ -211,6 +212,7 @@ export function CallScreeningSettingsPanel({ profileUserId }: Props) {
       ) : null}
       {message ? <p style={{ margin: 0, fontSize: 12, color: "#0f766e", fontWeight: 600 }}>{message}</p> : null}
       {saving ? <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>{t("common.saving")}</p> : null}
+      <CallScheduleCalendarLink />
     </div>
   )
 }

@@ -583,6 +583,7 @@ export type QueuedCalendarSuite =
   | { id: "team_management"; panel: "team_members" | "job_types" | "team_map" | "scheduling_settings" }
   | { id: "scheduling_tools"; panel: "job_types" | "customer_map" }
   | { id: "managed_job_types" }
+  | { id: "call_schedule" }
 
 export function queueCalendarSuiteNavigation(state: QueuedCalendarSuite): void {
   if (typeof window === "undefined") return
@@ -634,6 +635,7 @@ export function consumeCalendarSuiteNavigation(): QueuedCalendarSuite | null {
     if (id === "calendar") return { id: "calendar" }
     if (id === "time_clock") return { id: "time_clock" }
     if (id === "managed_job_types") return { id: "managed_job_types" }
+    if (id === "call_schedule") return { id: "call_schedule" }
     if (id === "team_management") {
       const panel = o.panel
       if (

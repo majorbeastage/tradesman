@@ -291,6 +291,7 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "account.forward.stackIntro":
       "Use this stack for customer calls to your Tradesman number. Primary forward phone lives on your Twilio channel (Admin → Communications).",
     "account.forward.huntHeading": "Ring group / hunting",
+    "account.callSchedule.openLink": "Open visual Call Schedule calendar",
     "account.voicemail.title": "Voicemail greeting",
     "account.voicemail.subAi": "AI reads your script",
     "account.voicemail.subRecorded": "Custom audio recording",
@@ -606,6 +607,7 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
       "Marcadores: {caller_name}, {caller_phone}, {caller_phone_spoken} (dígitos con pausas para voz). Si no se conoce el nombre, {caller_name} se lee como \"Llamante desconocido\".",
     "account.forward.finePrint":
       "Aviso legal: El filtrado evita comportamientos raros de la operadora si cuelga durante el aviso. Respuestas poco claras o tiempo agotado se tratan como rechazo (buzón).",
+    "account.callSchedule.openLink": "Abrir calendario visual de programación de llamadas",
     "account.voicemail.title": "Saludo del buzón de voz",
     "account.voicemail.subAi": "La IA lee su guion",
     "account.voicemail.subRecorded": "Grabación de audio personalizada",
