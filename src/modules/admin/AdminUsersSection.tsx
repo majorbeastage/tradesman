@@ -86,7 +86,7 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
             headers: { Authorization: `Bearer ${session.access_token}` },
           })
           const data = (await res.json().catch(() => ({}))) as { users?: Partial<UserRow & { is_sandbox?: boolean }>[] }
-          if (res.ok && Array.isArray(data.users) && data.users.length > 0) {
+          if (res.ok && Array.isArray(data.users)) {
             const rows: UserRow[] = data.users.map((u) => ({
               id: u.id as string,
               email: u.email ?? null,
@@ -109,55 +109,39 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
         setLoading(false)
         return
       }
-      const { data: list } = await supabase
+      const { data: list, error: listError } = await supabase
         .from("admin_users_list")
         .select("id, email, created_at, role, display_name, account_disabled")
-      const { data: profiles, error: profilesError } = await supabase
-        .from("profiles")
-        .select("id, email, role, display_name, created_at, account_disabled, portal_config, metadata")
-
-      const merged = new Map<string, UserRow>()
-      for (const row of (list ?? []) as Array<Omit<UserRow, "account_disabled" | "isSandbox"> & { account_disabled?: boolean }>) {
-        merged.set(row.id, {
+      if (listError) throw listError
+      const baseRows = (list ?? []) as Array<Omit<UserRow, "isSandbox"> & { account_disabled?: boolean }>
+      const ids = baseRows.map((r) => r.id)
+      const sandboxById = new Map<string, boolean>()
+      if (ids.length > 0) {
+        const { data: metaRows } = await supabase
+          .from("profiles")
+          .select("id, portal_config, metadata, role")
+          .in("id", ids)
+        for (const p of metaRows ?? []) {
+          const portalConfig = (p as { portal_config?: PortalConfig | null }).portal_config ?? null
+          const metadata =
+            (p as { metadata?: unknown }).metadata &&
+            typeof (p as { metadata?: unknown }).metadata === "object" &&
+            !Array.isArray((p as { metadata?: unknown }).metadata)
+              ? ((p as { metadata?: unknown }).metadata as Record<string, unknown>)
+              : null
+          sandboxById.set(
+            (p as { id: string }).id,
+            isGraduateSandboxCandidate(portalConfig, metadata, (p as { role?: string }).role ?? "user"),
+          )
+        }
+      }
+      setUsers(
+        baseRows.map((row) => ({
           ...row,
           account_disabled: row.account_disabled === true,
-          isSandbox: false,
-        })
-      }
-      for (const p of (profiles ?? []) as Array<{
-        id: string
-        email?: string | null
-        role: string
-        display_name: string | null
-        created_at?: string
-        account_disabled?: boolean | null
-        portal_config?: PortalConfig | null
-        metadata?: Record<string, unknown> | null
-      }>) {
-        const prev = merged.get(p.id)
-        const portalConfig = p.portal_config ?? null
-        const metadata =
-          p.metadata && typeof p.metadata === "object" && !Array.isArray(p.metadata)
-            ? (p.metadata as Record<string, unknown>)
-            : null
-        merged.set(p.id, {
-          id: p.id,
-          email: prev?.email ?? p.email ?? null,
-          created_at: p.created_at ?? prev?.created_at ?? "",
-          role: p.role ?? prev?.role ?? "user",
-          display_name: p.display_name ?? prev?.display_name ?? null,
-          account_disabled: p.account_disabled === true || prev?.account_disabled === true,
-          isSandbox: isGraduateSandboxCandidate(portalConfig, metadata, p.role),
-        })
-      }
-
-      const rows = Array.from(merged.values())
-      if (rows.length > 0) {
-        setUsers(rows)
-        return
-      }
-      if (profilesError) setLoadError(profilesError.message)
-      setUsers([])
+          isSandbox: sandboxById.get(row.id) === true,
+        })),
+      )
     } catch (e) {
       setLoadError("Could not load user list. New users you create will still appear below.")
       setUsers([])

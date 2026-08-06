@@ -58,7 +58,7 @@ Deno.serve(async (req) => {
     const ids = users.users.map((u) => u.id)
     const { data: profiles } = await adminClient
       .from("profiles")
-      .select("id, email, role, display_name, account_disabled, portal_config, metadata")
+      .select("id, email, role, display_name, account_disabled")
       .in("id", ids)
     const profileMap = new Map((profiles || []).map((p) => [p.id, p]))
     const list = users.users.map((u) => {

@@ -28,6 +28,17 @@ export type BillingProfileMetadata = {
   billing_promo_benefit_end?: string
   /** ISO timestamp when promo was applied at signup. */
   billing_promo_applied_at?: string
+  /** Admin-set one-time or override charge (USD) for the next payment — takes precedence over catalog sum. */
+  billing_custom_charge_usd?: number
+  /** Verified subscription payments recorded by Tradesman (newest first). */
+  billing_payment_history_v1?: BillingPaymentHistoryEntry[]
+}
+
+export type BillingPaymentHistoryEntry = {
+  at: string
+  amountUsd?: number
+  transactionId?: string
+  note?: string
 }
 
 /**
@@ -116,6 +127,25 @@ export function parseBillingMetadata(metadata: unknown): BillingProfileMetadata 
   if (typeof m.billing_promo_applied_at === "string" && m.billing_promo_applied_at.trim()) {
     out.billing_promo_applied_at = m.billing_promo_applied_at.trim()
   }
+  if (typeof m.billing_custom_charge_usd === "number" && Number.isFinite(m.billing_custom_charge_usd) && m.billing_custom_charge_usd >= 0) {
+    out.billing_custom_charge_usd = Math.round(m.billing_custom_charge_usd * 100) / 100
+  }
+  if (Array.isArray(m.billing_payment_history_v1)) {
+    const hist = m.billing_payment_history_v1
+      .map((row) => {
+        if (!row || typeof row !== "object" || Array.isArray(row)) return null
+        const e = row as Record<string, unknown>
+        const at = typeof e.at === "string" ? e.at.trim() : ""
+        if (!at) return null
+        const entry: BillingPaymentHistoryEntry = { at }
+        if (typeof e.amountUsd === "number" && Number.isFinite(e.amountUsd)) entry.amountUsd = e.amountUsd
+        if (typeof e.transactionId === "string" && e.transactionId.trim()) entry.transactionId = e.transactionId.trim()
+        if (typeof e.note === "string" && e.note.trim()) entry.note = e.note.trim()
+        return entry
+      })
+      .filter((x): x is BillingPaymentHistoryEntry => x != null)
+    if (hist.length) out.billing_payment_history_v1 = hist.slice(0, 100)
+  }
   return out
 }
 
@@ -178,5 +208,41 @@ export function mergeBillingIntoProfileMetadata(
     if (t) next.billing_promo_applied_at = t
     else delete next.billing_promo_applied_at
   }
+  if (patch.billing_custom_charge_usd !== undefined) {
+    if (typeof patch.billing_custom_charge_usd === "number" && Number.isFinite(patch.billing_custom_charge_usd) && patch.billing_custom_charge_usd >= 0) {
+      next.billing_custom_charge_usd = Math.round(patch.billing_custom_charge_usd * 100) / 100
+    } else {
+      delete next.billing_custom_charge_usd
+    }
+  }
+  if (patch.billing_payment_history_v1 !== undefined) {
+    if (Array.isArray(patch.billing_payment_history_v1) && patch.billing_payment_history_v1.length) {
+      next.billing_payment_history_v1 = patch.billing_payment_history_v1.slice(0, 100)
+    } else {
+      delete next.billing_payment_history_v1
+    }
+  }
   return next
+}
+
+/** Advance YYYY-MM-DD due date by one calendar month when payment clears. */
+export function advanceBillingDueDate(dueDate: string | undefined): string | undefined {
+  const t = (dueDate ?? "").trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return dueDate
+  const d = new Date(`${t}T12:00:00`)
+  if (Number.isNaN(d.getTime())) return dueDate
+  d.setMonth(d.getMonth() + 1)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  return `${y}-${m}-${day}`
+}
+
+export function appendBillingPaymentHistory(
+  prev: Record<string, unknown>,
+  entry: BillingPaymentHistoryEntry,
+): Record<string, unknown> {
+  const billing = parseBillingMetadata(prev)
+  const hist = [entry, ...(billing.billing_payment_history_v1 ?? [])].slice(0, 100)
+  return mergeBillingIntoProfileMetadata(prev, { billing_payment_history_v1: hist })
 }

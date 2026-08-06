@@ -145,7 +145,7 @@ export async function loadOrganizationPeers(client: SupabaseClient, userId: stri
 
   const { data, error } = await client
     .from("profiles")
-    .select("id, display_name, email, role, portal_config, account_disabled")
+    .select("id, display_name, email, role, account_disabled")
     .in("id", peerIds)
   if (error) throw error
 

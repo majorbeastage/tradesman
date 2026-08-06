@@ -69,7 +69,7 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? ""
 
 const ADMIN_ACCOUNT_OWNERS_CACHE_MS = 5 * 60 * 1000
 let adminAccountOwnersCache: {
-  token: string
+  userId: string
   at: number
   rows: ManageableUserRow[]
 } | null = null
@@ -107,11 +107,11 @@ function writeStoredTargetUser(id: string | null): void {
   }
 }
 
-async function loadAdminAccountOwners(accessToken: string): Promise<ManageableUserRow[]> {
+async function loadAdminAccountOwners(accessToken: string, cacheUserId: string): Promise<ManageableUserRow[]> {
   const now = Date.now()
   if (
     adminAccountOwnersCache &&
-    adminAccountOwnersCache.token === accessToken &&
+    adminAccountOwnersCache.userId === cacheUserId &&
     now - adminAccountOwnersCache.at < ADMIN_ACCOUNT_OWNERS_CACHE_MS
   ) {
     return adminAccountOwnersCache.rows
@@ -152,7 +152,7 @@ async function loadAdminAccountOwners(accessToken: string): Promise<ManageableUs
             clientId: clientById.get(b.userId) ?? null,
           }))
         }
-        adminAccountOwnersCache = { token: accessToken, at: now, rows }
+        adminAccountOwnersCache = { userId: cacheUserId, at: now, rows }
         return rows
       }
     } catch {
@@ -213,8 +213,9 @@ async function loadAdminOrgScopedUsers(
   targetUserId: string | null,
   accessToken: string,
   selfRow?: ManageableUserRow | null,
+  preResolvedOrgOwnerId?: string | null,
 ): Promise<ManageableUserRow[]> {
-  const all = await loadAdminAccountOwners(accessToken)
+  const all = await loadAdminAccountOwners(accessToken, authUserId)
   const accountOwners = all.filter(
     (u) => isOfficeManagerAssignmentRole(u.role) || u.role === "corporate_management",
   )
@@ -230,8 +231,9 @@ async function loadAdminOrgScopedUsers(
     return out
   }
 
-  let orgOwnerId: string | null = null
+  let orgOwnerId: string | null = preResolvedOrgOwnerId ?? null
   if (
+    orgOwnerId == null &&
     targetUserId &&
     !isPortalViewDefaultTarget(targetUserId) &&
     !isSandboxDemoUserId(targetUserId) &&
@@ -366,7 +368,6 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
         let rows: ManageableUserRow[] = []
         if (authRole === "admin" && session?.access_token) {
           rows = await loadAdminOrgScopedUsers(authUserId, authUserId, session.access_token, selfRow)
-          lastOrgOwnerRef.current = null
         } else if (authRole === "corporate_management" || authRole === "office_manager") {
           rows = await loadManagedOrgUsers(authUserId)
         } else if (authRole) {
@@ -429,6 +430,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
           targetUserId,
           session.access_token,
           adminSelfRowRef.current,
+          orgOwnerId,
         )
         if (!cancelled) setManageableUsers(rows)
       } catch {

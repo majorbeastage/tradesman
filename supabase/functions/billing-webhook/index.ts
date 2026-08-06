@@ -72,12 +72,37 @@ async function verifyProcessorWebhookSignature(rawBody: string, headers: Headers
   return computed === expectedB64
 }
 
+function advanceDueDate(dueDate: string | undefined): string | undefined {
+  const t = (dueDate ?? "").trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return dueDate
+  const d = new Date(`${t}T12:00:00`)
+  if (Number.isNaN(d.getTime())) return dueDate
+  d.setMonth(d.getMonth() + 1)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  return `${y}-${m}-${day}`
+}
+
 function mergeBillingMeta(
   prev: Record<string, unknown>,
-  patch: { billing_last_success_at?: string },
+  patch: { billing_last_success_at?: string; amountUsd?: number; transactionId?: string },
 ): Record<string, unknown> {
   const next = { ...prev }
-  if (patch.billing_last_success_at) next.billing_last_success_at = patch.billing_last_success_at
+  if (patch.billing_last_success_at) {
+    next.billing_last_success_at = patch.billing_last_success_at
+    const dueRaw = typeof prev.billing_payment_due_date === "string" ? prev.billing_payment_due_date.trim() : ""
+    const nextDue = advanceDueDate(dueRaw || undefined)
+    if (nextDue) next.billing_payment_due_date = nextDue
+    const hist = Array.isArray(prev.billing_payment_history_v1) ? [...prev.billing_payment_history_v1] : []
+    hist.unshift({
+      at: patch.billing_last_success_at,
+      ...(typeof patch.amountUsd === "number" ? { amountUsd: patch.amountUsd } : {}),
+      ...(patch.transactionId ? { transactionId: patch.transactionId } : {}),
+      note: "Helcim webhook",
+    })
+    next.billing_payment_history_v1 = hist.slice(0, 100)
+  }
   return next
 }
 
@@ -245,7 +270,11 @@ Deno.serve(async (req) => {
   let accountAutomationApplied = false
   /** Last successful payment date is useful for every role (dashboard, Payments context). Account lock/unlock stays exempt for staff. */
   if (approved === true) {
-    const nextMeta = mergeBillingMeta(meta, { billing_last_success_at: nowIso })
+    const nextMeta = mergeBillingMeta(meta, {
+      billing_last_success_at: nowIso,
+      amountUsd: amountCents != null ? amountCents / 100 : undefined,
+      transactionId: txId || undefined,
+    })
     const patch: Record<string, unknown> = { metadata: nextMeta, updated_at: nowIso }
     if (!exemptFromHelcimProfileUpdates) {
       patch.account_disabled = false

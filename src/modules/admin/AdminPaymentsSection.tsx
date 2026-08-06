@@ -4,6 +4,8 @@ import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import { AdminSettingBlock } from "../../components/admin/AdminSettingChrome"
 import {
+  advanceBillingDueDate,
+  appendBillingPaymentHistory,
   mergeBillingIntoProfileMetadata,
   parseBillingMetadata,
   type BillingProfileMetadata,
@@ -40,6 +42,8 @@ type BillingDraft = {
   billing_additional_products: string[]
   /** `YYYY-MM-DD` for dashboard “due today / past due” alerts */
   billing_payment_due_date: string
+  /** Override amount (USD) for next bill — blank uses catalog sum */
+  billing_custom_charge_usd: string
 }
 
 function emptyDraft(): BillingDraft {
@@ -50,6 +54,7 @@ function emptyDraft(): BillingDraft {
     billing_product_type: "",
     billing_additional_products: [],
     billing_payment_due_date: "",
+    billing_custom_charge_usd: "",
   }
 }
 
@@ -65,6 +70,10 @@ function draftFromBilling(b: BillingProfileMetadata): BillingDraft {
     billing_product_type: primary,
     billing_additional_products: add,
     billing_payment_due_date: b.billing_payment_due_date?.trim() ?? "",
+    billing_custom_charge_usd:
+      typeof b.billing_custom_charge_usd === "number" && Number.isFinite(b.billing_custom_charge_usd)
+        ? String(b.billing_custom_charge_usd)
+        : "",
   }
 }
 
@@ -93,9 +102,17 @@ export default function AdminPaymentsSection() {
     setLoading(true)
     setError("")
     const { data: list } = await supabase.from("admin_users_list").select("id, email")
+    const ids = (list ?? []).map((r: { id: string }) => r.id)
+    if (ids.length === 0) {
+      setRows([])
+      setDrafts({})
+      setLoading(false)
+      return
+    }
     const { data: profiles, error: pErr } = await supabase
       .from("profiles")
       .select("id, display_name, role, account_disabled, metadata, client_id, created_at")
+      .in("id", ids)
       .order("created_at", { ascending: false })
     if (pErr) {
       setError(pErr.message)
@@ -165,8 +182,17 @@ export default function AdminPaymentsSection() {
         row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
           ? (row.metadata as Record<string, unknown>)
           : {}
+      const billing = parseBillingMetadata(prev)
       const nowIso = new Date().toISOString()
-      const nextMeta = mergeBillingIntoProfileMetadata(prev, { billing_last_success_at: nowIso })
+      const nextDue = advanceBillingDueDate(billing.billing_payment_due_date)
+      let nextMeta = mergeBillingIntoProfileMetadata(prev, {
+        billing_last_success_at: nowIso,
+        ...(nextDue ? { billing_payment_due_date: nextDue } : {}),
+      })
+      nextMeta = appendBillingPaymentHistory(nextMeta, {
+        at: nowIso,
+        note: "Recorded manually in Admin",
+      })
       const { error: upErr } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", userId)
       if (upErr) throw upErr
       await load()
@@ -194,6 +220,8 @@ export default function AdminPaymentsSection() {
         .map((x) => (typeof x === "string" ? x.trim() : ""))
         .filter((x): x is BillingProductTypeId => isBillingProductTypeId(x))
       const dueRaw = d.billing_payment_due_date?.trim() ?? ""
+      const customRaw = d.billing_custom_charge_usd?.trim() ?? ""
+      const customUsd = customRaw ? Number.parseFloat(customRaw) : NaN
       const nextMeta = mergeBillingIntoProfileMetadata(prev, {
         billing_helcim_customer_code: d.billing_helcim_customer_code?.trim() ?? "",
         helcim_pay_portal_url: d.helcim_pay_portal_url?.trim() ?? "",
@@ -203,7 +231,12 @@ export default function AdminPaymentsSection() {
           : "",
         billing_additional_products: additionalClean,
         billing_payment_due_date: /^\d{4}-\d{2}-\d{2}$/.test(dueRaw) ? dueRaw : "",
+        billing_custom_charge_usd:
+          customRaw && Number.isFinite(customUsd) && customUsd >= 0 ? Math.round(customUsd * 100) / 100 : undefined,
       })
+      if (!customRaw || !Number.isFinite(customUsd) || customUsd < 0) {
+        delete nextMeta.billing_custom_charge_usd
+      }
       const primaryBilling = d.billing_product_type?.trim()
       if (primaryBilling && isBillingProductTypeId(primaryBilling)) {
         for (const [pkg, bill] of Object.entries(PRODUCT_PACKAGE_TO_BILLING) as [ProductPackageId, string][]) {
@@ -571,6 +604,23 @@ export default function AdminPaymentsSection() {
                             </div>
                           </div>
                         </div>
+
+                        <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.charcoal }}>
+                          Custom bill amount (USD, optional)
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            value={d.billing_custom_charge_usd}
+                            onChange={(e) => setDraft(r.id, { billing_custom_charge_usd: e.target.value })}
+                            placeholder="Leave blank to use product catalog sum"
+                            style={{ padding: 8, borderRadius: 6, border: `1px solid ${theme.border}`, maxWidth: 280 }}
+                          />
+                          <span style={{ fontWeight: 400, fontSize: 11, color: theme.charcoal, opacity: 0.85 }}>
+                            When set, the customer&apos;s Payments tab uses this amount (plus any open advertising balance) instead of
+                            the monthly product total.
+                          </span>
+                        </label>
 
                         <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.charcoal }}>
                           Payment due date (optional)

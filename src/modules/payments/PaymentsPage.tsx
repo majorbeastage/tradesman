@@ -117,6 +117,7 @@ export default function PaymentsPage() {
   const [collectionsBusy, setCollectionsBusy] = useState(false)
   const [collectionsRows, setCollectionsRows] = useState<CustomerPaymentCollectionsRow[]>([])
   const [collectionsError, setCollectionsError] = useState<string | null>(null)
+  const [billingRefreshNonce, setBillingRefreshNonce] = useState(0)
   const [collectionsRefreshNonce, setCollectionsRefreshNonce] = useState(0)
   const [paymentAmount, setPaymentAmount] = useState("")
   const [paymentMode, setPaymentMode] = useState<"suggested" | "advertising" | "custom">("suggested")
@@ -134,11 +135,25 @@ export default function PaymentsPage() {
   const adBalanceDueCentsTotal = Math.max(adBalanceFromCampaignsCents, adBalanceFromMetaCents)
 
   const suggestedPaymentAmount = useMemo(() => {
-    const plan = sumMonthlyBillingUsd(billingForPayments.billing_product_type, billingForPayments.billing_additional_products)
+    const plan =
+      typeof billingForPayments.billing_custom_charge_usd === "number" &&
+      Number.isFinite(billingForPayments.billing_custom_charge_usd)
+        ? billingForPayments.billing_custom_charge_usd
+        : sumMonthlyBillingUsd(billingForPayments.billing_product_type, billingForPayments.billing_additional_products)
     const ads = adBalanceDueCentsTotal / 100
     const total = plan + ads
     return total > 0 ? total.toFixed(2) : ""
-  }, [billingForPayments.billing_product_type, billingForPayments.billing_additional_products, adBalanceDueCentsTotal])
+  }, [
+    billingForPayments.billing_custom_charge_usd,
+    billingForPayments.billing_product_type,
+    billingForPayments.billing_additional_products,
+    adBalanceDueCentsTotal,
+  ])
+
+  const openAdCampaigns = useMemo(
+    () => adCampaigns.filter((c) => adBalanceDueCents(c) > 0),
+    [adCampaigns],
+  )
 
   const monthlyPlanTotal = useMemo(
     () => sumMonthlyBillingUsd(billingForPayments.billing_product_type, billingForPayments.billing_additional_products),
@@ -153,6 +168,15 @@ export default function PaymentsPage() {
   useEffect(() => {
     if (paymentMode === "suggested") setPaymentAmount(suggestedPaymentAmount)
   }, [paymentMode, suggestedPaymentAmount])
+
+  useEffect(() => {
+    if (paymentMode !== "suggested") return
+    if (adBalanceDueCentsTotal <= 0) {
+      setPaymentCampaignIds([])
+      return
+    }
+    setPaymentCampaignIds(openAdCampaigns.map((c) => c.id))
+  }, [paymentMode, adBalanceDueCentsTotal, openAdCampaigns])
 
   const loadAdvertisingIntoCheckout = (campaign?: AdCampaignRow) => {
     const dueCents = campaign ? adBalanceDueCents(campaign) : adBalanceDueCentsTotal
@@ -338,7 +362,7 @@ export default function PaymentsPage() {
     return () => {
       cancelled = true
     }
-  }, [profileUserId])
+  }, [profileUserId, billingRefreshNonce])
 
   useEffect(() => {
     if (paymentsHubTab !== "history" || !profileUserId || !supabase) return
@@ -402,13 +426,17 @@ export default function PaymentsPage() {
       if (ev.origin !== helcimReturnOrigin) return
       if (!isHelcimJsReturnMessage(ev.data)) return
       setLastResult(ev.data)
-      if (ev.data.response === 1 && paymentMode === "advertising") {
-        void reconcileAdvertisingPayment(ev.data)
+      if (ev.data.response === 1) {
+        if (paymentCampaignIds.length > 0 || adBalanceDueCentsTotal > 0) {
+          void reconcileAdvertisingPayment(ev.data)
+        } else {
+          setBillingRefreshNonce((n) => n + 1)
+        }
       }
     }
     window.addEventListener("message", onHelcimMessage)
     return () => window.removeEventListener("message", onHelcimMessage)
-  }, [useHelcimJs, helcimReturnOrigin, paymentMode, paymentCampaignIds])
+  }, [useHelcimJs, helcimReturnOrigin, paymentCampaignIds, adBalanceDueCentsTotal])
 
   async function reconcileAdvertisingPayment(result: HelcimJsReturnMessage) {
     if (!supabase || !profileUserId) return
@@ -452,6 +480,7 @@ export default function PaymentsPage() {
       setAdPaymentHistory((paymentResult.data ?? []) as AdCampaignPaymentRow[])
       setPaymentCampaignIds([])
       setPaymentMode("suggested")
+      setBillingRefreshNonce((n) => n + 1)
     } catch (error) {
       setAdPaymentReconcileMessage(
         error instanceof Error
@@ -529,7 +558,24 @@ export default function PaymentsPage() {
         Subscription &amp; Tradesman billing
       </h2>
 
-      {adCampaigns.length > 0 || adBalanceDueCentsTotal > 0 ? (
+      {billingForPayments.billing_payment_due_date?.trim() ? (
+        <p style={{ margin: "0 0 14px", fontSize: 14, color: "#475569", lineHeight: 1.5 }}>
+          <strong>Payment due:</strong> {billingForPayments.billing_payment_due_date}
+          {typeof billingForPayments.billing_custom_charge_usd === "number" ? (
+            <>
+              {" "}
+              · <strong>Amount on file:</strong> ${billingForPayments.billing_custom_charge_usd.toFixed(2)}
+            </>
+          ) : monthlyPlanTotal > 0 ? (
+            <>
+              {" "}
+              · <strong>Monthly plan:</strong> {formatUsdMonthly(monthlyPlanTotal)}
+            </>
+          ) : null}
+        </p>
+      ) : null}
+
+      {openAdCampaigns.length > 0 || adBalanceDueCentsTotal > 0 ? (
         <div
           style={{
             marginBottom: 16,
@@ -547,13 +593,13 @@ export default function PaymentsPage() {
           <p style={{ margin: "0 0 12px", fontSize: 12, color: "#9a3412", lineHeight: 1.5 }}>
             {AD_CAMPAIGN_SPEND_DISCLAIMER} {AD_CAMPAIGN_FEE_DISCLOSURE}
           </p>
-          {adCampaigns.length === 0 ? (
+          {openAdCampaigns.length === 0 ? (
             <p style={{ margin: 0, fontSize: 13, color: "#c2410c" }}>
               Open advertising balance: <strong>{formatUsdFromCents(adBalanceDueCentsTotal)}</strong>
             </p>
           ) : (
             <div style={{ display: "grid", gap: 8 }}>
-              {adCampaigns.map((c) => (
+              {openAdCampaigns.map((c) => (
                 <div
                   key={c.id}
                   style={{
@@ -987,9 +1033,20 @@ export default function PaymentsPage() {
               full statement.
             </p>
             <ul style={{ margin: 0, paddingLeft: 20, fontSize: 14, color: theme.text, lineHeight: 1.65 }}>
-              <li>
-                <strong>Last successful sync</strong> (Tradesman billing): {formatProfilePaymentIso(billingForPayments.billing_last_success_at)}
-              </li>
+              {(billingForPayments.billing_payment_history_v1 ?? []).length > 0 ? (
+                (billingForPayments.billing_payment_history_v1 ?? []).map((entry, i) => (
+                  <li key={`${entry.at}-${i}`}>
+                    <strong>{formatProfilePaymentIso(entry.at)}</strong>
+                    {typeof entry.amountUsd === "number" ? ` · $${entry.amountUsd.toFixed(2)}` : ""}
+                    {entry.transactionId ? ` · Ref ${entry.transactionId}` : ""}
+                    {entry.note ? ` · ${entry.note}` : ""}
+                  </li>
+                ))
+              ) : (
+                <li>
+                  <strong>Last successful sync</strong> (Tradesman billing): {formatProfilePaymentIso(billingForPayments.billing_last_success_at)}
+                </li>
+              )}
               <li>
                 <strong>Next due date on file</strong>: {billingForPayments.billing_payment_due_date?.trim() || "—"}
               </li>

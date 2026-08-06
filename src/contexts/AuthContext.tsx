@@ -289,9 +289,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { role: roleFromDb }
   }, [user?.id])
 
-  // When user returns to the tab, refetch profile so portal_config updates from admin appear without full refresh.
+  const lastFocusRefetchAt = useRef(0)
+
+  // When user returns to the tab, refetch profile (debounced — avoids egress spikes on tab switching).
   useEffect(() => {
-    const onFocus = () => { if (user?.id && refetchProfile) void refetchProfile() }
+    const onFocus = () => {
+      if (!user?.id || !refetchProfile) return
+      const now = Date.now()
+      if (now - lastFocusRefetchAt.current < 60_000) return
+      lastFocusRefetchAt.current = now
+      void refetchProfile()
+    }
     window.addEventListener("focus", onFocus)
     return () => window.removeEventListener("focus", onFocus)
   }, [user?.id, refetchProfile])
