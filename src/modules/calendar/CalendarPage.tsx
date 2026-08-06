@@ -32,6 +32,7 @@ import {
 } from "../../lib/calendarVideoCall"
 import { joinConference } from "../../lib/messengerBus"
 import { notifyCalendarInvitees } from "../../lib/notifyCalendarInvite"
+import { loadAdminPlatformUsers } from "../../lib/adminPlatformUsers"
 import { isAdminPortalRole } from "../../lib/profileRoles"
 import {
   formatCalendarEventLabel,
@@ -484,6 +485,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [eventVideoInvitees, setEventVideoInvitees] = useState<string[]>([])
   const [eventVideoSaving, setEventVideoSaving] = useState(false)
   const [eventVideoNote, setEventVideoNote] = useState("")
+  const [addVideoCallInvitees, setAddVideoCallInvitees] = useState<string[]>([])
+  const [videoInviteSearch, setVideoInviteSearch] = useState("")
+  const [adminPlatformUsers, setAdminPlatformUsers] = useState<Array<{ userId: string; label: string; email: string | null }>>([])
   const [showAllOrgEvents, setShowAllOrgEvents] = useState(() => {
     try { return localStorage.getItem("calendar_showAllOrgEvents") === "true" } catch { return false }
   })
@@ -493,6 +497,53 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     if (scopeCtx?.clients?.length) return scopeCtx.clients
     return [{ userId, label: "My calendar", email: null, clientId: null, isSelf: true }]
   }, [scopeCtx?.clients, userId])
+
+  useEffect(() => {
+    if (!isAdminPortalRole(authRole) || !supabase || !authUserId) {
+      setAdminPlatformUsers([])
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const { data } = await supabase.auth.getSession()
+      const token = data.session?.access_token
+      if (!token) return
+      const rows = await loadAdminPlatformUsers(supabase, token, authUserId)
+      if (cancelled) return
+      setAdminPlatformUsers(
+        rows.map((r) => ({
+          userId: r.id,
+          label: r.displayName,
+          email: r.email,
+        })),
+      )
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [authRole, authUserId, supabase])
+
+  const videoInviteUsers = useMemo(() => {
+    if (isAdminPortalRole(authRole) && adminPlatformUsers.length > 0) {
+      return adminPlatformUsers.map((u) => ({
+        userId: u.userId,
+        label: u.label,
+        email: u.email,
+        isSelf: u.userId === authUserId,
+      }))
+    }
+    return selectableUsers
+      .filter((u) => !u.isSelf && !isSandboxDemoUserId(u.userId))
+      .map((u) => ({ userId: u.userId, label: u.label, email: u.email ?? null, isSelf: false }))
+  }, [authRole, adminPlatformUsers, selectableUsers, authUserId])
+
+  const filteredVideoInviteUsers = useMemo(() => {
+    const q = videoInviteSearch.trim().toLowerCase()
+    if (!q) return videoInviteUsers
+    return videoInviteUsers.filter(
+      (u) => u.label.toLowerCase().includes(q) || (u.email?.toLowerCase().includes(q) ?? false),
+    )
+  }, [videoInviteUsers, videoInviteSearch])
 
   const teamMapUserIds = useMemo(() => {
     if (scopeCtx?.clients?.length) {
@@ -544,7 +595,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [addNotifySms, setAddNotifySms] = useState(false)
   const [addVideoCall, setAddVideoCall] = useState(false)
   const [addConferenceCall, setAddConferenceCall] = useState(false)
-  const [addVideoCallInvitees, setAddVideoCallInvitees] = useState<string[]>([])
   const [addQuoteOptions, setAddQuoteOptions] = useState<CalendarQuotePickerOption[]>([])
   const [addQuoteOptionsLoading, setAddQuoteOptionsLoading] = useState(false)
   const [ownerBusinessDisplayName, setOwnerBusinessDisplayName] = useState("")
@@ -5084,14 +5134,24 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 </div>
                 {addVideoCall || addConferenceCall ? (
                   <div style={{ marginTop: 8, padding: 10, border: `1px solid ${theme.border}`, borderRadius: 8, background: "#f8fafc" }}>
-                    <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 600, color: theme.text }}>Invite team members</p>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                      {selectableUsers.filter((u) => !u.isSelf && !isSandboxDemoUserId(u.userId)).length === 0 ? (
-                        <span style={{ fontSize: 12, color: "#64748b" }}>No other team members to invite yet.</span>
+                    <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 600, color: theme.text }}>
+                      {isAdminPortalRole(authRole) ? "Invite Tradesman users" : "Invite team members"}
+                    </p>
+                    {isAdminPortalRole(authRole) && videoInviteUsers.length > 8 ? (
+                      <input
+                        value={videoInviteSearch}
+                        onChange={(e) => setVideoInviteSearch(e.target.value)}
+                        placeholder="Search users by name or email…"
+                        style={{ width: "100%", marginBottom: 8, padding: "8px 10px", borderRadius: 8, border: `1px solid ${theme.border}`, fontSize: 13, color: "#0f172a", background: "#fff", boxSizing: "border-box" }}
+                      />
+                    ) : null}
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, maxHeight: isAdminPortalRole(authRole) ? 160 : undefined, overflowY: isAdminPortalRole(authRole) ? "auto" : undefined }}>
+                      {filteredVideoInviteUsers.length === 0 ? (
+                        <span style={{ fontSize: 12, color: "#64748b" }}>
+                          {videoInviteSearch.trim() ? "No users match your search." : isAdminPortalRole(authRole) ? "No other users on the platform yet." : "No other team members to invite yet."}
+                        </span>
                       ) : (
-                        selectableUsers
-                          .filter((u) => !u.isSelf && !isSandboxDemoUserId(u.userId))
-                          .map((u) => {
+                        filteredVideoInviteUsers.map((u) => {
                             const checked = addVideoCallInvitees.includes(u.userId)
                             return (
                               <label key={u.userId} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: theme.text, padding: "5px 9px", border: `1px solid ${checked ? theme.primary : theme.border}`, borderRadius: 999, background: checked ? "#eff6ff" : "#fff", cursor: "pointer" }}>
@@ -5849,7 +5909,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 <label style={{ fontSize: "12px", color: theme.text, fontWeight: 600 }}>Team call</label>
                 {(() => {
                   const savedVc = readCalendarVideoCall(selectedEvent.metadata)
-                  const invitables = selectableUsers.filter((u) => !u.isSelf && !isSandboxDemoUserId(u.userId))
                   const isAdmin = isAdminPortalRole(authRole)
                   return (
                     <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -5905,12 +5964,24 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                           ) : null}
                           {eventVideoEnabled ? (
                             <div style={{ padding: 10, border: `1px solid ${theme.border}`, borderRadius: 8, background: "#f8fafc" }}>
-                              <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 600, color: theme.text }}>Invite team members</p>
-                              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                                {invitables.length === 0 ? (
-                                  <span style={{ fontSize: 12, color: "#64748b" }}>No other team members to invite yet.</span>
+                              <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 600, color: theme.text }}>
+                                {isAdmin ? "Invite Tradesman users" : "Invite team members"}
+                              </p>
+                              {isAdmin && videoInviteUsers.length > 8 ? (
+                                <input
+                                  value={videoInviteSearch}
+                                  onChange={(e) => setVideoInviteSearch(e.target.value)}
+                                  placeholder="Search users by name or email…"
+                                  style={{ width: "100%", marginBottom: 8, padding: "8px 10px", borderRadius: 8, border: `1px solid ${theme.border}`, fontSize: 13, color: "#0f172a", background: "#fff", boxSizing: "border-box" }}
+                                />
+                              ) : null}
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, maxHeight: isAdmin ? 160 : undefined, overflowY: isAdmin ? "auto" : undefined }}>
+                                {filteredVideoInviteUsers.length === 0 ? (
+                                  <span style={{ fontSize: 12, color: "#64748b" }}>
+                                    {videoInviteSearch.trim() ? "No users match your search." : isAdmin ? "No other users on the platform yet." : "No other team members to invite yet."}
+                                  </span>
                                 ) : (
-                                  invitables.map((u) => {
+                                  filteredVideoInviteUsers.map((u) => {
                                     const checked = eventVideoInvitees.includes(u.userId)
                                     return (
                                       <label key={u.userId} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: theme.text, padding: "5px 9px", border: `1px solid ${checked ? theme.primary : theme.border}`, borderRadius: 999, background: checked ? "#eff6ff" : "#fff", cursor: "pointer" }}>

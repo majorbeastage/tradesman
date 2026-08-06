@@ -372,7 +372,7 @@ export async function createGroupThread(
   }
 }
 
-export type MessengerCustomer = { id: string; name: string; phone: string | null }
+export type MessengerCustomer = { id: string; name: string; phone: string | null; email: string | null }
 
 /** Search the signed-in user's customers to reference in chat or dial. */
 export async function searchMessengerCustomers(
@@ -400,10 +400,13 @@ export async function searchMessengerCustomers(
     ).map((r) => {
       const phone =
         r.customer_identifiers?.find((i) => i.type === "phone" && String(i.value ?? "").trim())?.value?.trim() ?? null
+      const email =
+        r.customer_identifiers?.find((i) => i.type === "email" && String(i.value ?? "").trim())?.value?.trim() ?? null
       return {
         id: r.id,
         name: r.display_name?.trim() || "Unnamed customer",
         phone,
+        email,
       }
     })
   } catch {

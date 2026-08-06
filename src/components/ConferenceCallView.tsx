@@ -168,6 +168,11 @@ type Props = {
   teamPeers?: { id: string; name: string }[]
   onInvitePeople?: (ids: string[]) => void
   onStartSeparatePhoneCall?: (phone: string) => void
+  /** Search customers to email a conference dial-in invite. */
+  searchEmailCustomers?: (query: string) => Promise<Array<{ id: string; name: string; email: string | null }>>
+  onEmailCustomer?: (customer: { id: string; email: string; name: string }) => void | Promise<void>
+  emailCustomerBusy?: boolean
+  conferenceDialInHint?: { dialInDisplay: string | null; pin: string } | null
 }
 
 export function ConferenceCallBody({
@@ -186,18 +191,38 @@ export function ConferenceCallBody({
   teamPeers,
   onInvitePeople,
   onStartSeparatePhoneCall,
+  searchEmailCustomers,
+  onEmailCustomer,
+  emailCustomerBusy,
+  conferenceDialInHint,
 }: Props) {
   const { state, participants, incoming, muted, cameraOn, isVideo, sharingScreen, seconds, error, selfStream } = room
   const [showChatLocal, setShowChatLocal] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
   const [addSel, setAddSel] = useState<Set<string>>(new Set())
   const [externalPhone, setExternalPhone] = useState("")
+  const [emailCustQuery, setEmailCustQuery] = useState("")
+  const [emailCustResults, setEmailCustResults] = useState<Array<{ id: string; name: string; email: string | null }>>([])
   const showChat = showChatProp ?? showChatLocal
   const addablePeers = useMemo(() => {
     const inCall = new Set(participants.map((p) => p.id))
     return (teamPeers ?? []).filter((p) => !inCall.has(p.id))
   }, [participants, teamPeers])
   const externalPhoneValid = externalPhone.replace(/\D/g, "").length >= 10
+
+  useEffect(() => {
+    if (!searchEmailCustomers || !addOpen) return
+    let cancelled = false
+    const id = window.setTimeout(() => {
+      void searchEmailCustomers(emailCustQuery).then((rows) => {
+        if (!cancelled) setEmailCustResults(rows)
+      })
+    }, 220)
+    return () => {
+      cancelled = true
+      window.clearTimeout(id)
+    }
+  }, [addOpen, emailCustQuery, searchEmailCustomers])
 
   function toggleChat() {
     if (onToggleChat) onToggleChat()
@@ -461,6 +486,65 @@ export function ConferenceCallBody({
               </button>
             </div>
           ) : null}
+          {onEmailCustomer && searchEmailCustomers ? (
+            <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 8, display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#1d4ed8", textTransform: "uppercase" }}>Email customer · conference invite</div>
+              <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+                Sends dial-in number and conference PIN so they can join this call by phone.
+              </p>
+              {conferenceDialInHint?.pin ? (
+                <p style={{ margin: 0, fontSize: 11.5, color: "#0f172a", lineHeight: 1.45, padding: "8px 9px", borderRadius: 8, background: "#eff6ff", border: `1px solid ${theme.border}` }}>
+                  {conferenceDialInHint.dialInDisplay ? (
+                    <>
+                      <strong>Dial:</strong> {conferenceDialInHint.dialInDisplay}
+                      <br />
+                    </>
+                  ) : null}
+                  <strong>PIN:</strong> {conferenceDialInHint.pin}
+                </p>
+              ) : null}
+              <input
+                value={emailCustQuery}
+                onChange={(e) => setEmailCustQuery(e.target.value)}
+                placeholder="Search customer by name…"
+                style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: "8px 9px", fontSize: 13, color: "#0f172a", background: "#fff" }}
+              />
+              <div style={{ display: "grid", gap: 4, maxHeight: 120, overflowY: "auto" }}>
+                {emailCustResults.length === 0 ? (
+                  <span style={{ fontSize: 12, color: "#94a3b8" }}>Search for a customer with an email on file.</span>
+                ) : (
+                  emailCustResults.map((c) => {
+                    const hasEmail = Boolean(c.email?.trim())
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        disabled={!hasEmail || emailCustomerBusy}
+                        onClick={() => {
+                          if (!c.email?.trim()) return
+                          void onEmailCustomer({ id: c.id, email: c.email.trim(), name: c.name })
+                        }}
+                        style={{
+                          border: `1px solid ${theme.border}`,
+                          borderRadius: 8,
+                          background: hasEmail ? "#fff" : "#f8fafc",
+                          color: hasEmail ? "#0f172a" : "#94a3b8",
+                          padding: "7px 9px",
+                          textAlign: "left",
+                          cursor: hasEmail && !emailCustomerBusy ? "pointer" : "default",
+                          fontWeight: 700,
+                          fontSize: 12,
+                        }}
+                      >
+                        Email {c.name}
+                        {c.email?.trim() ? ` · ${c.email.trim()}` : " · no email"}
+                      </button>
+                    )
+                  })
+                )}
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -497,13 +581,13 @@ export function ConferenceCallBody({
             {showChat ? "Hide chat" : "Chat"}
           </button>
         ) : null}
-        {(onInvitePeople && (teamPeers?.length ?? 0) > 0) || onStartSeparatePhoneCall ? (
+        {(onInvitePeople && (teamPeers?.length ?? 0) > 0) || onStartSeparatePhoneCall || onEmailCustomer ? (
           <button
             type="button"
             onClick={() => setAddOpen((v) => !v)}
             style={{ ...ctrlBtn, flex: 1, minWidth: 70, background: addOpen ? "#fff7ed" : "#fff", color: "#0f172a", border: `1px solid ${theme.border}`, padding: "8px" }}
           >
-            {addOpen ? "Close" : "Invite / phone"}
+            {addOpen ? "Close" : "Invite / email"}
           </button>
         ) : null}
         <button type="button" onClick={room.hangup} style={{ ...ctrlBtn, flex: 1, minWidth: 70, background: "#dc2626", color: "#fff", border: "none", padding: "8px" }}>

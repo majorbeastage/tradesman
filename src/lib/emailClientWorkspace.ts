@@ -252,3 +252,19 @@ export function threadsInCustomFolder(
     return assigned != null && ids.has(assigned)
   })
 }
+
+/** True when a thread was filed into a user-created folder (not a system virtual folder). */
+export function isThreadAssignedToCustomFolder(
+  threadFolderMap: Record<string, string>,
+  threadKey: string,
+): boolean {
+  const assigned = threadFolderMap[threadKey]
+  return assigned != null && assigned !== "" && !isSystemFolderId(assigned)
+}
+
+export function excludeThreadsInCustomFolders<T extends { threadKey: string }>(
+  threads: T[],
+  threadFolderMap: Record<string, string>,
+): T[] {
+  return threads.filter((t) => !isThreadAssignedToCustomFolder(threadFolderMap, t.threadKey))
+}

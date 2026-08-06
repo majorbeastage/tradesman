@@ -46,6 +46,7 @@ import {
   assignThreadToFolder,
   systemFolderToLegacyFilter,
   threadsInCustomFolder,
+  excludeThreadsInCustomFolders,
   isSystemFolderId,
   SYSTEM_FOLDER_INBOX,
   SYSTEM_FOLDER_UNREAD,
@@ -144,6 +145,9 @@ function CustomersEmailInboxPageInner({ setPage }: Props) {
     const legacy = systemFolderToLegacyFilter(activeFolderId)
     if (legacy) {
       byFolder = filterThreadsByFolder(threads, legacy)
+      if (legacy === "inbox") {
+        byFolder = excludeThreadsInCustomFolders(byFolder, workspace.threadFolderMap)
+      }
     } else if (!isSystemFolderId(activeFolderId)) {
       byFolder = threadsInCustomFolder(threads, workspace.threadFolderMap, activeFolderId, workspace.folders) as EmailInboxThread[]
     }

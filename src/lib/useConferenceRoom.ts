@@ -64,6 +64,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
   const [error, setError] = useState<string | null>(null)
   const [selfStream, setSelfStream] = useState<MediaStream | null>(null)
   const [sharingScreen, setSharingScreen] = useState(false)
+  const [roomId, setRoomId] = useState<string | null>(null)
 
   const roomIdRef = useRef<string | null>(null)
   const roomChanRef = useRef<RealtimeChannel | null>(null)
@@ -164,6 +165,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
       roomChanRef.current = null
     }
     roomIdRef.current = null
+    setRoomId(null)
     setParticipants([])
     setIncoming(null)
     setMuted(false)
@@ -360,6 +362,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
       })
       roomChanRef.current = channel
       roomIdRef.current = roomId
+      setRoomId(roomId)
       await new Promise<void>((resolve) => {
         channel.subscribe((status) => {
           if (status === "SUBSCRIBED") {
@@ -753,6 +756,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
     error,
     setError,
     selfStream,
+    roomId,
     startCall,
     inviteMore,
     joinNamedRoom,

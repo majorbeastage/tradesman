@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client"
 import { supabase } from "../lib/supabase"
 import { theme } from "../styles/theme"
 import { useAuth } from "../contexts/AuthContext"
+import { loadAdminPlatformUsers } from "../lib/adminPlatformUsers"
 import { loadOrganizationPeers, type OrganizationPeer } from "../lib/organizationPeers"
 import { queueCustomerFocus } from "../lib/customerNavigation"
 import {
@@ -23,6 +24,8 @@ import {
   type ThreadSummary,
 } from "../lib/internalMessaging"
 import { onOpenMessenger, onJoinConference } from "../lib/messengerBus"
+import { emailCustomerConferenceInvite } from "../lib/conferenceCustomerInvite"
+import { notifyCustomersEmailSync } from "../lib/workflowNavigation"
 import messagingIcon from "../assets/messaging-app-icon.png"
 import { useVoiceDevice } from "../lib/useVoiceDevice"
 import { useConferenceRoom } from "../lib/useConferenceRoom"
@@ -64,13 +67,14 @@ function Avatar({ name, online }: { name: string; online?: boolean }) {
 }
 
 export default function MessengerWidget({ setPage }: Props) {
-  const { user } = useAuth()
+  const { user, role: authRole, session } = useAuth()
   const me = user?.id ?? null
 
   const [open, setOpen] = useState(false)
   const [view, setView] = useState<View>("list")
   const [peers, setPeers] = useState<OrganizationPeer[]>([])
   const [peersLoaded, setPeersLoaded] = useState(false)
+  const [peerSearch, setPeerSearch] = useState("")
   const [threads, setThreads] = useState<ThreadSummary[]>([])
   const [threadsLoaded, setThreadsLoaded] = useState(false)
   const [online, setOnline] = useState<Set<string>>(new Set())
@@ -108,6 +112,8 @@ export default function MessengerWidget({ setPage }: Props) {
   const [dialNumber, setDialNumber] = useState("")
   const [dialing, setDialing] = useState(false)
   const [dialMsg, setDialMsg] = useState<string | null>(null)
+  const [emailCustomerBusy, setEmailCustomerBusy] = useState(false)
+  const [conferenceDialInHint, setConferenceDialInHint] = useState<{ dialInDisplay: string | null; pin: string } | null>(null)
 
   // Twilio softphone for PSTN dial-out only.
   const voice = useVoiceDevice()
@@ -157,13 +163,18 @@ export default function MessengerWidget({ setPage }: Props) {
     setThreadsLoaded(true)
   }, [me])
 
-  // Org contacts
+  // Org contacts — platform admins see every user for messaging / video calls.
   useEffect(() => {
     if (!me || !supabase) return
     let cancelled = false
     void (async () => {
       try {
-        const list = await loadOrganizationPeers(supabase, me)
+        let list: OrganizationPeer[] = []
+        if (authRole === "admin" && session?.access_token) {
+          list = await loadAdminPlatformUsers(supabase, session.access_token, me)
+        } else {
+          list = await loadOrganizationPeers(supabase, me)
+        }
         if (!cancelled) setPeers(list)
       } catch {
         if (!cancelled) setPeers([])
@@ -174,7 +185,7 @@ export default function MessengerWidget({ setPage }: Props) {
     return () => {
       cancelled = true
     }
-  }, [me])
+  }, [me, authRole, session?.access_token])
 
   // Thread poll
   useEffect(() => {
@@ -342,6 +353,16 @@ export default function MessengerWidget({ setPage }: Props) {
   // Members without an existing 1:1 thread — offer as quick "start chat".
   const directPartnerIds = new Set(threads.filter((t) => !t.is_group).map((t) => t.members.find((id) => id !== me)).filter(Boolean) as string[])
   const startablePeers = peers.filter((p) => !directPartnerIds.has(p.id))
+  const filteredStartablePeers = useMemo(() => {
+    const q = peerSearch.trim().toLowerCase()
+    if (!q) return startablePeers
+    return startablePeers.filter(
+      (p) =>
+        p.displayName.toLowerCase().includes(q) ||
+        (p.email?.toLowerCase().includes(q) ?? false) ||
+        (p.role?.replace(/_/g, " ").toLowerCase().includes(q) ?? false),
+    )
+  }, [startablePeers, peerSearch])
 
   async function handleSend() {
     if (!selectedThreadId || sending) return
@@ -358,7 +379,7 @@ export default function MessengerWidget({ setPage }: Props) {
       void refreshThreads()
     } else {
       setInput(body)
-      if (ref) setPendingCustomer({ id: ref.customerId, name: ref.name, phone: null })
+      if (ref) setPendingCustomer({ id: ref.customerId, name: ref.name, phone: null, email: null })
       alert(res.error ?? "Could not send message.")
     }
   }
@@ -449,6 +470,52 @@ export default function MessengerWidget({ setPage }: Props) {
     setDialCustQuery("")
     void voice.placePhoneCall(to, rawPhone)
   }
+
+  const searchEmailCustomers = useCallback(
+    async (query: string) => {
+      if (!me) return []
+      const rows = await searchMessengerCustomers(supabase, me, query)
+      return rows.map((c) => ({ id: c.id, name: c.name, email: c.email ?? null }))
+    },
+    [me],
+  )
+
+  const handleEmailCustomerFromCall = useCallback(
+    async (customer: { id: string; email: string; name: string }) => {
+      if (!me || !session?.access_token) {
+        alert("You must be signed in to email a customer.")
+        return
+      }
+      setEmailCustomerBusy(true)
+      try {
+        const senderName =
+          typeof user?.user_metadata?.display_name === "string" ? user.user_metadata.display_name.trim() : "Our team"
+        const result = await emailCustomerConferenceInvite({
+          accessToken: session.access_token,
+          userId: me,
+          customerId: customer.id,
+          customerEmail: customer.email,
+          customerName: customer.name,
+          senderName,
+          company: senderName,
+          webrtcRoomId: room.roomId,
+          subject: "Join our conference call",
+        })
+        if (!result.ok) {
+          alert(result.error ?? "Could not send conference invite email.")
+          return
+        }
+        if (result.session) {
+          setConferenceDialInHint({ dialInDisplay: result.session.dialInDisplay, pin: result.session.pin })
+        }
+        notifyCustomersEmailSync()
+        alert(`Conference invite emailed to ${customer.name}.`)
+      } finally {
+        setEmailCustomerBusy(false)
+      }
+    },
+    [me, room.roomId, session?.access_token, user?.user_metadata?.display_name],
+  )
 
   // Surface an incoming team call: open the widget. Prefer staying on chat when possible.
   useEffect(() => {
@@ -605,6 +672,10 @@ export default function MessengerWidget({ setPage }: Props) {
           teamPeers={peers.map((p) => ({ id: p.id, name: p.displayName }))}
           onInvitePeople={(ids) => void room.inviteMore(ids)}
           onStartSeparatePhoneCall={startSeparateExternalCall}
+          searchEmailCustomers={searchEmailCustomers}
+          onEmailCustomer={(c) => void handleEmailCustomerFromCall(c)}
+          emailCustomerBusy={emailCustomerBusy}
+          conferenceDialInHint={conferenceDialInHint}
         />
       </div>
     ) : null
@@ -818,11 +889,23 @@ export default function MessengerWidget({ setPage }: Props) {
                     </div>
                   ) : null}
 
-                  <div style={{ padding: "8px 12px 4px", fontSize: 11, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.5 }}>Team</div>
-                  {startablePeers.length === 0 && threads.length === 0 ? (
-                    <div style={{ padding: 16, color: "#94a3b8", fontSize: 13 }}>No other members in your organization yet.</div>
+                  <div style={{ padding: "8px 12px 4px", fontSize: 11, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    {authRole === "admin" ? "All users" : "Team"}
+                  </div>
+                  {authRole === "admin" && peers.length > 8 ? (
+                    <input
+                      value={peerSearch}
+                      onChange={(e) => setPeerSearch(e.target.value)}
+                      placeholder="Search users…"
+                      style={{ margin: "0 12px 8px", padding: "8px 10px", borderRadius: 8, border: `1px solid ${theme.border}`, fontSize: 13, color: "#0f172a", background: "#fff" }}
+                    />
+                  ) : null}
+                  {filteredStartablePeers.length === 0 && threads.length === 0 ? (
+                    <div style={{ padding: 16, color: "#94a3b8", fontSize: 13 }}>
+                      {authRole === "admin" ? "No other users on the platform yet." : "No other members in your organization yet."}
+                    </div>
                   ) : (
-                    startablePeers.map((p) => (
+                    filteredStartablePeers.map((p) => (
                       <button
                         key={p.id}
                         type="button"
@@ -1060,6 +1143,10 @@ export default function MessengerWidget({ setPage }: Props) {
                   teamPeers={peers.map((p) => ({ id: p.id, name: p.displayName }))}
                   onInvitePeople={(ids) => void room.inviteMore(ids)}
                   onStartSeparatePhoneCall={startSeparateExternalCall}
+                  searchEmailCustomers={searchEmailCustomers}
+                  onEmailCustomer={(c) => void handleEmailCustomerFromCall(c)}
+                  emailCustomerBusy={emailCustomerBusy}
+                  conferenceDialInHint={conferenceDialInHint}
                 />
               ) : callActive && active ? (
                 <InCallControls

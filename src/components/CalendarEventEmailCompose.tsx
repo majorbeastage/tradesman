@@ -6,6 +6,8 @@ import { appendHtmlEmailSignature, htmlToPlainText } from "../lib/emailSignature
 import { applyEmailTemplatePlaceholders, findEmailTemplate } from "../lib/emailTemplates"
 import { uploadFilesForOutbound } from "../lib/uploadCommAttachment"
 import { notifyCustomersEmailSync } from "../lib/workflowNavigation"
+import { readCalendarVideoCall } from "../lib/calendarVideoCall"
+import { createConferenceSessionClient } from "../lib/conferenceCustomerInvite"
 import { useEmailComposeSignature } from "../hooks/useEmailComposeSignature"
 import EmailComposeRich from "./EmailComposeRich"
 import { theme } from "../styles/theme"
@@ -65,6 +67,7 @@ export function CalendarEventEmailCompose({ event, userId, displayName, role }: 
   const [emailLoading, setEmailLoading] = useState(false)
 
   const customerName = event.customers?.display_name?.trim() || "there"
+  const videoCall = useMemo(() => readCalendarVideoCall(event.metadata), [event.metadata])
 
   const templateVars = useMemo(
     () => ({
@@ -112,6 +115,40 @@ export function CalendarEventEmailCompose({ event, userId, displayName, role }: 
     setSubject(applied.subject)
     setBodyHtml(applied.bodyHtml)
   }, [event.id, templateVars])
+
+  useEffect(() => {
+    let cancelled = false
+    const loadConferenceBlock = async () => {
+      if (!videoCall?.roomId || !supabase) return
+      const { data } = await supabase.auth.getSession()
+      const token = data.session?.access_token
+      if (!token) return
+      const created = await createConferenceSessionClient(token, {
+        webrtcRoomId: videoCall.roomId,
+        calendarEventId: event.id,
+        customerId: event.customer_id ?? undefined,
+      })
+      if (cancelled || !created.ok || !created.session) return
+      const s = created.session
+      const lines = [
+        "<p><strong>Join our conference call</strong></p>",
+        s.dialInDisplay
+          ? `<p>Dial <strong>${s.dialInDisplay}</strong><br/>When prompted, enter conference PIN: <strong>${s.pin}</strong></p>`
+          : `<p>Conference PIN: <strong>${s.pin}</strong></p>`,
+      ]
+      if (created.joinLink) {
+        lines.push(`<p>Team join link: <a href="${created.joinLink}">${created.joinLink}</a></p>`)
+      }
+      setBodyHtml((prev) => {
+        if (prev.includes(s.pin)) return prev
+        return `${prev.trim()}${prev.trim() ? "" : ""}${lines.join("\n")}`
+      })
+    }
+    void loadConferenceBlock()
+    return () => {
+      cancelled = true
+    }
+  }, [event.id, event.customer_id, videoCall?.roomId])
 
   const handleSend = useCallback(async () => {
     if (!userId) {
@@ -221,7 +258,9 @@ export function CalendarEventEmailCompose({ event, userId, displayName, role }: 
         defaultExpanded={false}
         footerNote={
           <span style={{ fontSize: 12, color: "#64748b" }}>
-            Appointment confirm template pre-filled. Sent via your Tradesman business address.
+            {videoCall?.roomId
+              ? "Appointment template plus conference dial-in / PIN when this event has a team call."
+              : "Appointment confirm template pre-filled. Sent via your Tradesman business address."}
           </span>
         }
       />
