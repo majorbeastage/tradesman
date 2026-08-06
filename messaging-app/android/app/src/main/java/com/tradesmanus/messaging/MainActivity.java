@@ -1,5 +1,6 @@
 package com.tradesmanus.messaging;
 
+import android.content.Intent;
 import android.os.Bundle;
 import android.os.Build;
 import android.view.View;
@@ -13,6 +14,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(MessagingNativePlugin.class);
         super.onCreate(savedInstanceState);
+        handleLaunchIntent(getIntent());
 
         // Keep the WebView between the status bar and navigation/gesture bar so
         // system chrome does not cover in-app buttons (Send, tabs, etc.).
@@ -28,5 +30,16 @@ public class MainActivity extends BridgeActivity {
             insets.setAppearanceLightStatusBars(false);
             insets.setAppearanceLightNavigationBars(true);
         }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleLaunchIntent(intent);
+    }
+
+    private void handleLaunchIntent(Intent intent) {
+        MessagingNativePlugin.setPendingLaunchPush(intent);
     }
 }

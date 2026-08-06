@@ -50,6 +50,7 @@ export default function PortalViewBar() {
   const usingDefault = isPortalViewDefaultTarget(targetUserId)
   const selectedUser = usingDefault ? null : usersForCurrentViewRole.find((u) => u.userId === targetUserId)
   const profileSelectValue = usingDefault ? PORTAL_VIEW_DEFAULT_USER : (targetUserId ?? PORTAL_VIEW_DEFAULT_USER)
+  const usersLoading = loadingUsers && usersForCurrentViewRole.length === 0
 
   const shortLabel = viewingOtherProfile
     ? selectedUser?.label || labelForViewRoleOption(viewRole, false)
@@ -150,7 +151,7 @@ export default function PortalViewBar() {
       <select
         value={profileSelectValue}
         onChange={(e) => setTargetUserId(e.target.value)}
-        disabled={loadingUsers}
+        disabled={usersLoading}
         aria-label="Preview profile"
         style={{
           padding: "7px 10px",
@@ -215,7 +216,7 @@ export default function PortalViewBar() {
           {editMode ? "Edit mode on" : "View only — Edit mode"}
         </label>
       ) : null}
-      {loadingUsers ? (
+      {usersLoading ? (
         <span style={{ fontSize: 12, opacity: 0.75 }}>Loading users…</span>
       ) : null}
       {loadingPortalConfig ? (

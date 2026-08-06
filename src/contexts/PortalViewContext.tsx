@@ -287,6 +287,17 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
   const adminSelfRowRef = useRef<ManageableUserRow | null>(null)
   const lastOrgOwnerRef = useRef<string | null>(null)
   const adminTargetHydratedRef = useRef(false)
+  const accessTokenRef = useRef<string | null>(null)
+  const usersLoadSeqRef = useRef(0)
+  const usersLoadedOnceRef = useRef(false)
+  const usersLoadKeyRef = useRef("")
+
+  useEffect(() => {
+    accessTokenRef.current = session?.access_token ?? null
+  }, [session?.access_token])
+
+  /** Boolean only — avoids reloading the whole roster on every JWT refresh. */
+  const hasAccessToken = Boolean(session?.access_token)
 
   // Platform admin: start as self — do not restore a stale view-as id from sessionStorage.
   useEffect(() => {
@@ -348,12 +359,24 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
       setManageableUsers([])
       adminSelfRowRef.current = null
       lastOrgOwnerRef.current = null
+      usersLoadedOnceRef.current = false
+      usersLoadKeyRef.current = ""
+      setLoadingUsers(false)
       return
     }
-    let cancelled = false
+    if (authRole === "admin" && !hasAccessToken) return
+
+    const loadKey = `${authUserId}:${authRole ?? ""}:${authPortalConfig?.sandbox_account ? "sandbox" : "live"}`
+    if (usersLoadKeyRef.current !== loadKey) {
+      usersLoadedOnceRef.current = false
+      usersLoadKeyRef.current = loadKey
+    }
+
+    const loadSeq = ++usersLoadSeqRef.current
+    const showSpinner = !usersLoadedOnceRef.current
+    if (showSpinner) setLoadingUsers(true)
+    setError("")
     ;(async () => {
-      setLoadingUsers(true)
-      setError("")
       try {
         const selfRow: ManageableUserRow = {
           userId: authUserId,
@@ -365,9 +388,10 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
         }
         if (authRole === "admin") adminSelfRowRef.current = selfRow
 
+        const token = accessTokenRef.current
         let rows: ManageableUserRow[] = []
-        if (authRole === "admin" && session?.access_token) {
-          rows = await loadAdminOrgScopedUsers(authUserId, authUserId, session.access_token, selfRow)
+        if (authRole === "admin" && token) {
+          rows = await loadAdminOrgScopedUsers(authUserId, authUserId, token, selfRow)
         } else if (authRole === "corporate_management" || authRole === "office_manager") {
           rows = await loadManagedOrgUsers(authUserId)
         } else if (authRole) {
@@ -389,25 +413,22 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
         } else {
           setSandboxDemoTeam(parseSandboxDemoTeam(null))
         }
-        if (cancelled) return
+        if (loadSeq !== usersLoadSeqRef.current) return
         setManageableUsers(rows)
+        usersLoadedOnceRef.current = true
       } catch (e) {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Could not load users.")
-          setManageableUsers([])
-        }
+        if (loadSeq !== usersLoadSeqRef.current) return
+        setError(e instanceof Error ? e.message : "Could not load users.")
+        setManageableUsers([])
       } finally {
-        if (!cancelled) setLoadingUsers(false)
+        if (loadSeq === usersLoadSeqRef.current) setLoadingUsers(false)
       }
     })()
-    return () => {
-      cancelled = true
-    }
-  }, [authUserId, authRole, session?.access_token, user?.email, authPortalConfig?.sandbox_account])
+  }, [authUserId, authRole, hasAccessToken, authPortalConfig?.sandbox_account])
 
   // Admin: merge org roster when view-as target changes — without toggling loadingUsers (avoids bar loop).
   useEffect(() => {
-    if (authRole !== "admin" || !authUserId || !session?.access_token) return
+    if (authRole !== "admin" || !authUserId || !hasAccessToken) return
     if (!targetUserId || isPortalViewDefaultTarget(targetUserId) || isSandboxDemoUserId(targetUserId)) {
       lastOrgOwnerRef.current = null
       return
@@ -428,7 +449,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
         const rows = await loadAdminOrgScopedUsers(
           authUserId,
           targetUserId,
-          session.access_token,
+          accessTokenRef.current ?? "",
           adminSelfRowRef.current,
           orgOwnerId,
         )
@@ -440,7 +461,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
     return () => {
       cancelled = true
     }
-  }, [authRole, authUserId, session?.access_token, targetUserId])
+  }, [authRole, authUserId, hasAccessToken, targetUserId])
 
   const refreshManageableUsers = useCallback(async () => {
     if (!authUserId) {
@@ -448,12 +469,14 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
       return
     }
     invalidateAdminAccountOwnersCache()
+    const loadSeq = ++usersLoadSeqRef.current
     setLoadingUsers(true)
     setError("")
     try {
+      const token = accessTokenRef.current
       let rows: ManageableUserRow[] = []
-      if (authRole === "admin" && session?.access_token) {
-        rows = await loadAdminOrgScopedUsers(authUserId, targetUserId, session.access_token, adminSelfRowRef.current)
+      if (authRole === "admin" && token) {
+        rows = await loadAdminOrgScopedUsers(authUserId, targetUserId, token, adminSelfRowRef.current)
       } else if (authRole === "corporate_management" || authRole === "office_manager") {
         rows = await loadManagedOrgUsers(authUserId)
       } else if (authRole) {
@@ -483,12 +506,13 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
         rows = [...rows, ...sandboxDemoTeamToManageableRows(team)]
       }
       setManageableUsers(rows)
+      usersLoadedOnceRef.current = true
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load users.")
     } finally {
-      setLoadingUsers(false)
+      if (loadSeq === usersLoadSeqRef.current) setLoadingUsers(false)
     }
-  }, [authUserId, authRole, session?.access_token, user?.email, authPortalConfig?.sandbox_account, targetUserId])
+  }, [authUserId, authRole, authPortalConfig?.sandbox_account, targetUserId])
 
   useEffect(() => {
     if (!isSandboxDemoUserId(targetUserId)) return

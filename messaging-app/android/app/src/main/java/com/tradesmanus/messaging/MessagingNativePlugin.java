@@ -15,7 +15,50 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 @CapacitorPlugin(name = "MessagingNative")
 public class MessagingNativePlugin extends Plugin {
 
+    private static MessagingNativePlugin instance;
+    private static JSObject pendingLaunchPush;
+
     private AudioFocusRequest focusRequest;
+
+    @Override
+    public void load() {
+        super.load();
+        instance = this;
+        if (pendingLaunchPush != null) {
+            notifyListeners("pushLaunch", pendingLaunchPush);
+        }
+    }
+
+    /** Called from MainActivity when a notification tap delivers FCM data in intent extras. */
+    public static void setPendingLaunchPush(android.content.Intent intent) {
+        if (intent == null) return;
+        android.os.Bundle extras = intent.getExtras();
+        if (extras == null) return;
+        String type = extras.getString("type");
+        if (type == null) return;
+        if (!"internal_message".equals(type) && !"internal_missed_call".equals(type)) return;
+
+        JSObject obj = new JSObject();
+        for (String key : extras.keySet()) {
+            Object val = extras.get(key);
+            if (val != null) obj.put(key, String.valueOf(val));
+        }
+        pendingLaunchPush = obj;
+        if (instance != null) {
+            instance.notifyListeners("pushLaunch", obj);
+        }
+    }
+
+    @PluginMethod
+    public void consumeLaunchPushData(PluginCall call) {
+        if (pendingLaunchPush == null) {
+            call.resolve(new JSObject());
+            return;
+        }
+        JSObject ret = pendingLaunchPush;
+        pendingLaunchPush = null;
+        call.resolve(ret);
+    }
 
     @PluginMethod
     public void openExternalUrl(PluginCall call) {

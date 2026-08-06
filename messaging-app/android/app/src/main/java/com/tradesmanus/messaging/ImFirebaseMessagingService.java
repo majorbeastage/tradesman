@@ -1,11 +1,14 @@
 package com.tradesmanus.messaging;
 
+import android.app.ActivityManager;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Intent;
 import android.os.Build;
 import android.util.Log;
+
+import java.util.List;
 
 import androidx.annotation.NonNull;
 import androidx.core.app.NotificationCompat;
@@ -32,14 +35,24 @@ public class ImFirebaseMessagingService extends FirebaseMessagingService {
         String type = data != null ? data.get("type") : null;
 
         if ("internal_message".equals(type) || "internal_missed_call".equals(type)) {
-            try {
-                showCollapsingNotification(data);
-            } catch (Throwable t) {
-                Log.w(TAG, "showCollapsingNotification failed", t);
+            // Foreground: Capacitor handles in-app + standard tap events. Background: one tray item
+            // per thread via our custom notification (tap extras → MainActivity → JS).
+            if (isAppInForeground()) {
+                try {
+                    PushNotificationsPlugin.sendRemoteMessage(remoteMessage);
+                } catch (Throwable t) {
+                    Log.w(TAG, "Capacitor forward failed", t);
+                }
+            } else {
+                try {
+                    showCollapsingNotification(data);
+                } catch (Throwable t) {
+                    Log.w(TAG, "showCollapsingNotification failed", t);
+                }
             }
+            return;
         }
 
-        // Keep Capacitor JS listeners (tap handoff, etc.) working.
         try {
             PushNotificationsPlugin.sendRemoteMessage(remoteMessage);
         } catch (Throwable t) {
@@ -128,5 +141,20 @@ public class ImFirebaseMessagingService extends FirebaseMessagingService {
 
     private static String str(String v) {
         return v == null ? "" : v.trim();
+    }
+
+    private boolean isAppInForeground() {
+        ActivityManager am = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
+        if (am == null) return false;
+        List<ActivityManager.RunningAppProcessInfo> processes = am.getRunningAppProcesses();
+        if (processes == null) return false;
+        final String packageName = getPackageName();
+        for (ActivityManager.RunningAppProcessInfo info : processes) {
+            if (info.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+                    && packageName.equals(info.processName)) {
+                return true;
+            }
+        }
+        return false;
     }
 }
