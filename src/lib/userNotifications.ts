@@ -90,7 +90,7 @@ export type EmitNotificationInput = {
   page?: string
 }
 
-function defaultPageForKind(kind: UserNotificationKind): string {
+function defaultPageForKind(kind: UserNotificationKind | "calendar_event_shared"): string {
   switch (kind) {
     case "new_lead":
       return "leads"
@@ -98,6 +98,7 @@ function defaultPageForKind(kind: UserNotificationKind): string {
       return "quotes"
     case "calendar_upcoming":
     case "calendar_completed":
+    case "calendar_event_shared":
       return "calendar"
     default:
       return "customers"

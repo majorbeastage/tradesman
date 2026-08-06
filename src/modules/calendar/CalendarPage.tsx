@@ -20,15 +20,18 @@ import {
   calendarEventAssigneeUserId,
   calendarEventVisibleToScopedUser,
   mergeCalendarAssigneeMetadata,
+  readAssignedUserId,
   resolveCalendarAssigneeForSave,
 } from "../../lib/calendarAssignee"
 import {
   mergeCalendarVideoCall,
   newVideoCallRoomId,
   readCalendarVideoCall,
+  calendarEventSharedWithUser,
   type CalendarVideoCall,
 } from "../../lib/calendarVideoCall"
 import { joinConference } from "../../lib/messengerBus"
+import { notifyCalendarInvitees } from "../../lib/notifyCalendarInvite"
 import { isAdminPortalRole } from "../../lib/profileRoles"
 import {
   formatCalendarEventLabel,
@@ -1356,7 +1359,30 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         error = r.error
       }
       if (!error) {
-        setEvents((data || []).map(normalizeCalendarEventRow))
+        let rows = (data || []).map(normalizeCalendarEventRow)
+        const viewerId = authUserId || userId
+        if (viewerId && supabase) {
+          const seen = new Set(rows.map((r) => r.id))
+          const mergeShared = async (extraQuery: ReturnType<typeof baseQuery>) => {
+            let q = extraQuery.order("start_at")
+            if (filterCompleted) q = q.is("completed_at", null)
+            const { data: extra, error: extraErr } = await q
+            if (extraErr) return
+            for (const row of (extra ?? []) as unknown as Record<string, unknown>[]) {
+              const id = typeof row.id === "string" ? row.id : ""
+              if (!id || seen.has(id)) continue
+              if (!calendarEventSharedWithUser(row.metadata, viewerId)) continue
+              seen.add(id)
+              rows.push(normalizeCalendarEventRow(row))
+            }
+          }
+          await mergeShared(baseQuery(sel).eq("metadata->>assigned_user_id", viewerId))
+          await mergeShared(
+            baseQuery(sel).filter("metadata->video_call_v1->inviteeUserIds", "cs", JSON.stringify([viewerId])),
+          )
+          rows.sort((a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime())
+        }
+        setEvents(rows)
         return
       }
       lastErr = error
@@ -2849,6 +2875,10 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       setEvents((prev) => prev.map((e) => (e.id === selectedEvent.id ? patched : e)))
       setEventAssigneePick(calendarEventAssigneeUserId(patched) || userId)
       setAssigneeSaveNote("Assignee saved.")
+      const assignedId = readAssignedUserId(savedMeta)
+      if (assignedId && supabase) {
+        void notifyCalendarInvitees(supabase, selectedEvent.id, [assignedId], "assign")
+      }
     } finally {
       setEventAssigneeSaving(false)
     }
@@ -2883,6 +2913,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       setEvents((prev) => prev.map((e) => (e.id === selectedEvent.id ? patched : e)))
       if (!eventVideoEnabled) setEventVideoNote("Call removed.")
       else setEventVideoNote(eventConferenceCall ? "Conference call saved." : "Video call saved.")
+      if (call && eventVideoInvitees.length > 0 && supabase) {
+        void notifyCalendarInvitees(supabase, selectedEvent.id, eventVideoInvitees, "video")
+      }
     } finally {
       setEventVideoSaving(false)
     }
@@ -3037,6 +3070,22 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       return
     }
     if (insertedEventIds.length > 0) void invokeNotifyCalendarStatus(insertedEventIds, "", "Scheduled")
+    if (insertedEventIds.length > 0 && supabase) {
+      const notifyIds = [
+        ...new Set([
+          ...(addAssignToSelectedUser && assignee.assignedUserId ? [assignee.assignedUserId] : []),
+          ...(addVideoCall || addConferenceCall ? addVideoCallInvitees : []),
+        ]),
+      ]
+      if (notifyIds.length > 0) {
+        void notifyCalendarInvitees(
+          supabase,
+          insertedEventIds[0],
+          notifyIds,
+          (addVideoCall || addConferenceCall) && assignee.assignedUserId ? "both" : addVideoCall || addConferenceCall ? "video" : "assign",
+        )
+      }
+    }
     if (addCustomerId) {
       await refreshCustomerPipelineOnEngagement(supabase, addCustomerId, "scheduled")
       await autoAdvanceCustomerWorkflow(supabase, eventOwnerUserId, addCustomerId, "job_scheduled")

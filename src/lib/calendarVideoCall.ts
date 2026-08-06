@@ -48,3 +48,14 @@ export function newVideoCallRoomId(): string {
     return `vc-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
   }
 }
+
+/** True when `userId` is assigned or listed as a video/conference invitee on this event. */
+export function calendarEventSharedWithUser(metadata: unknown, userId: string): boolean {
+  const uid = userId.trim()
+  if (!uid || !metadata || typeof metadata !== "object" || Array.isArray(metadata)) return false
+  const meta = metadata as Record<string, unknown>
+  const assigned = meta.assigned_user_id
+  if (typeof assigned === "string" && assigned.trim() === uid) return true
+  const vc = readCalendarVideoCall(metadata)
+  return vc?.inviteeUserIds.some((id) => id.trim() === uid) ?? false
+}

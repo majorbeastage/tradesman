@@ -84,6 +84,28 @@ export async function loadUpcomingCalendarEvents(
     }
   }
 
+  if (!error) {
+    const resVideo = await supabase
+      .from("calendar_events")
+      .select(selectCols)
+      .is("removed_at", null)
+      .gte("start_at", from.toISOString())
+      .lte("start_at", to.toISOString())
+      .filter("metadata->video_call_v1->inviteeUserIds", "cs", JSON.stringify([userId]))
+      .order("start_at", { ascending: true })
+      .limit(120)
+    if (!resVideo.error && resVideo.data?.length) {
+      const seen = new Set((data ?? []).map((r) => String(r.id ?? "")))
+      for (const row of resVideo.data as Record<string, unknown>[]) {
+        const id = String(row.id ?? "")
+        if (id && !seen.has(id)) {
+          seen.add(id)
+          ;(data ??= []).push(row)
+        }
+      }
+    }
+  }
+
   if (error) {
     // Older schemas without completed_at / JSON filter — owned events only.
     const fallback = await supabase
@@ -110,6 +132,8 @@ export async function loadUpcomingCalendarEvents(
       if (meta && typeof meta === "object" && !Array.isArray(meta)) {
         const assigned = (meta as Record<string, unknown>)[ASSIGNED_USER_KEY]
         if (typeof assigned === "string" && assigned.trim() === userId) return true
+        const vc = readVideoCall(meta)
+        if (vc?.inviteeUserIds.includes(userId)) return true
       }
       return false
     })

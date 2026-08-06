@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { createRoot, type Root } from "react-dom/client"
 import { supabase } from "../lib/supabase"
 import { theme } from "../styles/theme"
 import { useAuth } from "../contexts/AuthContext"
@@ -25,7 +26,7 @@ import { onOpenMessenger, onJoinConference } from "../lib/messengerBus"
 import messagingIcon from "../assets/messaging-app-icon.png"
 import { useVoiceDevice } from "../lib/useVoiceDevice"
 import { useConferenceRoom } from "../lib/useConferenceRoom"
-import ConferenceCallView, { ConferenceCallBody, mountReactInPopup, openConferencePopOut } from "./ConferenceCallView"
+import ConferenceCallView, { ConferenceCallBody, openConferencePopOut } from "./ConferenceCallView"
 import InCallControls, { formatCallStateLabel } from "./InCallControls"
 import MessageActionTarget from "./MessageActionTarget"
 import {
@@ -79,6 +80,7 @@ export default function MessengerWidget({ setPage }: Props) {
   /** During a video/audio call in a thread: show the messenger chat under the call UI. */
   const [callChatOpen, setCallChatOpen] = useState(false)
   const callPopCloseRef = useRef<(() => void) | null>(null)
+  const popOutRootRef = useRef<Root | null>(null)
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null)
   const [messages, setMessages] = useState<InternalMessage[]>([])
   const [input, setInput] = useState("")
@@ -477,18 +479,41 @@ export default function MessengerWidget({ setPage }: Props) {
   async function handlePopOut() {
     if (callPopCloseRef.current) return
     try {
-      const close = await openConferencePopOut((mount) =>
-        mountReactInPopup(
-          mount,
-          <ConferenceCallBody room={room} selfName="You" />,
-        ),
-      )
+      const close = await openConferencePopOut((mount) => {
+        const root = createRoot(mount)
+        popOutRootRef.current = root
+        root.render(<ConferenceCallBody room={room} selfName="You" fillHeight popOut />)
+        return () => {
+          try {
+            root.unmount()
+          } catch {
+            /* ignore */
+          }
+          popOutRootRef.current = null
+        }
+      })
       callPopCloseRef.current = close
       setCallPoppedOut(true)
     } catch (e) {
       room.setError(e instanceof Error ? e.message : "Could not open video popup.")
     }
   }
+
+  useEffect(() => {
+    if (!callPoppedOut || !popOutRootRef.current) return
+    popOutRootRef.current.render(<ConferenceCallBody room={room} selfName="You" fillHeight popOut />)
+  }, [
+    callPoppedOut,
+    room.state,
+    room.participants,
+    room.selfStream,
+    room.sharingScreen,
+    room.seconds,
+    room.muted,
+    room.cameraOn,
+    room.error,
+    room.isVideo,
+  ])
 
   function handleReturnFromPopOut() {
     try {

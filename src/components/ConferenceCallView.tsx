@@ -18,18 +18,43 @@ function initials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
 }
 
-function VideoTile({ stream, label, muted, screen, fill }: { stream: MediaStream | null; label: string; muted?: boolean; screen?: boolean; fill?: boolean }) {
+/** Column/row layout so every participant tile fits on screen (pop-out + group calls). */
+function videoGridLayout(tileCount: number): { columns: number; rows: number } {
+  if (tileCount <= 1) return { columns: 1, rows: 1 }
+  if (tileCount === 2) return { columns: 2, rows: 1 }
+  if (tileCount <= 4) return { columns: 2, rows: 2 }
+  if (tileCount <= 6) return { columns: 3, rows: 2 }
+  if (tileCount <= 9) return { columns: 3, rows: 3 }
+  const columns = Math.ceil(Math.sqrt(tileCount))
+  return { columns, rows: Math.ceil(tileCount / columns) }
+}
+
+function VideoTile({
+  stream,
+  label,
+  muted,
+  screen,
+  fill,
+}: {
+  stream: MediaStream | null
+  label: string
+  muted?: boolean
+  screen?: boolean
+  fill?: boolean
+}) {
   const ref = useRef<HTMLVideoElement | null>(null)
   useEffect(() => {
     const el = ref.current
-    if (el && stream && el.srcObject !== stream) el.srcObject = stream
+    if (!el || !stream) return
+    if (el.srcObject !== stream) el.srcObject = stream
+    void el.play().catch(() => undefined)
   }, [stream])
   return (
     <div
       style={{
         ...tile,
         aspectRatio: fill ? undefined : screen ? "16 / 9" : "4 / 3",
-        ...(fill ? { minHeight: 0, height: "100%" } : null),
+        ...(fill ? { minHeight: 0, minWidth: 0, height: "100%", width: "100%" } : null),
       }}
     >
       {stream ? (
@@ -138,6 +163,8 @@ type Props = {
   onPopOut?: () => void
   poppedOut?: boolean
   onReturnFromPopOut?: () => void
+  /** Rendered inside the desktop pop-out window — shrink tiles to fit everyone. */
+  popOut?: boolean
   teamPeers?: { id: string; name: string }[]
   onInvitePeople?: (ids: string[]) => void
   onStartSeparatePhoneCall?: (phone: string) => void
@@ -155,6 +182,7 @@ export function ConferenceCallBody({
   onPopOut,
   poppedOut,
   onReturnFromPopOut,
+  popOut,
   teamPeers,
   onInvitePeople,
   onStartSeparatePhoneCall,
@@ -228,29 +256,56 @@ export function ConferenceCallBody({
   const stateText =
     state === "ringing" ? "Ringing…" : state === "error" ? "Call error" : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
   const showInlineChat = Boolean(chat) && showChat && !chatPanelExternal
+  const videoTileCount = participants.length + 1
+  const videoGrid = videoGridLayout(videoTileCount)
+  const fitVideoTiles = fillHeight || popOut
+  const remoteHasVideo = participants.some((p) => p.stream?.getVideoTracks().some((t) => t.readyState === "live"))
+  const showVideoLayout = isVideo || sharingScreen || remoteHasVideo || Boolean(selfStream?.getVideoTracks().some((t) => t.readyState === "live"))
 
   return (
     <div
       style={{
         ...wrap,
-        padding: compact ? 10 : 14,
-        gap: compact ? 8 : 12,
-        ...(fillHeight
+        padding: compact ? 10 : popOut ? 8 : 14,
+        gap: compact ? 8 : popOut ? 8 : 12,
+        ...(popOut
           ? {
-              flex: 1,
-              minHeight: 0,
-              alignSelf: "stretch",
+              height: "100%",
               boxSizing: "border-box" as const,
               display: "flex",
               flexDirection: "column" as const,
+              overflow: "hidden",
+              border: "none",
+              borderRadius: 0,
+              background: "transparent",
             }
-          : null),
+          : fillHeight
+            ? {
+                flex: 1,
+                minHeight: 0,
+                alignSelf: "stretch",
+                boxSizing: "border-box" as const,
+                display: "flex",
+                flexDirection: "column" as const,
+              }
+            : null),
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: compact ? 13 : 16, fontWeight: 800, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{title}</div>
-          <div style={{ marginTop: 1, fontSize: 12, fontWeight: 700, color: "#475569" }}>
+          <div
+            style={{
+              fontSize: compact ? 13 : 16,
+              fontWeight: 800,
+              color: popOut ? "#f8fafc" : "#0f172a",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {title}
+          </div>
+          <div style={{ marginTop: 1, fontSize: 12, fontWeight: 700, color: popOut ? "#cbd5e1" : "#475569" }}>
             {stateText}
             {sharingScreen ? " · Sharing screen" : ""}
           </div>
@@ -267,27 +322,63 @@ export function ConferenceCallBody({
         ) : null}
       </div>
 
-      {!compact || isVideo || sharingScreen ? (
-        isVideo || sharingScreen ? (
+      {!compact || showVideoLayout ? (
+        showVideoLayout ? (
+          sharingScreen ? (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+                ...(fitVideoTiles ? { flex: 1, minHeight: 0, overflow: "hidden" } : null),
+              }}
+            >
+              <VideoTile
+                stream={selfStream}
+                label={`${selfName} (screen)`}
+                muted
+                screen
+                fill={fitVideoTiles}
+              />
+              {participants.length > 0 ? (
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: `repeat(${Math.min(participants.length, 3)}, minmax(0, 1fr))`,
+                    gap: 6,
+                    maxHeight: fitVideoTiles ? "32%" : 120,
+                    minHeight: 0,
+                    flexShrink: 0,
+                  }}
+                >
+                  {participants.map((p) => (
+                    <VideoTile key={p.id} stream={p.stream} label={p.name} fill={fitVideoTiles} />
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : (
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: participants.length > 1 ? "1fr 1fr" : "1fr",
-              gap: 8,
-              ...(fillHeight ? { flex: 1, minHeight: 0, alignContent: "stretch", overflow: "hidden" } : null),
+              gridTemplateColumns: `repeat(${videoGrid.columns}, minmax(0, 1fr))`,
+              ...(fitVideoTiles ? { gridTemplateRows: `repeat(${videoGrid.rows}, minmax(0, 1fr))` } : null),
+              gap: fitVideoTiles ? 6 : 8,
+              ...(fitVideoTiles ? { flex: 1, minHeight: 0, alignContent: "stretch", overflow: "hidden" } : null),
             }}
           >
             {participants.map((p) => (
-              <VideoTile key={p.id} stream={p.stream} label={p.name} fill={fillHeight} />
+              <VideoTile key={p.id} stream={p.stream} label={p.name} fill={fitVideoTiles} />
             ))}
             <VideoTile
               stream={selfStream}
               label={sharingScreen ? `${selfName} (screen)` : selfName}
               muted
               screen={sharingScreen}
-              fill={fillHeight}
+              fill={fitVideoTiles}
             />
           </div>
+          )
         ) : (
           <div style={{ display: "grid", gap: 8, ...(fillHeight ? { flex: 1, minHeight: 0, overflow: "auto" } : null) }}>
             {participants.map((p) => (
@@ -452,7 +543,7 @@ export async function openConferencePopOut(render: (mount: HTMLElement) => () =>
   doc.title = "Tradesman call"
   doc.head.innerHTML = `<style>
     html,body{margin:0;height:100%;background:#0f172a;font-family:Segoe UI,system-ui,sans-serif}
-    #root{height:100%;box-sizing:border-box;padding:10px;overflow:auto}
+    #root{height:100%;box-sizing:border-box;padding:8px;display:flex;flex-direction:column;overflow:hidden}
   </style>`
   const mount = doc.createElement("div")
   mount.id = "root"
