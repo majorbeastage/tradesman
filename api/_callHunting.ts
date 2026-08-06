@@ -51,9 +51,9 @@ function parseSchedule(raw: unknown): CallHuntSchedule {
 function parseTarget(row: unknown): CallHuntTarget | null {
   if (!row || typeof row !== "object" || Array.isArray(row)) return null
   const t = row as Record<string, unknown>
-  const phone = typeof t.phone === "string" ? t.phone.trim() : ""
   const userId = typeof t.userId === "string" && t.userId.trim() ? t.userId.trim() : null
-  if (!phone && !userId) return null
+  if (!userId) return null
+  const phone = typeof t.phone === "string" ? t.phone.trim() : ""
   return {
     id: typeof t.id === "string" && t.id.trim() ? t.id.trim() : `hunt_${Math.random().toString(36).slice(2, 9)}`,
     label: typeof t.label === "string" ? t.label.trim().slice(0, 48) : "",
@@ -155,11 +155,12 @@ export function resolveHuntPhones(opts: {
 
   for (const target of settings.targets) {
     if (!target.enabled) continue
+    if (!target.userId) continue
     if (!scheduleAllows(target.schedule, withinBusinessHours)) continue
-    if (target.userId && unavailable.has(target.userId)) continue
-    const live = target.userId ? phoneByUserId[target.userId]?.trim() : ""
-    const phone = (live || target.phone || "").trim()
-    if (phone) ordered.push(phone)
+    if (unavailable.has(target.userId)) continue
+    const live = phoneByUserId[target.userId]?.trim() : ""
+    if (!live) continue
+    ordered.push(live)
   }
 
   for (const exception of activeExceptions) {
@@ -197,22 +198,37 @@ export async function loadCallHuntingForUser(
   return parseCallHunting(meta.call_hunting_v1)
 }
 
-/** Resolve live mobile numbers for hunt targets / coverage users. */
+/** Resolve forward phones from Tradesman voice lines (Admin → Communications), not My T personal numbers. */
 export async function loadHuntPhoneByUserId(
   supabase: SupabaseClient,
   userIds: string[],
 ): Promise<Record<string, string>> {
   const ids = [...new Set(userIds.map((id) => id.trim()).filter(Boolean))]
   if (!ids.length) return {}
-  const { data } = await supabase
-    .from("profiles")
-    .select("id, primary_phone, best_contact_phone")
-    .in("id", ids)
+  const { data, error } = await supabase
+    .from("client_communication_channels")
+    .select("user_id, forward_to_phone, public_address, voice_enabled, active, updated_at")
+    .in("user_id", ids)
+    .eq("active", true)
+    .eq("channel_kind", "voice_sms")
+    .order("updated_at", { ascending: false })
+  if (error) {
+    console.warn("[loadHuntPhoneByUserId]", error.message)
+    return {}
+  }
   const out: Record<string, string> = {}
   for (const row of data ?? []) {
-    const r = row as { id: string; primary_phone?: string | null; best_contact_phone?: string | null }
-    const phone = (r.best_contact_phone || r.primary_phone || "").trim()
-    if (phone) out[r.id] = phone
+    const r = row as {
+      user_id: string
+      forward_to_phone?: string | null
+      public_address?: string | null
+      voice_enabled?: boolean
+    }
+    if (out[r.user_id] || r.voice_enabled === false) continue
+    const forward = (r.forward_to_phone || "").trim()
+    const purchased = (r.public_address || "").trim()
+    const phone = forward || purchased
+    if (phone) out[r.user_id] = phone
   }
   return out
 }

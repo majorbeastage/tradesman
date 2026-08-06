@@ -67,9 +67,10 @@ function parseSchedule(raw: unknown): CallHuntSchedule {
 function parseTarget(row: unknown): CallHuntTarget | null {
   if (!row || typeof row !== "object" || Array.isArray(row)) return null
   const t = row as Record<string, unknown>
-  const phone = typeof t.phone === "string" ? t.phone.trim() : ""
   const userId = typeof t.userId === "string" && t.userId.trim() ? t.userId.trim() : null
-  if (!phone && !userId) return null
+  /** Ring groups are user-only — custom numbers are not supported. */
+  if (!userId) return null
+  const phone = typeof t.phone === "string" ? t.phone.trim() : ""
   return {
     id: typeof t.id === "string" && t.id.trim() ? t.id.trim() : newHuntTargetId(),
     label: typeof t.label === "string" ? t.label.trim().slice(0, 48) : "",
@@ -184,12 +185,12 @@ export function resolveHuntPhones(opts: ResolveHuntPhonesOpts): string[] {
 
   for (const target of settings.targets) {
     if (!target.enabled) continue
+    if (!target.userId) continue
     if (!scheduleAllows(target.schedule, withinBusinessHours)) continue
-    if (target.userId && unavailable.has(target.userId)) continue
-    const live = target.userId ? phoneByUserId[target.userId]?.trim() : ""
-    const phone = (live || target.phone || "").trim()
-    if (!phone) continue
-    ordered.push({ phone, userId: target.userId })
+    if (unavailable.has(target.userId)) continue
+    const live = phoneByUserId[target.userId]?.trim() ?? ""
+    if (!live) continue
+    ordered.push({ phone: live, userId: target.userId })
   }
 
   for (const exception of activeExceptions) {

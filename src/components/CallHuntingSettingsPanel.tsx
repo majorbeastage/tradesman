@@ -15,11 +15,14 @@ import {
   type CallHuntTarget,
   type CallHuntingSettings,
 } from "../lib/callHunting"
+import { loadTradesmanVoiceLinesByUserIds } from "../lib/userPublicBusinessLine"
+import { CallScheduleCalendarLink } from "./CallScheduleCalendarLink"
 
 type RingPerson = {
   profileId: string
   displayName: string
-  phone: string
+  tradesmanNumber: string | null
+  forwardPhone: string | null
   isSelf?: boolean
 }
 
@@ -71,11 +74,18 @@ function addDaysIso(days: number): string {
   return d.toISOString().slice(0, 10)
 }
 
-function phoneForProfile(row: {
-  primary_phone?: string | null
-  best_contact_phone?: string | null
-}): string {
-  return (row.best_contact_phone || row.primary_phone || "").trim()
+function sanitizeHuntTargets(targets: CallHuntTarget[], peopleById: Map<string, RingPerson>): CallHuntTarget[] {
+  return targets
+    .filter((t) => t.userId && peopleById.has(t.userId))
+    .map((t) => {
+      const person = peopleById.get(t.userId!)!
+      return {
+        ...t,
+        userId: person.profileId,
+        label: person.displayName,
+        phone: person.forwardPhone || "",
+      }
+    })
 }
 
 export function CallHuntingSettingsPanel({ profileUserId, primaryForwardHint }: Props) {
@@ -86,12 +96,13 @@ export function CallHuntingSettingsPanel({ profileUserId, primaryForwardHint }: 
   const [message, setMessage] = useState("")
 
   const peopleById = useMemo(() => new Map(people.map((p) => [p.profileId, p])), [people])
+  const huntEligiblePeople = useMemo(() => people.filter((p) => p.forwardPhone), [people])
 
   const load = useCallback(async () => {
     if (!supabase || !profileUserId) return
     setLoading(true)
     try {
-      const { data } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
+      const { data } = await supabase.from("profiles").select("metadata, display_name").eq("id", profileUserId).maybeSingle()
       const meta =
         data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
           ? (data.metadata as Record<string, unknown>)
@@ -99,43 +110,36 @@ export function CallHuntingSettingsPanel({ profileUserId, primaryForwardHint }: 
       setSettings(parseCallHunting(meta.call_hunting_v1))
 
       const ownerId = await resolveAccountStructureOwnerId(supabase, profileUserId)
-      const { data: self } = await supabase
-        .from("profiles")
-        .select("id, display_name, primary_phone, best_contact_phone")
-        .eq("id", profileUserId)
-        .maybeSingle()
-
-      const roster: RingPerson[] = []
-      if (self) {
-        roster.push({
-          profileId: self.id,
-          displayName: (self.display_name || "You").trim() || "You",
-          phone: phoneForProfile(self),
-          isSelf: true,
-        })
-      }
+      const rosterIds = new Set<string>([profileUserId])
 
       try {
         const members = await loadActiveTeamMembers(supabase, ownerId)
-        const ids = members.map((m) => m.profileId).filter((id) => id !== profileUserId)
-        if (ids.length) {
-          const { data: memberProfiles } = await supabase
-            .from("profiles")
-            .select("id, display_name, primary_phone, best_contact_phone")
-            .in("id", ids)
-          for (const member of members) {
-            if (member.profileId === profileUserId) continue
-            const row = (memberProfiles ?? []).find((p) => p.id === member.profileId)
-            roster.push({
-              profileId: member.profileId,
-              displayName: member.displayName || row?.display_name || "Team member",
-              phone: row ? phoneForProfile(row) : "",
-            })
-          }
-        }
+        for (const m of members) rosterIds.add(m.profileId)
       } catch {
         /* team roster optional if RLS blocks */
       }
+
+      const ids = [...rosterIds]
+      const { data: profs } = await supabase.from("profiles").select("id, display_name").in("id", ids)
+      const nameById = new Map((profs ?? []).map((p) => [p.id as string, (p.display_name as string | null) || ""]))
+      const lines = await loadTradesmanVoiceLinesByUserIds(supabase, ids)
+
+      const roster: RingPerson[] = ids.map((id) => {
+        const line = lines.get(id)
+        return {
+          profileId: id,
+          displayName: (nameById.get(id) || (id === profileUserId ? "You" : "Team member")).trim(),
+          tradesmanNumber: line?.tradesmanNumber ?? null,
+          forwardPhone: line?.forwardPhone ?? null,
+          isSelf: id === profileUserId,
+        }
+      })
+
+      roster.sort((a, b) => {
+        if (a.isSelf) return -1
+        if (b.isSelf) return 1
+        return a.displayName.localeCompare(b.displayName)
+      })
 
       setPeople(roster)
     } finally {
@@ -149,6 +153,10 @@ export function CallHuntingSettingsPanel({ profileUserId, primaryForwardHint }: 
 
   async function persist(next: CallHuntingSettings) {
     if (!supabase || !profileUserId) return
+    const sanitized: CallHuntingSettings = {
+      ...next,
+      targets: sanitizeHuntTargets(next.targets, peopleById),
+    }
     setSaving(true)
     setMessage("")
     const { data } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
@@ -158,28 +166,25 @@ export function CallHuntingSettingsPanel({ profileUserId, primaryForwardHint }: 
         : {}
     const { error } = await supabase
       .from("profiles")
-      .update({ metadata: mergeCallHuntingMetadata(prev, next), updated_at: new Date().toISOString() })
+      .update({ metadata: mergeCallHuntingMetadata(prev, sanitized), updated_at: new Date().toISOString() })
       .eq("id", profileUserId)
     setSaving(false)
     if (error) {
       setMessage(error.message)
       return
     }
-    setSettings(next)
+    setSettings(sanitized)
     setMessage("Ring group saved.")
   }
 
   function applyPersonToTarget(target: CallHuntTarget, personId: string): CallHuntTarget {
-    if (personId === "__custom__") {
-      return { ...target, userId: null, label: target.label || "Custom number" }
-    }
     const person = peopleById.get(personId)
     if (!person) return target
     return {
       ...target,
       userId: person.profileId,
       label: person.displayName,
-      phone: person.phone || target.phone,
+      phone: person.forwardPhone || "",
     }
   }
 
@@ -196,7 +201,7 @@ export function CallHuntingSettingsPanel({ profileUserId, primaryForwardHint }: 
       ...exception,
       coverUserId: person.profileId,
       coverLabel: person.displayName,
-      coverPhone: person.phone || exception.coverPhone,
+      coverPhone: person.forwardPhone || exception.coverPhone,
     }
   }
 
@@ -204,13 +209,6 @@ export function CallHuntingSettingsPanel({ profileUserId, primaryForwardHint }: 
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
-      <p style={{ margin: 0, fontSize: 13, color: "#334155", lineHeight: 1.55 }}>
-        Build who rings and <strong>when</strong>. Use business-hours vs after-hours targets for 24-hour coverage, and temporary
-        exceptions when someone is out. Primary forward number
-        {primaryForwardHint ? ` (${primaryForwardHint})` : ""} still comes from Admin → Communications. Team phones come from each
-        person’s My T primary / best-contact number.
-      </p>
-
       <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 14, color: theme.text }}>
         <input
           type="checkbox"
@@ -226,9 +224,6 @@ export function CallHuntingSettingsPanel({ profileUserId, primaryForwardHint }: 
         />
         <span>
           <strong style={{ color: theme.text }}>Enable ring group / hunting</strong>
-          <span style={{ display: "block", fontSize: 12, color: "#64748b", marginTop: 2 }}>
-            Off = only the primary Twilio channel number rings.
-          </span>
         </span>
       </label>
 
@@ -247,6 +242,7 @@ export function CallHuntingSettingsPanel({ profileUserId, primaryForwardHint }: 
             </select>
             <span style={{ fontSize: 12, color: "#64748b", lineHeight: 1.4 }}>
               For 24-hour coverage: set primary to business hours, then add overnight teammates as “After hours only”.
+              {primaryForwardHint ? ` Primary: ${primaryForwardHint}.` : ""}
             </span>
           </label>
 
@@ -277,131 +273,126 @@ export function CallHuntingSettingsPanel({ profileUserId, primaryForwardHint }: 
           </label>
 
           <div style={{ display: "grid", gap: 8 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: theme.text }}>Additional ring targets</div>
+            <div style={{ fontSize: 12, fontWeight: 800, color: theme.text }}>Ring group members (by user)</div>
             <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-              Pick a team member to use their saved phone, or choose Custom number. Set “When to ring” so daytime and overnight
-              routes can differ.
+              Pick teammates who have a <strong>Tradesman voice line</strong> in Admin → Communications. Calls ring the
+              forward number on that purchased line — custom numbers cannot be typed here.
             </p>
 
-            {settings.targets.map((target, index) => (
-              <div
-                key={target.id}
-                style={{
-                  display: "grid",
-                  gap: 8,
-                  padding: 12,
-                  borderRadius: 10,
-                  border: `1px solid ${theme.border}`,
-                  background: "#fff",
-                }}
-              >
-                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  <input
-                    type="checkbox"
-                    checked={target.enabled}
-                    onChange={(e) => {
-                      const targets = settings.targets.map((row, i) => (i === index ? { ...row, enabled: e.target.checked } : row))
-                      void persist({ ...settings, targets })
-                    }}
-                  />
-                  <select
-                    value={target.userId || "__custom__"}
-                    onChange={(e) => {
-                      const targets = settings.targets.map((row, i) =>
-                        i === index ? applyPersonToTarget(row, e.target.value) : row,
-                      )
-                      void persist({ ...settings, targets })
-                    }}
-                    style={{ ...theme.formInput, flex: "1 1 180px", minWidth: 160, color: theme.text, fontWeight: 600 }}
-                  >
-                    <option value="__custom__">Custom number…</option>
-                    {people.map((person) => (
-                      <option key={person.profileId} value={person.profileId}>
-                        {person.displayName}
-                        {person.isSelf ? " (you)" : ""}
-                        {person.phone ? ` · ${person.phone}` : " — no phone in My T yet"}
+            {settings.targets.map((target, index) => {
+              const person = target.userId ? peopleById.get(target.userId) : null
+              const missingLine = !person?.forwardPhone
+              return (
+                <div
+                  key={target.id}
+                  style={{
+                    display: "grid",
+                    gap: 8,
+                    padding: 12,
+                    borderRadius: 10,
+                    border: `1px solid ${missingLine ? "#fecaca" : theme.border}`,
+                    background: missingLine ? "#fffbfb" : "#fff",
+                  }}
+                >
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <input
+                      type="checkbox"
+                      checked={target.enabled}
+                      onChange={(e) => {
+                        const targets = settings.targets.map((row, i) => (i === index ? { ...row, enabled: e.target.checked } : row))
+                        void persist({ ...settings, targets })
+                      }}
+                    />
+                    <select
+                      value={target.userId || ""}
+                      onChange={(e) => {
+                        const targets = settings.targets.map((row, i) =>
+                          i === index ? applyPersonToTarget(row, e.target.value) : row,
+                        )
+                        void persist({ ...settings, targets })
+                      }}
+                      style={{ ...theme.formInput, flex: "1 1 200px", minWidth: 180, color: theme.text, fontWeight: 600 }}
+                    >
+                      <option value="" disabled>
+                        Select team member…
                       </option>
-                    ))}
-                  </select>
-                  <select
-                    value={target.schedule}
-                    onChange={(e) => {
-                      const targets = settings.targets.map((row, i) =>
-                        i === index ? { ...row, schedule: e.target.value as CallHuntSchedule } : row,
-                      )
-                      void persist({ ...settings, targets })
-                    }}
-                    style={{ ...theme.formInput, flex: "1 1 160px", minWidth: 150, color: theme.text, fontWeight: 600 }}
-                  >
-                    <option value="always">Ring always</option>
-                    <option value="business_hours">Business hours only</option>
-                    <option value="after_hours">After hours only</option>
-                  </select>
-                  <button
-                    type="button"
-                    onClick={() => void persist({ ...settings, targets: settings.targets.filter((_, i) => i !== index) })}
-                    style={btnDanger}
-                  >
-                    Remove
-                  </button>
-                </div>
-                {!target.userId ? (
-                  <input
-                    value={target.phone}
-                    placeholder="+15551234567"
-                    onChange={(e) =>
-                      setSettings((prev) => ({
-                        ...prev,
-                        targets: prev.targets.map((row, i) => (i === index ? { ...row, phone: e.target.value } : row)),
-                      }))
-                    }
-                    onBlur={() => void persist(settings)}
-                    style={theme.formInput}
-                  />
-                ) : (
-                  <div style={{ fontSize: 12, color: target.phone ? "#64748b" : "#b45309" }}>
-                    {target.phone
-                      ? `Rings ${target.phone} (from My T) · ${target.label || "—"}`
-                      : "This teammate has no phone saved yet — add their primary / best-contact number in My T before they can ring."}
+                      {people.map((p) => (
+                        <option key={p.profileId} value={p.profileId} disabled={!p.forwardPhone}>
+                          {p.displayName}
+                          {p.isSelf ? " (you)" : ""}
+                          {p.tradesmanNumber ? ` · ${p.tradesmanNumber}` : ""}
+                          {!p.forwardPhone ? " — no Tradesman line" : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={target.schedule}
+                      onChange={(e) => {
+                        const targets = settings.targets.map((row, i) =>
+                          i === index ? { ...row, schedule: e.target.value as CallHuntSchedule } : row,
+                        )
+                        void persist({ ...settings, targets })
+                      }}
+                      style={{ ...theme.formInput, flex: "1 1 160px", minWidth: 150, color: theme.text, fontWeight: 600 }}
+                    >
+                      <option value="always">Ring always</option>
+                      <option value="business_hours">Business hours only</option>
+                      <option value="after_hours">After hours only</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => void persist({ ...settings, targets: settings.targets.filter((_, i) => i !== index) })}
+                      style={btnDanger}
+                    >
+                      Remove
+                    </button>
                   </div>
-                )}
-              </div>
-            ))}
+                  <div style={{ fontSize: 12, color: missingLine ? "#b45309" : "#64748b" }}>
+                    {person?.forwardPhone ? (
+                      <>
+                        Rings <strong>{person.forwardPhone}</strong>
+                        {person.tradesmanNumber ? ` (Tradesman line ${person.tradesmanNumber})` : ""}
+                      </>
+                    ) : (
+                      <>Assign a Tradesman voice line with a forward number in Admin → Communications before this member can ring.</>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
 
             {settings.targets.length < 4 ? (
               <button
                 type="button"
-                disabled={saving}
+                disabled={saving || huntEligiblePeople.length === 0}
                 onClick={() => {
-                  const first = people.find((p) => p.phone)
+                  const used = new Set(settings.targets.map((t) => t.userId).filter(Boolean))
+                  const nextPerson = huntEligiblePeople.find((p) => !used.has(p.profileId))
+                  if (!nextPerson) return
                   void persist({
                     ...settings,
                     targets: [
                       ...settings.targets,
-                      first
-                        ? {
-                            id: newHuntTargetId(),
-                            label: first.displayName,
-                            phone: first.phone,
-                            enabled: true,
-                            userId: first.profileId,
-                            schedule: "always" as CallHuntSchedule,
-                          }
-                        : {
-                            id: newHuntTargetId(),
-                            label: "Custom number",
-                            phone: "",
-                            enabled: true,
-                            userId: null,
-                            schedule: "always" as CallHuntSchedule,
-                          },
+                      {
+                        id: newHuntTargetId(),
+                        label: nextPerson.displayName,
+                        phone: nextPerson.forwardPhone || "",
+                        enabled: true,
+                        userId: nextPerson.profileId,
+                        schedule: "always" as CallHuntSchedule,
+                      },
                     ],
                   })
                 }}
                 style={btnPrimary}
               >
-                Add ring target
+                Add team member to ring group
               </button>
+            ) : null}
+            {huntEligiblePeople.length === 0 ? (
+              <p style={{ margin: 0, fontSize: 12, color: "#b45309" }}>
+                No teammates with a Tradesman voice line yet. Add numbers in Admin → Communications first.
+              </p>
             ) : null}
           </div>
 
@@ -507,10 +498,10 @@ export function CallHuntingSettingsPanel({ profileUserId, primaryForwardHint }: 
                     style={theme.formInput}
                   >
                     <option value="__custom__">Custom number…</option>
-                    {people.map((person) => (
+                    {huntEligiblePeople.map((person) => (
                       <option key={person.profileId} value={person.profileId}>
                         {person.displayName}
-                        {person.phone ? ` · ${person.phone}` : " — no phone"}
+                        {person.tradesmanNumber ? ` · ${person.tradesmanNumber}` : ""}
                       </option>
                     ))}
                   </select>
@@ -598,6 +589,7 @@ export function CallHuntingSettingsPanel({ profileUserId, primaryForwardHint }: 
         </p>
       ) : null}
       {saving ? <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>Saving…</p> : null}
+      <CallScheduleCalendarLink />
     </div>
   )
 }

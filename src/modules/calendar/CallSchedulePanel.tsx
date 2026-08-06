@@ -773,7 +773,7 @@ function FunctionEditModal({
                 style={{ padding: "8px 10px", borderRadius: 8, border: `1px solid ${theme.border}`, maxWidth: 100 }}
               />
             </label>
-            <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>Manage ring list in MyT → Ring hunting.</p>
+            <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>Manage ring list in MyT → Ring hunting (team members with Tradesman lines only).</p>
           </div>
         ) : null}
 

@@ -34,3 +34,58 @@ export async function fetchUserPublicTwilioNumber(
   if (!raw) return null
   return formatUsPhoneDisplay(raw)
 }
+
+export type TradesmanVoiceLine = {
+  userId: string
+  /** Purchased Tradesman / Twilio DID (public_address). */
+  tradesmanNumber: string | null
+  tradesmanNumberRaw: string | null
+  /** Forward destination configured on that line in Admin → Communications. */
+  forwardPhone: string | null
+  forwardPhoneRaw: string | null
+}
+
+/** Active voice/SMS channels for ring hunting — one row per user (newest with forward wins). */
+export async function loadTradesmanVoiceLinesByUserIds(
+  supabase: SupabaseClient,
+  userIds: string[],
+): Promise<Map<string, TradesmanVoiceLine>> {
+  const ids = [...new Set(userIds.map((id) => id.trim()).filter(Boolean))]
+  const out = new Map<string, TradesmanVoiceLine>()
+  if (!ids.length) return out
+
+  const { data, error } = await supabase
+    .from("client_communication_channels")
+    .select("user_id, public_address, forward_to_phone, voice_enabled, active, updated_at")
+    .in("user_id", ids)
+    .eq("active", true)
+    .eq("channel_kind", "voice_sms")
+    .order("updated_at", { ascending: false })
+
+  if (error) {
+    console.warn("[loadTradesmanVoiceLinesByUserIds]", error.message)
+    return out
+  }
+
+  for (const row of data ?? []) {
+    const r = row as {
+      user_id: string
+      public_address?: string | null
+      forward_to_phone?: string | null
+      voice_enabled?: boolean
+    }
+    if (r.voice_enabled === false) continue
+    if (out.has(r.user_id)) continue
+    const publicRaw = (r.public_address || "").trim()
+    const forwardRaw = (r.forward_to_phone || "").trim()
+    if (!publicRaw && !forwardRaw) continue
+    out.set(r.user_id, {
+      userId: r.user_id,
+      tradesmanNumber: publicRaw ? formatUsPhoneDisplay(publicRaw) : null,
+      tradesmanNumberRaw: publicRaw || null,
+      forwardPhone: forwardRaw ? formatUsPhoneDisplay(forwardRaw) : null,
+      forwardPhoneRaw: forwardRaw || null,
+    })
+  }
+  return out
+}
