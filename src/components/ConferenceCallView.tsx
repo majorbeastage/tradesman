@@ -45,6 +45,7 @@ function VideoTile({
   screen,
   fill,
   thumbnail,
+  suppressAudio,
 }: {
   stream: MediaStream | null
   label: string
@@ -53,6 +54,8 @@ function VideoTile({
   fill?: boolean
   /** Compact tile for screen-share sidebar or dense pop-out grids. */
   thumbnail?: boolean
+  /** Video-only tile — remote audio plays via ConferenceCallRemoteAudio in the parent window. */
+  suppressAudio?: boolean
 }) {
   const ref = useRef<HTMLVideoElement | null>(null)
   useEffect(() => {
@@ -74,7 +77,7 @@ function VideoTile({
       }}
     >
       {stream ? (
-        <video ref={ref} autoPlay playsInline muted={muted} style={{ width: "100%", height: "100%", objectFit: screen ? "contain" : "cover", background: "#000" }} />
+        <video ref={ref} autoPlay playsInline muted={Boolean(muted || suppressAudio)} style={{ width: "100%", height: "100%", objectFit: screen ? "contain" : "cover", background: "#000" }} />
       ) : (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#94a3b8", fontSize: 12 }}>
           connecting…
@@ -85,9 +88,17 @@ function VideoTile({
   )
 }
 
-function AudioTile({ name, connected }: { name: string; connected: boolean }) {
+function AudioTile({ name, connected, stream }: { name: string; connected: boolean; stream?: MediaStream | null }) {
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  useEffect(() => {
+    const el = audioRef.current
+    if (!el || !stream) return
+    if (el.srcObject !== stream) el.srcObject = stream
+    void el.play().catch(() => undefined)
+  }, [stream])
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 10, background: "#fff", border: `1px solid ${theme.border}` }}>
+      {stream ? <audio ref={audioRef} autoPlay playsInline style={{ display: "none" }} /> : null}
       <span style={{ position: "relative" }}>
         <span style={{ width: 38, height: 38, borderRadius: "50%", background: "#e2e8f0", color: theme.text, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 13 }}>
           {initials(name)}
@@ -189,6 +200,42 @@ type Props = {
   onEmailCustomer?: (customer: { id: string; email: string; name: string }) => void | Promise<void>
   emailCustomerBusy?: boolean
   conferenceDialInHint?: { dialInDisplay: string | null; pin: string } | null
+  /** When true, remote tiles are video-only; play remote audio via ConferenceCallRemoteAudio. */
+  remoteAudioExternal?: boolean
+}
+
+/** Keeps remote call audio playing in the main window (survives video pop-out). */
+export function ConferenceCallRemoteAudio({
+  participants,
+}: {
+  participants: Array<{ id: string; stream: MediaStream | null }>
+}) {
+  return (
+    <div aria-hidden style={{ position: "fixed", width: 0, height: 0, overflow: "hidden", opacity: 0, pointerEvents: "none" }}>
+      {participants.map((p) => (
+        <RemoteAudioTrack key={p.id} stream={p.stream} />
+      ))}
+    </div>
+  )
+}
+
+function RemoteAudioTrack({ stream }: { stream: MediaStream | null }) {
+  const ref = useRef<HTMLAudioElement | null>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    if (!stream) {
+      el.srcObject = null
+      return
+    }
+    if (el.srcObject !== stream) el.srcObject = stream
+    const play = () => void el.play().catch(() => undefined)
+    play()
+    stream.addEventListener("addtrack", play)
+    return () => stream.removeEventListener("addtrack", play)
+  }, [stream])
+  if (!stream) return null
+  return <audio ref={ref} autoPlay playsInline />
 }
 
 export function ConferenceCallBody({
@@ -211,6 +258,7 @@ export function ConferenceCallBody({
   onEmailCustomer,
   emailCustomerBusy,
   conferenceDialInHint,
+  remoteAudioExternal,
 }: Props) {
   const { state, participants, incoming, muted, cameraOn, isVideo, sharingScreen, seconds, error, selfStream } = room
   const [showChatLocal, setShowChatLocal] = useState(false)
@@ -324,6 +372,7 @@ export function ConferenceCallBody({
   const remoteScreenSharer = participants.find((p) => streamIsScreenShare(p.stream))
   const anyScreenShare = sharingScreen || Boolean(remoteScreenSharer)
   const useStageLayout = fitVideoTiles && showVideoLayout
+  const suppressRemoteTileAudio = (tileMuted?: boolean) => Boolean(remoteAudioExternal && !tileMuted)
 
   function renderVideoStage() {
     if (anyScreenShare && useStageLayout) {
@@ -343,7 +392,7 @@ export function ConferenceCallBody({
         >
           <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
             {main ? (
-              <VideoTile stream={main.stream} label={main.label} muted={main.muted} screen fill />
+              <VideoTile stream={main.stream} label={main.label} muted={main.muted} screen fill suppressAudio={suppressRemoteTileAudio(main.muted)} />
             ) : null}
           </div>
           {thumbs.length > 0 ? (
@@ -360,7 +409,7 @@ export function ConferenceCallBody({
               }}
             >
               {thumbs.map((t) => (
-                <VideoTile key={t.key} stream={t.stream} label={t.label} muted={t.muted} screen={t.screen} thumbnail />
+                <VideoTile key={t.key} stream={t.stream} label={t.label} muted={t.muted} screen={t.screen} thumbnail suppressAudio={suppressRemoteTileAudio(t.muted)} />
               ))}
             </div>
           ) : null}
@@ -383,7 +432,7 @@ export function ConferenceCallBody({
           }}
         >
           {stageTiles.map((t) => (
-            <VideoTile key={t.key} stream={t.stream} label={t.label} muted={t.muted} screen={t.screen} fill />
+            <VideoTile key={t.key} stream={t.stream} label={t.label} muted={t.muted} screen={t.screen} fill suppressAudio={suppressRemoteTileAudio(t.muted)} />
           ))}
         </div>
       )
@@ -395,7 +444,7 @@ export function ConferenceCallBody({
       const thumbs = stageTiles.filter((t) => t.key !== mainKey)
       return (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {main ? <VideoTile stream={main.stream} label={main.label} muted={main.muted} screen /> : null}
+          {main ? <VideoTile stream={main.stream} label={main.label} muted={main.muted} screen suppressAudio={suppressRemoteTileAudio(main.muted)} /> : null}
           {thumbs.length > 0 ? (
             <div
               style={{
@@ -406,7 +455,7 @@ export function ConferenceCallBody({
               }}
             >
               {thumbs.map((t) => (
-                <VideoTile key={t.key} stream={t.stream} label={t.label} muted={t.muted} thumbnail />
+                <VideoTile key={t.key} stream={t.stream} label={t.label} muted={t.muted} thumbnail suppressAudio={suppressRemoteTileAudio(t.muted)} />
               ))}
             </div>
           ) : null}
@@ -423,7 +472,7 @@ export function ConferenceCallBody({
         }}
       >
         {stageTiles.map((t) => (
-          <VideoTile key={t.key} stream={t.stream} label={t.label} muted={t.muted} screen={t.screen} />
+          <VideoTile key={t.key} stream={t.stream} label={t.label} muted={t.muted} screen={t.screen} suppressAudio={suppressRemoteTileAudio(t.muted)} />
         ))}
       </div>
     )
@@ -497,7 +546,7 @@ export function ConferenceCallBody({
         ) : (
           <div style={{ display: "grid", gap: 8, ...(fillHeight ? { flex: 1, minHeight: 0, overflow: "auto" } : null) }}>
             {participants.map((p) => (
-              <AudioTile key={p.id} name={p.name} connected={p.connected} />
+              <AudioTile key={p.id} name={p.name} connected={p.connected} stream={remoteAudioExternal ? undefined : p.stream} />
             ))}
           </div>
         )

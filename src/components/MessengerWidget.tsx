@@ -29,7 +29,7 @@ import { notifyCustomersEmailSync } from "../lib/workflowNavigation"
 import messagingIcon from "../assets/messaging-app-icon.png"
 import { useVoiceDevice } from "../lib/useVoiceDevice"
 import { useConferenceRoom } from "../lib/useConferenceRoom"
-import ConferenceCallView, { ConferenceCallBody, openConferencePopOut } from "./ConferenceCallView"
+import ConferenceCallView, { ConferenceCallBody, ConferenceCallRemoteAudio, openConferencePopOut } from "./ConferenceCallView"
 import InCallControls, { formatCallStateLabel } from "./InCallControls"
 import MessageActionTarget from "./MessageActionTarget"
 import {
@@ -549,7 +549,7 @@ export default function MessengerWidget({ setPage }: Props) {
       const close = await openConferencePopOut((mount) => {
         const root = createRoot(mount)
         popOutRootRef.current = root
-        root.render(<ConferenceCallBody room={room} selfName="You" fillHeight popOut />)
+        root.render(<ConferenceCallBody room={room} selfName="You" fillHeight popOut remoteAudioExternal />)
         return () => {
           try {
             root.unmount()
@@ -568,7 +568,7 @@ export default function MessengerWidget({ setPage }: Props) {
 
   useEffect(() => {
     if (!callPoppedOut || !popOutRootRef.current) return
-    popOutRootRef.current.render(<ConferenceCallBody room={room} selfName="You" fillHeight popOut />)
+    popOutRootRef.current.render(<ConferenceCallBody room={room} selfName="You" fillHeight popOut remoteAudioExternal />)
   }, [
     callPoppedOut,
     room.state,
@@ -676,6 +676,7 @@ export default function MessengerWidget({ setPage }: Props) {
           onEmailCustomer={(c) => void handleEmailCustomerFromCall(c)}
           emailCustomerBusy={emailCustomerBusy}
           conferenceDialInHint={conferenceDialInHint}
+          remoteAudioExternal
         />
       </div>
     ) : null
@@ -684,6 +685,8 @@ export default function MessengerWidget({ setPage }: Props) {
     view === "chat" ? (selectedThread ? threadTitle(selectedThread) : "Message") : view === "dial" ? "Phone call (Twilio)" : view === "new_group" ? "New group" : "Instant messaging"
 
   return (
+    <>
+      {roomActive ? <ConferenceCallRemoteAudio participants={room.participants} /> : null}
     <div style={{ position: "fixed", right: 18, bottom: 80, zIndex: 12000 }}>
       {open ? (
         <div
@@ -1147,6 +1150,7 @@ export default function MessengerWidget({ setPage }: Props) {
                   onEmailCustomer={(c) => void handleEmailCustomerFromCall(c)}
                   emailCustomerBusy={emailCustomerBusy}
                   conferenceDialInHint={conferenceDialInHint}
+                  remoteAudioExternal
                 />
               ) : callActive && active ? (
                 <InCallControls
@@ -1262,5 +1266,6 @@ export default function MessengerWidget({ setPage }: Props) {
         ) : null}
       </button>
     </div>
+    </>
   )
 }
