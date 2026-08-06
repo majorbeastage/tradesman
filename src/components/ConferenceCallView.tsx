@@ -29,18 +29,30 @@ function videoGridLayout(tileCount: number): { columns: number; rows: number } {
   return { columns, rows: Math.ceil(tileCount / columns) }
 }
 
+function streamIsScreenShare(stream: MediaStream | null | undefined): boolean {
+  if (!stream) return false
+  const track = stream.getVideoTracks().find((t) => t.readyState === "live") ?? stream.getVideoTracks()[0]
+  if (!track) return false
+  const settings = track.getSettings?.()
+  if (settings?.displaySurface) return true
+  return /screen|display|window|tab|share/i.test(track.label || "")
+}
+
 function VideoTile({
   stream,
   label,
   muted,
   screen,
   fill,
+  thumbnail,
 }: {
   stream: MediaStream | null
   label: string
   muted?: boolean
   screen?: boolean
   fill?: boolean
+  /** Compact tile for screen-share sidebar or dense pop-out grids. */
+  thumbnail?: boolean
 }) {
   const ref = useRef<HTMLVideoElement | null>(null)
   useEffect(() => {
@@ -53,8 +65,12 @@ function VideoTile({
     <div
       style={{
         ...tile,
-        aspectRatio: fill ? undefined : screen ? "16 / 9" : "4 / 3",
-        ...(fill ? { minHeight: 0, minWidth: 0, height: "100%", width: "100%" } : null),
+        aspectRatio: thumbnail ? "16 / 9" : fill ? undefined : screen ? "16 / 9" : "4 / 3",
+        ...(thumbnail
+          ? { width: "100%", flexShrink: 0, minHeight: 0, maxHeight: 88 }
+          : fill
+            ? { minHeight: 0, minWidth: 0, height: "100%", width: "100%" }
+            : null),
       }}
     >
       {stream ? (
@@ -64,7 +80,7 @@ function VideoTile({
           connecting…
         </div>
       )}
-      <span style={tileLabel}>{label}</span>
+      <span style={{ ...tileLabel, ...(thumbnail ? { fontSize: 9, padding: "1px 5px", left: 4, bottom: 4 } : null) }}>{label}</span>
     </div>
   )
 }
@@ -224,6 +240,25 @@ export function ConferenceCallBody({
     }
   }, [addOpen, emailCustQuery, searchEmailCustomers])
 
+  type StageTile = { key: string; stream: MediaStream | null; label: string; muted?: boolean; screen?: boolean }
+
+  const stageTiles: StageTile[] = useMemo(() => {
+    const rows: StageTile[] = participants.map((p) => ({
+      key: p.id,
+      stream: p.stream,
+      label: streamIsScreenShare(p.stream) ? `${p.name} (screen)` : p.name,
+      screen: streamIsScreenShare(p.stream),
+    }))
+    rows.push({
+      key: "self",
+      stream: selfStream,
+      label: sharingScreen ? `${selfName} (screen)` : selfName,
+      muted: true,
+      screen: sharingScreen,
+    })
+    return rows
+  }, [participants, selfStream, selfName, sharingScreen])
+
   function toggleChat() {
     if (onToggleChat) onToggleChat()
     else setShowChatLocal((v) => !v)
@@ -286,6 +321,113 @@ export function ConferenceCallBody({
   const fitVideoTiles = fillHeight || popOut
   const remoteHasVideo = participants.some((p) => p.stream?.getVideoTracks().some((t) => t.readyState === "live"))
   const showVideoLayout = isVideo || sharingScreen || remoteHasVideo || Boolean(selfStream?.getVideoTracks().some((t) => t.readyState === "live"))
+  const remoteScreenSharer = participants.find((p) => streamIsScreenShare(p.stream))
+  const anyScreenShare = sharingScreen || Boolean(remoteScreenSharer)
+  const useStageLayout = fitVideoTiles && showVideoLayout
+
+  function renderVideoStage() {
+    if (anyScreenShare && useStageLayout) {
+      const mainKey = sharingScreen ? "self" : remoteScreenSharer?.id ?? "self"
+      const main = stageTiles.find((t) => t.key === mainKey) ?? stageTiles[0]
+      const thumbs = stageTiles.filter((t) => t.key !== mainKey)
+      return (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "row",
+            gap: 6,
+            flex: 1,
+            minHeight: 0,
+            overflow: "hidden",
+          }}
+        >
+          <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
+            {main ? (
+              <VideoTile stream={main.stream} label={main.label} muted={main.muted} screen fill />
+            ) : null}
+          </div>
+          {thumbs.length > 0 ? (
+            <div
+              style={{
+                width: 108,
+                flexShrink: 0,
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                overflowY: "auto",
+                minHeight: 0,
+                maxHeight: "100%",
+              }}
+            >
+              {thumbs.map((t) => (
+                <VideoTile key={t.key} stream={t.stream} label={t.label} muted={t.muted} screen={t.screen} thumbnail />
+              ))}
+            </div>
+          ) : null}
+        </div>
+      )
+    }
+
+    if (useStageLayout) {
+      return (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${videoGrid.columns}, minmax(0, 1fr))`,
+            gridTemplateRows: `repeat(${videoGrid.rows}, minmax(0, 1fr))`,
+            gap: 6,
+            flex: 1,
+            minHeight: 0,
+            overflow: "hidden",
+            alignContent: "stretch",
+          }}
+        >
+          {stageTiles.map((t) => (
+            <VideoTile key={t.key} stream={t.stream} label={t.label} muted={t.muted} screen={t.screen} fill />
+          ))}
+        </div>
+      )
+    }
+
+    if (anyScreenShare) {
+      const mainKey = sharingScreen ? "self" : remoteScreenSharer?.id ?? "self"
+      const main = stageTiles.find((t) => t.key === mainKey) ?? stageTiles[0]
+      const thumbs = stageTiles.filter((t) => t.key !== mainKey)
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {main ? <VideoTile stream={main.stream} label={main.label} muted={main.muted} screen /> : null}
+          {thumbs.length > 0 ? (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: `repeat(${Math.min(thumbs.length, 3)}, minmax(0, 1fr))`,
+                gap: 6,
+                maxHeight: 120,
+              }}
+            >
+              {thumbs.map((t) => (
+                <VideoTile key={t.key} stream={t.stream} label={t.label} muted={t.muted} thumbnail />
+              ))}
+            </div>
+          ) : null}
+        </div>
+      )
+    }
+
+    return (
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: `repeat(${videoGrid.columns}, minmax(0, 1fr))`,
+          gap: 8,
+        }}
+      >
+        {stageTiles.map((t) => (
+          <VideoTile key={t.key} stream={t.stream} label={t.label} muted={t.muted} screen={t.screen} />
+        ))}
+      </div>
+    )
+  }
 
   return (
     <div
@@ -349,61 +491,9 @@ export function ConferenceCallBody({
 
       {!compact || showVideoLayout ? (
         showVideoLayout ? (
-          sharingScreen ? (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 6,
-                ...(fitVideoTiles ? { flex: 1, minHeight: 0, overflow: "hidden" } : null),
-              }}
-            >
-              <VideoTile
-                stream={selfStream}
-                label={`${selfName} (screen)`}
-                muted
-                screen
-                fill={fitVideoTiles}
-              />
-              {participants.length > 0 ? (
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: `repeat(${Math.min(participants.length, 3)}, minmax(0, 1fr))`,
-                    gap: 6,
-                    maxHeight: fitVideoTiles ? "32%" : 120,
-                    minHeight: 0,
-                    flexShrink: 0,
-                  }}
-                >
-                  {participants.map((p) => (
-                    <VideoTile key={p.id} stream={p.stream} label={p.name} fill={fitVideoTiles} />
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: `repeat(${videoGrid.columns}, minmax(0, 1fr))`,
-              ...(fitVideoTiles ? { gridTemplateRows: `repeat(${videoGrid.rows}, minmax(0, 1fr))` } : null),
-              gap: fitVideoTiles ? 6 : 8,
-              ...(fitVideoTiles ? { flex: 1, minHeight: 0, alignContent: "stretch", overflow: "hidden" } : null),
-            }}
-          >
-            {participants.map((p) => (
-              <VideoTile key={p.id} stream={p.stream} label={p.name} fill={fitVideoTiles} />
-            ))}
-            <VideoTile
-              stream={selfStream}
-              label={sharingScreen ? `${selfName} (screen)` : selfName}
-              muted
-              screen={sharingScreen}
-              fill={fitVideoTiles}
-            />
+          <div style={useStageLayout ? { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } : undefined}>
+            {renderVideoStage()}
           </div>
-          )
         ) : (
           <div style={{ display: "grid", gap: 8, ...(fillHeight ? { flex: 1, minHeight: 0, overflow: "auto" } : null) }}>
             {participants.map((p) => (
