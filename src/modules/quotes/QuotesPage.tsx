@@ -68,11 +68,12 @@ import {
   loadEntityAttachmentsForQuote,
   deleteEntityAttachmentRow,
   entityAttachmentsForCustomerCopy,
+  entityAttachmentDisplayLabel,
   isProbablyImageAttachment,
   parseQuoteAttachmentMeta,
   type EntityAttachmentRow,
 } from "../../lib/communicationAttachments"
-import { uploadEntityAttachmentFile, uploadFilesForOutbound } from "../../lib/uploadCommAttachment"
+import { uploadEntityAttachmentFile, uploadFilesForOutbound, ENTITY_ATTACHMENT_MAX_BYTES, ENTITY_ATTACHMENT_ACCEPT } from "../../lib/uploadCommAttachment"
 import { appendEmailSignature, loadStoredEmailSignature, saveStoredEmailSignature } from "../../lib/emailSignature"
 import {
   buildQuotePdfBytes,
@@ -3915,17 +3916,25 @@ export default function QuotesPage(_props: QuotesPageProps) {
     try {
       const list = Array.from(files)
       for (const file of list) {
+        if (file.size > ENTITY_ATTACHMENT_MAX_BYTES) {
+          throw new Error(`${file.name || "File"} is too large — max 50 MB per file.`)
+        }
         const up = await uploadEntityAttachmentFile({ userId, quoteId: selectedQuoteId, file })
-        if (!up) throw new Error("Upload failed")
+        if (!up) {
+          throw new Error(
+            `Could not upload ${file.name || "file"}. Photos and PDFs are supported (max 50 MB). If this keeps failing, try renaming the file or use a smaller PDF.`,
+          )
+        }
+        const contentType = file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : null)
         const { error } = await supabase.from("entity_attachments").insert({
           user_id: userId,
           quote_id: selectedQuoteId,
           storage_path: up.storage_path,
           public_url: up.public_url,
-          content_type: file.type || null,
+          content_type: contentType,
           file_name: file.name || null,
         })
-        if (error) throw error
+        if (error) throw new Error(error.message)
       }
       setQuoteEntityRows(await loadEntityAttachmentsForQuote(selectedQuoteId))
     } catch (e) {
@@ -3933,6 +3942,12 @@ export default function QuotesPage(_props: QuotesPageProps) {
     } finally {
       setQuoteEntityUploadBusy(false)
     }
+  }
+
+  function copyJobDetailsToCustomerDescription() {
+    const src = jobDetailsText.trim()
+    if (!src) return
+    setCustomerJobDescriptionText(src)
   }
 
   async function removeQuoteEntityRowLocal(row: EntityAttachmentRow) {
@@ -6090,7 +6105,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               type="file"
                               multiple
                               style={{ display: "none" }}
-                              accept="image/*,.pdf,.doc,.docx,application/pdf"
+                              accept={ENTITY_ATTACHMENT_ACCEPT}
                               onChange={(e) => {
                                 void handleQuoteEntityFileChange(e.target.files)
                                 e.target.value = ""
@@ -6755,11 +6770,18 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                 <input
                                   type="file"
                                   multiple
+                                  accept={ENTITY_ATTACHMENT_ACCEPT}
                                   disabled={quoteEntityUploadBusy}
-                                  onChange={(e) => void handleQuoteEntityFileChange(e.target.files)}
+                                  onChange={(e) => {
+                                    void handleQuoteEntityFileChange(e.target.files)
+                                    e.target.value = ""
+                                  }}
                                   style={{ display: "block", marginTop: 6, fontSize: 13 }}
                                 />
                               </label>
+                              <span style={{ fontSize: 12, color: "#64748b", lineHeight: 1.4 }}>
+                                Photos, PDFs, and Word docs — up to 50 MB each.
+                              </span>
                               {quoteEntityUploadBusy ? <span style={{ fontSize: 12, color: "#6b7280" }}>Uploading…</span> : null}
                             </div>
                             {quoteMediaRows.length > 0 ? (
@@ -6806,7 +6828,25 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                               }}
                                             />
                                           ) : (
-                                            row.file_name || "File"
+                                            <span
+                                              style={{
+                                                display: "inline-flex",
+                                                alignItems: "center",
+                                                justifyContent: "center",
+                                                minWidth: 52,
+                                                minHeight: 52,
+                                                padding: "0 10px",
+                                                borderRadius: 8,
+                                                border: `1px solid ${theme.border}`,
+                                                background: "#f1f5f9",
+                                                fontWeight: 800,
+                                                fontSize: 11,
+                                                color: "#334155",
+                                                letterSpacing: "0.04em",
+                                              }}
+                                            >
+                                              {entityAttachmentDisplayLabel(row.content_type, row.file_name)}
+                                            </span>
                                           )}
                                         </a>
                                         <button
@@ -7088,6 +7128,25 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                   <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
                                     Customer-facing summary shown on the exported estimate PDF/Word document.
                                   </p>
+                                  {jobDetailsText.trim() && !customerJobDescriptionText.trim() ? (
+                                    <button
+                                      type="button"
+                                      onClick={copyJobDetailsToCustomerDescription}
+                                      style={{
+                                        justifySelf: "start",
+                                        padding: "8px 12px",
+                                        borderRadius: 6,
+                                        border: `1px solid ${theme.primary}`,
+                                        background: "#fff",
+                                        color: theme.primary,
+                                        fontWeight: 700,
+                                        fontSize: 13,
+                                        cursor: "pointer",
+                                      }}
+                                    >
+                                      Copy from job details
+                                    </button>
+                                  ) : null}
                                   <textarea
                                     id="estimate-customer-job-description"
                                     aria-label={quoteJobDescriptionLabel}

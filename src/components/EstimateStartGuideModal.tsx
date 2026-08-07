@@ -470,6 +470,9 @@ export default function EstimateStartGuideModal({
           </div>
         ) : wizardPhase === "media" ? (
           <div style={{ display: "grid", gap: 12 }}>
+            <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.45 }}>
+              Add photos, PDFs, or Word documents (up to 50 MB each). Turn on &ldquo;Attach to customer&apos;s copy&rdquo; on each file when you want it on the estimate you send.
+            </p>
             <button type="button" onClick={onMediaPickFiles} disabled={mediaBusy} style={secondaryBtnStyle}>
               {mediaBusy ? "Working…" : "Add photos or files"}
             </button>
@@ -585,6 +588,15 @@ export default function EstimateStartGuideModal({
             <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.45 }}>
               Write a customer-facing summary of the work. This appears on the exported estimate PDF/Word document.
             </p>
+            {jobDetailsNotes.trim() && !jobDescriptionNotes.trim() ? (
+              <button
+                type="button"
+                onClick={() => onJobDescriptionNotesChange?.(jobDetailsNotes.trim())}
+                style={{ ...secondaryBtnStyle, fontWeight: 700, border: `2px solid ${theme.primary}`, justifySelf: "start" }}
+              >
+                Copy from job details
+              </button>
+            ) : null}
             <div
               style={{
                 border: `1px solid ${theme.border}`,

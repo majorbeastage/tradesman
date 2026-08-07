@@ -2,6 +2,28 @@ import { supabase } from "./supabase"
 
 const BUCKET = "comm-attachments"
 
+/** Supabase comm-attachments bucket limit (50 MB). */
+export const ENTITY_ATTACHMENT_MAX_BYTES = 52_428_800
+
+export const ENTITY_ATTACHMENT_ACCEPT =
+  "image/*,.pdf,application/pdf,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+/** Some browsers (especially mobile) leave file.type empty for PDFs — fix before storage upload. */
+export function normalizeEntityAttachmentFile(file: File): File {
+  const name = file.name || "attachment"
+  const lower = name.toLowerCase()
+  let type = (file.type || "").trim()
+  if (!type && lower.endsWith(".pdf")) type = "application/pdf"
+  else if (!type && lower.endsWith(".docx")) type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  else if (!type && lower.endsWith(".doc")) type = "application/msword"
+  else if (!type && /\.(jpe?g)$/.test(lower)) type = "image/jpeg"
+  else if (!type && lower.endsWith(".png")) type = "image/png"
+  else if (!type && lower.endsWith(".webp")) type = "image/webp"
+  else if (!type && lower.endsWith(".gif")) type = "image/gif"
+  if (type && type !== file.type) return new File([file], name, { type, lastModified: file.lastModified })
+  return file
+}
+
 /**
  * Upload files to public comm-attachments bucket under the signed-in user's folder.
  * Returns public URLs for use with /api/outbound-messages (email attachments, MMS).
@@ -61,7 +83,8 @@ export async function uploadEntityAttachmentFile(params: {
   file: File
 }): Promise<{ public_url: string; storage_path: string } | null> {
   if (!supabase) return null
-  const { userId, file, quoteId, calendarEventId } = params
+  const { userId, quoteId, calendarEventId } = params
+  const file = normalizeEntityAttachmentFile(params.file)
   const prefix =
     quoteId != null && quoteId !== ""
       ? `${userId}/quotes/${quoteId}`
@@ -76,7 +99,7 @@ export async function uploadEntityAttachmentFile(params: {
     contentType: file.type || "application/octet-stream",
   })
   if (error) {
-    console.error("[uploadEntityAttachment]", error.message)
+    console.error("[uploadEntityAttachment]", error.message, { path, contentType: file.type, size: file.size })
     return null
   }
   const { data } = supabase.storage.from(BUCKET).getPublicUrl(path)

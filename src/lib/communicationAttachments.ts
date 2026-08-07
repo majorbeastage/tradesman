@@ -74,6 +74,24 @@ export function isProbablyImageAttachment(
   return /\.(jpg|jpeg|png|gif|webp|avif|bmp|svg)$/.test(n)
 }
 
+export function isPdfAttachment(contentType: string | null | undefined, fileName?: string | null): boolean {
+  const t = (contentType || "").toLowerCase()
+  if (t === "application/pdf") return true
+  return (fileName || "").toLowerCase().endsWith(".pdf")
+}
+
+export function entityAttachmentDisplayLabel(
+  contentType: string | null | undefined,
+  fileName?: string | null,
+): string {
+  if (isPdfAttachment(contentType, fileName)) return "PDF"
+  const t = (contentType || "").toLowerCase()
+  const n = (fileName || "").toLowerCase()
+  if (t.includes("word") || n.endsWith(".doc") || n.endsWith(".docx")) return "DOC"
+  const ext = n.includes(".") ? n.split(".").pop()?.toUpperCase() : ""
+  return ext && ext.length <= 5 ? ext : "FILE"
+}
+
 export async function loadEntityAttachmentsForQuote(quoteId: string): Promise<EntityAttachmentRow[]> {
   if (!supabase || !quoteId) return []
   const { data, error } = await supabase
