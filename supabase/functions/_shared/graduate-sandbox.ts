@@ -1,5 +1,30 @@
 /** Shared logic: detect training sandbox profiles and graduate them to live production mode. */
 
+const SANDBOX_DEMO_USER_ID_PREFIX = "sandbox-demo-"
+const ORG_CHART_META_KEY = "organization_chart_v1"
+
+function stripSandboxDemoLinksFromMetadata(meta: Record<string, unknown>): Record<string, unknown> {
+  const raw = meta[ORG_CHART_META_KEY]
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return meta
+  const doc = raw as { nodes?: unknown[]; updated_at?: string; [k: string]: unknown }
+  if (!Array.isArray(doc.nodes)) return meta
+  let changed = false
+  const nodes = doc.nodes.map((node) => {
+    if (!node || typeof node !== "object" || Array.isArray(node)) return node
+    const row = node as { linkedUserId?: string | null; [k: string]: unknown }
+    if (typeof row.linkedUserId === "string" && row.linkedUserId.startsWith(SANDBOX_DEMO_USER_ID_PREFIX)) {
+      changed = true
+      return { ...row, linkedUserId: null }
+    }
+    return node
+  })
+  if (!changed) return meta
+  return {
+    ...meta,
+    [ORG_CHART_META_KEY]: { ...doc, nodes, updated_at: new Date().toISOString() },
+  }
+}
+
 export type GraduateSandboxRow = {
   role?: string | null
   metadata?: Record<string, unknown> | null
@@ -59,9 +84,23 @@ export function buildGraduateSandboxUpdates(row: GraduateSandboxRow): GraduateSa
   delete prevMeta.sandbox_demo_locations_v1
   delete prevMeta.sandbox_demo_team_policies_v1
   prevMeta.graduated_from_sandbox_at = new Date().toISOString()
+  const cleanedMeta = stripSandboxDemoLinksFromMetadata(prevMeta)
 
   let role = typeof row.role === "string" && row.role.trim() ? row.role.trim() : "user"
   if (role === "sandbox_user") role = "user"
 
-  return { role, portal_config: prevPc, metadata: prevMeta }
+  return { role, portal_config: prevPc, metadata: cleanedMeta }
+}
+
+/** Remove leftover sandbox persona metadata from a live profile (org chart links, demo team keys). */
+export function cleanupSandboxTrainingMetadata(meta: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...meta }
+  delete next.sandbox_account
+  delete next.sandbox_expires_at
+  delete next.sandbox_workspace_v1
+  delete next.demo_communications_blocked
+  delete next.sandbox_demo_team
+  delete next.sandbox_demo_locations_v1
+  delete next.sandbox_demo_team_policies_v1
+  return stripSandboxDemoLinksFromMetadata(next)
 }

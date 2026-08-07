@@ -5,9 +5,71 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import {
   buildGraduateSandboxUpdates,
+  cleanupSandboxTrainingMetadata,
   isSandboxProfileRow,
+  type GraduateSandboxRow,
 } from "../_shared/graduate-sandbox.ts"
 import { assignOfficeManagerClient } from "../_shared/team-office-manager-sync.ts"
+
+async function purgeSandboxSeedData(
+  adminClient: ReturnType<typeof createClient>,
+  userId: string,
+): Promise<{ ok: true; customers_removed: number } | { ok: false; error: string }> {
+  const { data, error } = await adminClient.rpc("purge_sandbox_seed_data", { p_user_id: userId })
+  if (error) {
+    const msg = error.message ?? String(error)
+    if (msg.includes("purge_sandbox_seed_data") && msg.toLowerCase().includes("does not exist")) {
+      return { ok: false, error: "purge_sandbox_seed_data is not deployed — run supabase/purge-sandbox-seed-on-graduate.sql" }
+    }
+    return { ok: false, error: msg }
+  }
+  const row = data && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>) : null
+  if (row?.ok === false) {
+    return { ok: false, error: typeof row.error === "string" ? row.error : "purge_failed" }
+  }
+  const removed = typeof row?.customers_removed === "number" ? row.customers_removed : 0
+  return { ok: true, customers_removed: removed }
+}
+
+async function applySandboxSampleDataPurge(
+  adminClient: ReturnType<typeof createClient>,
+  userId: string,
+): Promise<
+  | { ok: true; customers_removed: number; metadata_cleaned: boolean }
+  | { ok: false; error: string }
+> {
+  const purge = await purgeSandboxSeedData(adminClient, userId)
+  if (!purge.ok) return purge
+
+  const { data: prof, error: profErr } = await adminClient
+    .from("profiles")
+    .select("metadata")
+    .eq("id", userId)
+    .maybeSingle()
+  if (profErr) return { ok: false, error: profErr.message }
+
+  const prevMeta =
+    prof?.metadata && typeof prof.metadata === "object" && !Array.isArray(prof.metadata)
+      ? (prof.metadata as Record<string, unknown>)
+      : {}
+  const cleanedMeta = cleanupSandboxTrainingMetadata(prevMeta)
+  const metadataJson = JSON.stringify(cleanedMeta)
+  const metadataChanged = metadataJson !== JSON.stringify(prevMeta)
+
+  if (metadataChanged) {
+    const { error: patchErr } = await adminClient
+      .from("profiles")
+      .update({ metadata: cleanedMeta, updated_at: new Date().toISOString() })
+      .eq("id", userId)
+    if (patchErr) return { ok: false, error: patchErr.message }
+  }
+
+  return {
+    ok: true,
+    customers_removed: purge.customers_removed,
+    metadata_cleaned: metadataChanged,
+  }
+}
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -58,11 +120,17 @@ Deno.serve(async (req) => {
     const ids = users.users.map((u) => u.id)
     const { data: profiles } = await adminClient
       .from("profiles")
-      .select("id, email, role, display_name, account_disabled")
+      .select("id, email, role, display_name, account_disabled, portal_config, metadata")
       .in("id", ids)
     const profileMap = new Map((profiles || []).map((p) => [p.id, p]))
     const list = users.users.map((u) => {
       const prof = profileMap.get(u.id)
+      const meta =
+        prof?.metadata && typeof prof.metadata === "object" && !Array.isArray(prof.metadata)
+          ? (prof.metadata as Record<string, unknown>)
+          : null
+      const graduatedFromSandboxAt =
+        typeof meta?.graduated_from_sandbox_at === "string" ? meta.graduated_from_sandbox_at : null
       return {
         id: u.id,
         email: u.email,
@@ -71,6 +139,7 @@ Deno.serve(async (req) => {
         display_name: prof?.display_name ?? null,
         account_disabled: prof?.account_disabled === true,
         is_sandbox: isSandboxProfileRow(prof ?? null),
+        graduated_from_sandbox_at: graduatedFromSandboxAt,
       }
     })
     return new Response(JSON.stringify({ users: list }), {
@@ -275,6 +344,20 @@ Deno.serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         })
       }
+      const purge = await applySandboxSampleDataPurge(adminClient, targetId)
+      if (!purge.ok) {
+        return new Response(
+          JSON.stringify({
+            error: `Graduated to live, but sample data purge failed: ${purge.error}`,
+            partial: true,
+            id: updated.id,
+          }),
+          {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        )
+      }
       try {
         await adminClient.auth.admin.updateUserById(targetId, {
           user_metadata: { sandbox_account: null },
@@ -289,6 +372,58 @@ Deno.serve(async (req) => {
           role: updates.role,
           portal_config: updates.portal_config,
           is_sandbox: false,
+          customers_removed: purge.customers_removed,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      )
+    }
+
+    if (body.action === "purge_sandbox_sample_data") {
+      if (!targetId) {
+        return new Response(JSON.stringify({ error: "user_id required" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+      const { data: prof, error: profErr } = await adminClient
+        .from("profiles")
+        .select("id, role, portal_config, metadata")
+        .eq("id", targetId)
+        .maybeSingle()
+      if (profErr) {
+        return new Response(JSON.stringify({ error: profErr.message }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+      if (!prof?.id) {
+        return new Response(JSON.stringify({ error: "No profile row for that user." }), {
+          status: 422,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+      if (isSandboxProfileRow(prof as GraduateSandboxRow)) {
+        return new Response(
+          JSON.stringify({ error: "Use Go live first — this account is still in sandbox mode." }),
+          {
+            status: 409,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        )
+      }
+      const purge = await applySandboxSampleDataPurge(adminClient, targetId)
+      if (!purge.ok) {
+        return new Response(JSON.stringify({ error: purge.error }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          id: targetId,
+          customers_removed: purge.customers_removed,
+          metadata_cleaned: purge.metadata_cleaned,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       )

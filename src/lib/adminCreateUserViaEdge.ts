@@ -131,6 +131,48 @@ export async function graduateSandboxToLiveViaAdminUsersEdge(
   }
 }
 
+export type PurgeSandboxSampleDataOk = {
+  ok: true
+  customers_removed: number
+  metadata_cleaned?: boolean
+}
+
+/** Remove leftover sandbox sample customers/users for an account that already graduated to live. */
+export async function purgeSandboxSampleDataViaAdminUsersEdge(
+  supabaseUrl: string,
+  accessToken: string,
+  userId: string,
+): Promise<PurgeSandboxSampleDataOk | { ok: false; error: string }> {
+  const base = supabaseUrl.replace(/\/$/, "")
+  if (!base) return { ok: false, error: "Missing Supabase URL" }
+  try {
+    const res = await fetch(`${base}/functions/v1/admin-users`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ user_id: userId, action: "purge_sandbox_sample_data" }),
+    })
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean
+      error?: string
+      customers_removed?: number
+      metadata_cleaned?: boolean
+    }
+    if (res.ok && data.ok === true) {
+      return {
+        ok: true,
+        customers_removed: typeof data.customers_removed === "number" ? data.customers_removed : 0,
+        metadata_cleaned: data.metadata_cleaned === true,
+      }
+    }
+    return { ok: false, error: typeof data.error === "string" ? data.error : `HTTP ${res.status}` }
+  } catch {
+    return { ok: false, error: "Network error" }
+  }
+}
+
 /** Set profiles.account_disabled via admin-users Edge (service role; bypasses RLS). */
 export async function patchAccountDisabledViaAdminUsersEdge(
   supabaseUrl: string,

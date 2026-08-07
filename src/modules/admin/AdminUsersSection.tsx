@@ -3,7 +3,7 @@ import { useAuth, type UserRole } from "../../contexts/AuthContext"
 import { usePortalViewOptional } from "../../contexts/PortalViewContext"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
-import { createUserViaAdminUsersEdge, graduateSandboxToLiveViaAdminUsersEdge, patchAccountDisabledViaAdminUsersEdge, assignOfficeManagerViaAdminUsersEdge } from "../../lib/adminCreateUserViaEdge"
+import { createUserViaAdminUsersEdge, graduateSandboxToLiveViaAdminUsersEdge, patchAccountDisabledViaAdminUsersEdge, assignOfficeManagerViaAdminUsersEdge, purgeSandboxSampleDataViaAdminUsersEdge } from "../../lib/adminCreateUserViaEdge"
 import { AdminSettingBlock } from "../../components/admin/AdminSettingChrome"
 import { getDefaultPortalConfigForNewUser, upgradePortalConfigFromNewUserToUser, type PortalConfig } from "../../types/portal-builder"
 import { buildGraduateSandboxProfileUpdates, isGraduateSandboxCandidate } from "../../lib/graduateSandboxToLive"
@@ -24,6 +24,7 @@ type UserRow = {
   display_name: string | null
   account_disabled: boolean
   isSandbox: boolean
+  graduatedFromSandboxAt: string | null
 }
 
 type AdminUsersSectionProps = {
@@ -70,6 +71,7 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
   const [updatingOmUserId, setUpdatingOmUserId] = useState<string | null>(null)
   const [userTableSearch, setUserTableSearch] = useState("")
   const [graduatingUserId, setGraduatingUserId] = useState<string | null>(null)
+  const [purgingSampleUserId, setPurgingSampleUserId] = useState<string | null>(null)
 
   async function loadUsers() {
     if (!session?.access_token) {
@@ -95,6 +97,10 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
               display_name: u.display_name ?? null,
               account_disabled: (u as { account_disabled?: boolean }).account_disabled === true,
               isSandbox: (u as { is_sandbox?: boolean }).is_sandbox === true,
+              graduatedFromSandboxAt:
+                typeof (u as { graduated_from_sandbox_at?: string }).graduated_from_sandbox_at === "string"
+                  ? (u as { graduated_from_sandbox_at: string }).graduated_from_sandbox_at
+                  : null,
             }))
             setUsers(rows)
             return
@@ -116,6 +122,7 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
       const baseRows = (list ?? []) as Array<Omit<UserRow, "isSandbox"> & { account_disabled?: boolean }>
       const ids = baseRows.map((r) => r.id)
       const sandboxById = new Map<string, boolean>()
+      const graduatedById = new Map<string, string | null>()
       if (ids.length > 0) {
         const { data: metaRows } = await supabase
           .from("profiles")
@@ -133,6 +140,10 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
             (p as { id: string }).id,
             isGraduateSandboxCandidate(portalConfig, metadata, (p as { role?: string }).role ?? "user"),
           )
+          graduatedById.set(
+            (p as { id: string }).id,
+            typeof metadata?.graduated_from_sandbox_at === "string" ? metadata.graduated_from_sandbox_at : null,
+          )
         }
       }
       setUsers(
@@ -140,6 +151,7 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
           ...row,
           account_disabled: row.account_disabled === true,
           isSandbox: sandboxById.get(row.id) === true,
+          graduatedFromSandboxAt: graduatedById.get(row.id) ?? null,
         })),
       )
     } catch (e) {
@@ -241,7 +253,7 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
       `Graduate ${label} from sandbox to live?\n\n` +
         "• Training banner and simulated SMS/email will stop\n" +
         "• Leads and Conversations tabs will be turned on\n" +
-        "• Sample CRM data is kept\n" +
+        "• Sample customers and demo team members will be removed\n" +
         "• Configure Twilio in Admin → Communications before the client sends real texts or calls\n\n" +
         "Continue?",
     )
@@ -256,13 +268,17 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
         if (edge.ok) {
           setUsers((prev) =>
             prev.map((u) =>
-              u.id === userId ? { ...u, role: edge.role, isSandbox: false } : u,
+              u.id === userId
+                ? { ...u, role: edge.role, isSandbox: false, graduatedFromSandboxAt: new Date().toISOString() }
+                : u,
             ),
           )
           if (onUserPortalConfigUpdated) {
             onUserPortalConfigUpdated(userId, edge.portal_config as PortalConfig)
           }
-          setMessage(`${label} is now a live account. Have them sign out and back in, then finish Communications setup.`)
+          setMessage(
+            `${label} is now a live account. Sample customers and demo team members were removed. Have them sign out and back in, then finish Communications setup.`,
+          )
           return
         }
         if (!edge.tryDirectDb) {
@@ -307,9 +323,17 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
         setError(err.message)
         return
       }
+      if (session?.access_token && supabaseUrl) {
+        const purge = await purgeSandboxSampleDataViaAdminUsersEdge(supabaseUrl, session.access_token, userId)
+        if (!purge.ok) {
+          setError(`Graduated to live, but sample data purge failed: ${purge.error}`)
+        }
+      }
       setUsers((prev) =>
         prev.map((u) =>
-          u.id === userId ? { ...u, role: updates.role, isSandbox: false } : u,
+          u.id === userId
+            ? { ...u, role: updates.role, isSandbox: false, graduatedFromSandboxAt: new Date().toISOString() }
+            : u,
         ),
       )
       if (onUserPortalConfigUpdated) {
@@ -318,6 +342,40 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
       setMessage(`${label} is now a live account. Have them sign out and back in, then finish Communications setup.`)
     } finally {
       setGraduatingUserId(null)
+    }
+  }
+
+  async function handlePurgeSandboxSampleData(userId: string) {
+    if (!supabase) return
+    const row = users.find((u) => u.id === userId)
+    if (!row || row.isSandbox) return
+    const label = row.email ?? row.display_name ?? userId.slice(0, 8)
+    const ok = window.confirm(
+      `Remove sandbox sample customers and demo team metadata for ${label}?\n\n` +
+        "Real customers they added after going live are kept.\n\nContinue?",
+    )
+    if (!ok) return
+
+    setPurgingSampleUserId(userId)
+    setError("")
+    setMessage("")
+    try {
+      if (!session?.access_token || !supabaseUrl) {
+        setError("Admin session required to purge sample data.")
+        return
+      }
+      const purge = await purgeSandboxSampleDataViaAdminUsersEdge(supabaseUrl, session.access_token, userId)
+      if (!purge.ok) {
+        setError(purge.error)
+        return
+      }
+      setMessage(
+        `Removed ${purge.customers_removed} sample customer${purge.customers_removed === 1 ? "" : "s"} for ${label}.` +
+          (purge.metadata_cleaned ? " Demo team links were cleared from their org chart." : "") +
+          " Have them refresh or sign out and back in.",
+      )
+    } finally {
+      setPurgingSampleUserId(null)
     }
   }
 
@@ -504,6 +562,7 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
               display_name: displayName,
               account_disabled: false,
               isSandbox: false,
+              graduatedFromSandboxAt: null,
             },
             ...prev,
           ]
@@ -562,6 +621,7 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
               display_name: displayName,
               account_disabled: false,
               isSandbox: false,
+              graduatedFromSandboxAt: null,
             },
             ...prev,
           ]
@@ -865,20 +925,41 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
                       </button>
                     </div>
                   ) : (
-                    <span
-                      style={{
-                        display: "inline-block",
-                        padding: "2px 8px",
-                        borderRadius: 999,
-                        fontSize: 11,
-                        fontWeight: 600,
-                        background: "rgba(16, 185, 129, 0.12)",
-                        color: "#047857",
-                        border: "1px solid #6ee7b7",
-                      }}
-                    >
-                      Live
-                    </span>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
+                      <span
+                        style={{
+                          display: "inline-block",
+                          padding: "2px 8px",
+                          borderRadius: 999,
+                          fontSize: 11,
+                          fontWeight: 600,
+                          background: "rgba(16, 185, 129, 0.12)",
+                          color: "#047857",
+                          border: "1px solid #6ee7b7",
+                        }}
+                      >
+                        Live
+                      </span>
+                      {u.graduatedFromSandboxAt ? (
+                        <button
+                          type="button"
+                          disabled={purgingSampleUserId === u.id}
+                          onClick={() => void handlePurgeSandboxSampleData(u.id)}
+                          style={{
+                            padding: "5px 10px",
+                            borderRadius: 6,
+                            border: `1px solid ${theme.border}`,
+                            background: "white",
+                            color: theme.text,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            cursor: purgingSampleUserId === u.id ? "wait" : "pointer",
+                          }}
+                        >
+                          {purgingSampleUserId === u.id ? "Removing…" : "Remove sample data"}
+                        </button>
+                      ) : null}
+                    </div>
                   )}
                 </td>
                 <td style={{ padding: "12px", color: theme.text, minWidth: 120 }}>

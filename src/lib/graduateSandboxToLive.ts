@@ -1,5 +1,6 @@
 import { isSandboxProfile } from "./sandboxEnvironment"
 import type { PortalConfig } from "../types/portal-builder"
+import { ORG_CHART_META_KEY, parseOrganizationChart, stripSandboxDemoLinksFromOrgChart } from "./organizationChart"
 
 export type GraduateSandboxProfileInput = {
   role?: string | null
@@ -60,6 +61,14 @@ export function buildGraduateSandboxProfileUpdates(
   delete nextMeta.sandbox_demo_locations_v1
   delete nextMeta.sandbox_demo_team_policies_v1
   nextMeta.graduated_from_sandbox_at = new Date().toISOString()
+
+  const orgDoc = parseOrganizationChart(nextMeta[ORG_CHART_META_KEY])
+  if (orgDoc) {
+    const { doc, changed } = stripSandboxDemoLinksFromOrgChart(orgDoc)
+    if (changed) {
+      nextMeta[ORG_CHART_META_KEY] = { ...doc, v: 1, updated_at: new Date().toISOString() }
+    }
+  }
 
   let role = typeof row.role === "string" && row.role.trim() ? row.role.trim() : "user"
   if (role === "sandbox_user") role = "user"

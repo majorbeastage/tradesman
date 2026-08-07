@@ -64,7 +64,7 @@ export function resolveSandboxDataUserId(scopedId: string | null | undefined, au
 }
 
 export function parseSandboxDemoTeam(raw: unknown): SandboxDemoTeamMember[] {
-  if (!Array.isArray(raw) || raw.length === 0) return DEFAULT_SANDBOX_DEMO_TEAM
+  if (!Array.isArray(raw) || raw.length === 0) return []
   const out: SandboxDemoTeamMember[] = []
   for (const row of raw) {
     if (!row || typeof row !== "object" || Array.isArray(row)) continue
@@ -83,7 +83,7 @@ export function parseSandboxDemoTeam(raw: unknown): SandboxDemoTeamMember[] {
       department: typeof o.department === "string" ? o.department.trim() : undefined,
     })
   }
-  return out.length > 0 ? out : DEFAULT_SANDBOX_DEMO_TEAM
+  return out
 }
 
 export function sandboxDemoTeamToManageableRows(team: SandboxDemoTeamMember[]): ManageableUserRow[] {
