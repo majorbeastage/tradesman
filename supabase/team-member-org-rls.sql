@@ -5,30 +5,43 @@
 -- Office managers already access managed users via office_manager_id = auth.uid().
 -- This adds the inverse: user_id = auth.uid() → office_manager_id owns the row.
 
+-- SECURITY DEFINER lookups avoid RLS recursion on office_manager_clients.
+CREATE OR REPLACE FUNCTION public.get_account_owner_id_for_auth_user()
+RETURNS uuid
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT coalesce(
+    (
+      SELECT omc.office_manager_id
+      FROM public.office_manager_clients omc
+      WHERE omc.user_id = auth.uid()
+      ORDER BY omc.office_manager_id
+      LIMIT 1
+    ),
+    (
+      SELECT tmi.account_owner_id
+      FROM public.team_member_invites tmi
+      WHERE tmi.shell_profile_id = auth.uid()
+        AND tmi.status IN ('accepted', 'shell', 'pending')
+      ORDER BY tmi.created_at DESC
+      LIMIT 1
+    )
+  );
+$$;
+
 CREATE OR REPLACE FUNCTION public.is_managed_team_member_of(p_owner_id uuid)
 RETURNS boolean
 LANGUAGE sql
 STABLE
-SECURITY INVOKER
+SECURITY DEFINER
 SET search_path = public
 AS $$
   SELECT
     p_owner_id IS NOT NULL
-    AND (
-      EXISTS (
-        SELECT 1
-        FROM public.office_manager_clients omc
-        WHERE omc.user_id = auth.uid()
-          AND omc.office_manager_id = p_owner_id
-      )
-      OR EXISTS (
-        SELECT 1
-        FROM public.team_member_invites tmi
-        WHERE tmi.shell_profile_id = auth.uid()
-          AND tmi.account_owner_id = p_owner_id
-          AND tmi.status IN ('accepted', 'shell', 'pending')
-      )
-    );
+    AND public.get_account_owner_id_for_auth_user() = p_owner_id;
 $$;
 
 -- Invite shells + account owners can read relevant invite rows (org roster resolution).
@@ -46,13 +59,9 @@ DROP POLICY IF EXISTS "Org members read office_manager_clients roster" ON public
 CREATE POLICY "Org members read office_manager_clients roster"
   ON public.office_manager_clients FOR SELECT TO authenticated
   USING (
-    EXISTS (
-      SELECT 1
-      FROM public.office_manager_clients mine
-      WHERE mine.user_id = auth.uid()
-        AND mine.office_manager_id = office_manager_clients.office_manager_id
-    )
-    OR office_manager_id = auth.uid()
+    office_manager_id = auth.uid()
+    OR user_id = auth.uid()
+    OR office_manager_id = public.get_account_owner_id_for_auth_user()
   );
 
 -- Customers
