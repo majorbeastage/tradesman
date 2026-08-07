@@ -302,7 +302,7 @@ function MainAppInner() {
   const { page, navigatePage: setPage } = useAppNavigation()
   const [connectionStatus, setConnectionStatus] = useState<"checking" | "ok" | "failed" | "no-config">("checking")
   const [connectionError, setConnectionError] = useState<string>("")
-  const { role: authRole, user } = useAuth()
+  const { role: authRole, user, loading: authLoading } = useAuth()
   const effectiveUserId = useEffectiveUserId()
   const effectiveClientId = useEffectiveClientId()
   const effectiveViewRole = useEffectiveViewRole()
@@ -404,22 +404,45 @@ function MainAppInner() {
       setConnectionStatus("no-config")
       return
     }
+    if (authLoading) {
+      setConnectionStatus("checking")
+      return
+    }
+    let cancelled = false
     setConnectionError("")
     void (async () => {
-      try {
-        const { error } = await supabase.from("customers").select("id").limit(1)
-        if (error) {
-          setConnectionStatus("failed")
-          setConnectionError(error.message)
-        } else {
-          setConnectionStatus("ok")
+      const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+      let lastErr = ""
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (cancelled) return
+        if (attempt > 0) await sleep(600 * attempt)
+        try {
+          const uid = user?.id?.trim()
+          const { error } = uid
+            ? await supabase.from("profiles").select("id").eq("id", uid).maybeSingle()
+            : await supabase.from("profiles").select("id").limit(1)
+          if (cancelled) return
+          if (!error) {
+            setConnectionStatus("ok")
+            return
+          }
+          lastErr = error.message
+          const retry = /fetch|network|timeout/i.test(error.message)
+          if (!retry) break
+        } catch (err: unknown) {
+          lastErr = err instanceof Error ? err.message : String(err)
+          const retry = /fetch|network|timeout/i.test(lastErr)
+          if (!retry) break
         }
-      } catch (err: unknown) {
-        setConnectionStatus("failed")
-        setConnectionError(err instanceof Error ? err.message : String(err))
       }
+      if (cancelled) return
+      setConnectionStatus("failed")
+      setConnectionError(lastErr)
     })()
-  }, [])
+    return () => {
+      cancelled = true
+    }
+  }, [authLoading, user?.id])
 
   const currentTabMeta = portalTabs?.find((x) => x.tab_id === page)
   const currentPageTitle =

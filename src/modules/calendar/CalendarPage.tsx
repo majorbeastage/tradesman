@@ -8,6 +8,7 @@ import {
   snapMinutesToIncrement,
 } from "../../lib/numericFormInput"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
+import { useEffectiveViewRole } from "../../contexts/PortalViewContext"
 import { resolveAccountStructureOwnerId } from "../../lib/accountStructureOwner"
 import { filterRealUserIds, isSandboxDemoUserId, parseSandboxDemoTeam, resolveSandboxDataUserId } from "../../lib/sandboxDemoTeam"
 import {
@@ -22,6 +23,7 @@ import {
   mergeCalendarAssigneeMetadata,
   readAssignedUserId,
   resolveCalendarAssigneeForSave,
+  resolveCalendarEventOwnerUserId,
 } from "../../lib/calendarAssignee"
 import {
   mergeCalendarVideoCall,
@@ -101,6 +103,7 @@ import {
   minutesFromColumnY,
 } from "../../lib/calendarGridTime"
 import { refreshCustomerPipelineOnEngagement } from "../../lib/customerPipelineStatus"
+import { customerHasSmsConsent } from "../../lib/customerSmsConsent"
 import { autoAdvanceCustomerWorkflow } from "../../lib/customerWorkflowAutoComplete"
 import type { PortalSettingItem } from "../../types/portal-builder"
 import { useIsMobile } from "../../hooks/useIsMobile"
@@ -431,6 +434,10 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     () => resolveSandboxDataUserId(userId, authUserId || userId),
     [userId, authUserId],
   )
+  const calendarOwnerUserId = useMemo(
+    () => resolveCalendarEventOwnerUserId(userId, authUserId || userId, teamStructureOwnerId),
+    [userId, authUserId, teamStructureOwnerId],
+  )
   const sandboxTraining = useSandboxTrainingMode()
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const portalConfig = usePortalConfigForPage()
@@ -494,9 +501,12 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [prefByUserId, setPrefByUserId] = useState<Record<string, UserCalendarPreference>>({})
 
   const selectableUsers = useMemo(() => {
-    if (scopeCtx?.clients?.length) return scopeCtx.clients
-    return [{ userId, label: "My calendar", email: null, clientId: null, isSelf: true }]
-  }, [scopeCtx?.clients, userId])
+    const base = scopeCtx?.clients?.length
+      ? scopeCtx.clients
+      : [{ userId, label: "My calendar", email: null, clientId: null, isSelf: true }]
+    if (sandboxTraining) return base
+    return base.filter((u) => !isSandboxDemoUserId(u.userId))
+  }, [scopeCtx?.clients, userId, sandboxTraining])
 
   useEffect(() => {
     if (!isAdminPortalRole(authRole) || !supabase || !authUserId) {
@@ -879,16 +889,17 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     setSeriesRecurrenceValues(next)
   }, [selectedEvent?.id, showRecurringRemoveChoices, addItemPortalItems, events, selectedLegacyRecurringIds])
 
-  const isOfficeManagerOrAdmin = isOfficeManagerLikeRole(authRole)
+  const effectiveViewRole = useEffectiveViewRole()
+  const isOfficeManagerOrAdmin = isOfficeManagerLikeRole(effectiveViewRole)
   const canAssignToTeam = selectableUsers.length > 1 || isOfficeManagerOrAdmin
   const showTeamManagementEntry = isOfficeManagerOrAdmin
   const managedSchedulingToolsEnabled =
     managedByOfficeManager && (managedSelfPolicy.advanced_scheduling_tools === true || managedSelfPolicy.scheduling_tools === true)
   const showSchedulingToolsStandalone =
-    authRole === "user" && !isOfficeManagerOrAdmin && (!managedByOfficeManager || managedSchedulingToolsEnabled)
+    effectiveViewRole === "user" && !isOfficeManagerOrAdmin && (!managedByOfficeManager || managedSchedulingToolsEnabled)
   const showAddOnMainCalendar = showCalAddItem && (!managedByOfficeManager || managedSelfPolicy.allow_add_to_calendar !== false)
   const showManagedJobTypesEntry =
-    managedByOfficeManager && authRole === "user" && showCalJobTypes && managedSelfPolicy.job_types_access !== "off" && !managedSchedulingToolsEnabled
+    managedByOfficeManager && effectiveViewRole === "user" && showCalJobTypes && managedSelfPolicy.job_types_access !== "off" && !managedSchedulingToolsEnabled
 
   const canAccessCustomerMap =
     Boolean(authUserId) &&
@@ -903,10 +914,10 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const canOpenUnifiedMap = canAccessCustomerMap || canAccessTeamMap
 
   useEffect(() => {
-    if (!supabase || !calendarDbUserId) return
+    if (!supabase || !calendarOwnerUserId) return
     let cancelled = false
     void (async () => {
-      const { data } = await supabase.from("profiles").select("metadata").eq("id", calendarDbUserId).maybeSingle()
+      const { data } = await supabase.from("profiles").select("metadata").eq("id", calendarOwnerUserId).maybeSingle()
       if (cancelled) return
       const meta =
         data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
@@ -927,7 +938,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     return () => {
       cancelled = true
     }
-  }, [calendarDbUserId])
+  }, [calendarOwnerUserId])
 
   useEffect(() => {
     if (!showDisplayPrefs) return
@@ -1041,14 +1052,14 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   }, [calendarSuite, managedByOfficeManager, managedSelfPolicy, isOfficeManagerOrAdmin, sandboxTraining])
 
   useEffect(() => {
-    if (!managedByOfficeManager || !supabase || !authUserId) return
+    if (!managedByOfficeManager || !supabase || !userId) return
     const viewAsDemoId =
       scopeCtx?.selectedUserId && isSandboxDemoUserId(scopeCtx.selectedUserId) ? scopeCtx.selectedUserId : null
     let cancelled = false
     void supabase
       .from("profiles")
       .select("metadata")
-      .eq("id", authUserId)
+      .eq("id", calendarDbUserId || userId)
       .maybeSingle()
       .then(({ data }) => {
         if (cancelled) return
@@ -1061,7 +1072,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     return () => {
       cancelled = true
     }
-  }, [managedByOfficeManager, supabase, authUserId, scopeCtx?.selectedUserId])
+  }, [managedByOfficeManager, supabase, userId, calendarDbUserId, scopeCtx?.selectedUserId])
 
   useEffect(() => {
     if (jobTypesPortalItems.length === 0) {
@@ -1410,7 +1421,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       }
       if (!error) {
         let rows = (data || []).map(normalizeCalendarEventRow)
-        const viewerId = authUserId || userId
+        const viewerId = (userId || calendarDbUserId || authUserId || "").trim()
         if (viewerId && supabase) {
           const seen = new Set(rows.map((r) => r.id))
           const mergeShared = async (extraQuery: ReturnType<typeof baseQuery>) => {
@@ -2572,11 +2583,12 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   }
 
   async function loadJobTypes() {
-    if (!calendarDbUserId || !supabase) return
+    const jobTypesOwnerId = calendarOwnerUserId || calendarDbUserId
+    if (!jobTypesOwnerId || !supabase) return
     let q = await supabase
       .from("job_types")
       .select("id, name, description, duration_minutes, color_hex, materials_list, track_mileage")
-      .eq("user_id", calendarDbUserId)
+      .eq("user_id", jobTypesOwnerId)
       .order("name")
     let rows: JobType[] = (q.data ?? []) as JobType[]
     let error = q.error
@@ -2585,7 +2597,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       const q2 = await supabase
         .from("job_types")
         .select("id, name, description, duration_minutes, color_hex, materials_list")
-        .eq("user_id", calendarDbUserId)
+        .eq("user_id", jobTypesOwnerId)
         .order("name")
       rows = (q2.data ?? []) as JobType[]
       error = q2.error
@@ -2594,7 +2606,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       const q3 = await supabase
         .from("job_types")
         .select("id, name, description, duration_minutes, color_hex")
-        .eq("user_id", calendarDbUserId)
+        .eq("user_id", jobTypesOwnerId)
         .order("name")
       rows = (q3.data ?? []) as JobType[]
       error = q3.error
@@ -2789,7 +2801,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   useEffect(() => {
     if (!userId) return
     loadJobTypes()
-  }, [calendarDbUserId])
+  }, [calendarDbUserId, calendarOwnerUserId])
 
   useEffect(() => {
     if (!userId) return
@@ -2929,6 +2941,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       if (assignedId && supabase) {
         void notifyCalendarInvitees(supabase, selectedEvent.id, [assignedId], "assign")
       }
+      void loadEvents()
     } finally {
       setEventAssigneeSaving(false)
     }
@@ -2973,8 +2986,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
 
   async function saveEvent() {
     if (!supabase || !userId || !addTitle.trim()) return
-    const assigneePick = addAssignToSelectedUser ? addTargetUserId || userId : authUserId || userId
-    const eventOwnerUserId = resolveSandboxDataUserId(authUserId || userId, authUserId || userId)
+    const eventOwnerUserId = resolveCalendarEventOwnerUserId(userId, authUserId || userId, teamStructureOwnerId)
+    const assigneePick = addAssignToSelectedUser ? addTargetUserId || userId : eventOwnerUserId
     const assignee = resolveCalendarAssigneeForSave(assigneePick, authUserId || userId, eventOwnerUserId)
     setAddError("")
     const start = parseLocalDateTime(addStartDate, addStartTime)
@@ -3372,10 +3385,10 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       if (!showAddItem) setAddCustomerSearch("")
       return
     }
-    void loadCustomersForCustomReceipt(supabase, userId)
+    void loadCustomersForCustomReceipt(supabase, teamStructureOwnerId || calendarDbUserId || userId)
       .then(setAddCustomerOptions)
       .catch(() => setAddCustomerOptions([]))
-  }, [showAddItem, supabase, userId])
+  }, [showAddItem, supabase, userId, teamStructureOwnerId, calendarDbUserId])
 
   useEffect(() => {
     if (!showAddItem) return
@@ -3695,13 +3708,15 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     display_name: string
     email: string
     phone: string
+    metadata?: unknown
   } | null> {
-    const cached = addCustomerOptions.find((c) => c.id === customerId)
-    if (cached) return cached
-    if (!supabase) return null
+    if (!supabase) {
+      const cached = addCustomerOptions.find((c) => c.id === customerId)
+      return cached ?? null
+    }
     const { data } = await supabase
       .from("customers")
-      .select("id, display_name, customer_identifiers(type, value, is_primary)")
+      .select("id, display_name, metadata, customer_identifiers(type, value, is_primary)")
       .eq("id", customerId)
       .maybeSingle()
     if (!data) return null
@@ -3716,12 +3731,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       ids?.find((x) => x.type === "phone")?.value?.trim() ||
       ""
     return {
-      id: customerId,
       display_name: String((data as { display_name?: string | null }).display_name ?? "").trim() || "Customer",
       email,
       phone,
-      service_address: "",
-    } as CustomerReceiptPickerRow
+      metadata: (data as { metadata?: unknown }).metadata,
+    }
   }
 
   async function sendCustomerAppointmentNotify(input: {
@@ -3820,7 +3834,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     }
     if (input.notifySms) {
       if (!cust.phone?.trim()) errs.push("No customer phone on file.")
-      else {
+      else if (!customerHasSmsConsent(cust.metadata)) {
+        errs.push(
+          "SMS opt-in is not recorded for this customer. Open the customer profile, complete SMS consent, then try again.",
+        )
+      } else {
         const res = await postOutbound("sms", {
           userId: input.ownerUserId,
           customerId: input.customerId,
@@ -4671,7 +4689,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                 roster={
                   scopeCtx?.clients?.length
                     ? scopeCtx.clients
-                    : [{ userId: authUserId, label: "My account", email: authUser?.email ?? null, clientId: null, isSelf: true }]
+                    : [{ userId, label: "My account", email: authUser?.email ?? null, clientId: null, isSelf: true }]
                 }
                 managedOnly={(scopeCtx?.clients ?? []).filter((c) => !c.isSelf)}
                 variant="time_clock_only"
@@ -4686,7 +4704,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               roster={
                 scopeCtx?.clients?.length
                   ? scopeCtx.clients
-                  : [{ userId: authUserId, label: "My account", email: authUser?.email ?? null, clientId: null, isSelf: true }]
+                  : [{ userId, label: "My account", email: authUser?.email ?? null, clientId: null, isSelf: true }]
               }
               managedOnly={(scopeCtx?.clients ?? []).filter((c) => !c.isSelf)}
               onOpenTimeClockWorkspace={() => setCalendarSuite({ id: "time_clock" })}

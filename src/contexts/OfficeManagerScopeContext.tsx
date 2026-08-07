@@ -34,16 +34,18 @@ export function OfficeManagerScopeProvider({ children }: { children: ReactNode }
 export function useOfficeManagerScopeOptional(): OfficeScopeValue | null {
   const pv = usePortalViewOptional()
   if (!pv) return null
+  const rosterSource =
+    pv.viewingOtherProfile && pv.orgScopedUsers.length > 0 ? pv.orgScopedUsers : pv.manageableUsers
   const clients = useMemo(
     () =>
-      pv.manageableUsers.map((u) => ({
+      rosterSource.map((u) => ({
         userId: u.userId,
         label: u.label,
         email: u.email,
         clientId: u.clientId,
         isSelf: u.isSelf,
       })),
-    [pv.manageableUsers],
+    [rosterSource],
   )
   return {
     clients,

@@ -36,8 +36,6 @@ import { resolveEstimatePrimaryDeliveryAction, inferWorkflowStepIntention, opera
 import { mergeCustomerWorkflowMeta, snapshotFromQuoteWorkflow } from "../../lib/customerWorkflowRouting"
 import { loadLinkableOrgUsers, type LinkableOrgUser } from "../../lib/orgChartMembers"
 import { sandboxTrainingAlert, useSandboxTrainingMode } from "../../lib/sandboxTrainingUi"
-import { useViewingOtherProfile } from "../../contexts/PortalViewContext"
-import PortalViewCommsHiddenNotice from "../../components/PortalViewCommsHiddenNotice"
 import { useAuth } from "../../contexts/AuthContext"
 import { useGlobalAssistantOptional } from "../../contexts/GlobalAssistantContext"
 import { useJobTypesModalOptional, type OpenJobTypesModalOptions } from "../../contexts/JobTypesModalContext"
@@ -505,7 +503,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const portalConfig = usePortalConfigForPage()
   const sandboxTraining = useSandboxTrainingMode()
-  const viewingOtherProfile = useViewingOtherProfile()
   const [showSettings, setShowSettings] = useState(false)
   const [settingsFormValues, setSettingsFormValues] = useState<Record<string, string>>({})
   const [showEstimateTemplateModal, setShowEstimateTemplateModal] = useState(false)
@@ -6630,9 +6627,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                 marginBottom: 4,
                               }}
                             >
-                              {viewingOtherProfile ? (
-                                <PortalViewCommsHiddenNotice label="customer messages" />
-                              ) : quoteActivityFiltered.length === 0 ? (
+                              {quoteActivityFiltered.length === 0 ? (
                                 <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.5 }}>
                                   No messages or communication events for this customer yet. Voicemails and inbound messages appear here when logged for this contact.
                                 </p>

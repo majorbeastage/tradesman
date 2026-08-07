@@ -13,7 +13,8 @@ import { clampAppointmentDurationMinutes, readCalendarWorkingHoursFromStorage } 
 import { findCalendarScheduleConflicts, readCalendarNoDuplicateTimesSetting } from "./calendarOverlap"
 import { refreshCustomerPipelineOnEngagement } from "./customerPipelineStatus"
 import { autoAdvanceCustomerWorkflow } from "./customerWorkflowAutoComplete"
-import { mergeCalendarAssigneeMetadata, resolveCalendarAssigneeForSave, type CalendarAssigneeResolution } from "./calendarAssignee"
+import { mergeCalendarAssigneeMetadata, resolveCalendarAssigneeForSave, resolveCalendarEventOwnerUserId, type CalendarAssigneeResolution } from "./calendarAssignee"
+import { resolveAccountStructureOwnerId } from "./accountStructureOwner"
 import type { PortalSettingItem } from "../types/portal-builder"
 
 export type ScheduleEstimateOnCalendarInput = {
@@ -31,6 +32,8 @@ export type ScheduleEstimateOnCalendarInput = {
   mileageMiles: number | null
   targetUserId: string
   assignToScopedUser: boolean
+  /** Account owner for org calendar rows (team members schedule on owner calendar). */
+  accountOwnerUserId?: string | null
   quoteItems: Array<{ description?: string; item_description?: string; name?: string }>
   jobTypes: Array<{
     id: string
@@ -122,11 +125,18 @@ export async function scheduleEstimateOnCalendar(
   const newRanges = starts.map((s) => ({ s, e: new Date(s.getTime() + durationMs) }))
 
   const noDup = readCalendarNoDuplicateTimesSetting()
+  const accountOwner =
+    input.accountOwnerUserId?.trim() ||
+    (await resolveAccountStructureOwnerId(input.supabase, input.userId))
+  const eventOwnerUserId = resolveCalendarEventOwnerUserId(
+    input.userId,
+    input.authUserId,
+    accountOwner,
+  )
   const assigneePick = input.assignToScopedUser
     ? input.targetUserId || input.userId
-    : input.authUserId || input.userId
-  const assignee = resolveCalendarAssigneeForSave(assigneePick, input.authUserId)
-  const eventOwnerUserId = assignee.dbUserId
+    : eventOwnerUserId
+  const assignee = resolveCalendarAssigneeForSave(assigneePick, input.authUserId, eventOwnerUserId)
   if (noDup && newRanges.length > 0) {
     try {
       const conflicts = await findCalendarScheduleConflicts(input.supabase, {

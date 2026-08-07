@@ -230,10 +230,10 @@ export default function PortalViewBar() {
       ) : null}
       {!loadingPortalConfig && selectedUser && selectedUser.userId !== authUserId ? (
         <span style={{ fontSize: 12, opacity: 0.8, flex: "1 1 200px" }}>
-          Tabs, customers, team, and settings match <strong>{selectedUser.label}</strong>&apos;s account.
+          Tabs, customers, team, calendar, and settings match <strong>{selectedUser.label}</strong>&apos;s account.
           {editMode
-            ? " Edit mode: your changes save to their account. Their emails, texts, and calls stay hidden."
-            : " View only — same layout they see when signed in. Their emails, texts, and calls stay hidden."}
+            ? " Edit mode: your changes save to their account."
+            : " View only — same layout and data they see when signed in."}
         </span>
       ) : null}
     </div>

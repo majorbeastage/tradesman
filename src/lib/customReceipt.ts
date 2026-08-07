@@ -4,6 +4,22 @@ import { bumpCustomerLastActivityAt } from "./customerSchedulingActivity"
 import { buildReceiptPdfBytes } from "./documentPdf"
 import { fetchQuoteLogoForExport, resolveReceiptTemplateLogoUrl } from "./quoteLogoImage"
 import { computeQuoteLineTotal, parseQuoteItemMetadata } from "./quoteItemMath"
+import { isCustomerArchivedForHub } from "./customerContactKind"
+
+function isSandboxSeedCustomer(metadata: unknown): boolean {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return false
+  return (metadata as Record<string, unknown>).sandbox_seed === true
+}
+
+/** Customers eligible for calendar / receipt pickers (excludes archived + sandbox seed demos). */
+export function isCustomerEligibleForSchedulePicker(customer: {
+  metadata?: unknown
+  job_pipeline_status?: string | null
+}): boolean {
+  if (isCustomerArchivedForHub(customer)) return false
+  if (isSandboxSeedCustomer(customer.metadata)) return false
+  return true
+}
 
 export type CustomReceiptLineItem = ReceiptAdditionalLine
 
@@ -392,12 +408,19 @@ export async function loadCustomersForCustomReceipt(
 ): Promise<CustomerReceiptPickerRow[]> {
   const { data, error } = await supabase
     .from("customers")
-    .select("id, display_name, service_address, customer_identifiers ( type, value )")
+    .select("id, display_name, service_address, job_pipeline_status, metadata, customer_identifiers ( type, value )")
     .eq("user_id", userId)
     .order("display_name", { ascending: true })
     .limit(500)
   if (error) throw error
-  return (data ?? []).map((row) => {
+  return (data ?? [])
+    .filter((row) =>
+      isCustomerEligibleForSchedulePicker({
+        metadata: (row as { metadata?: unknown }).metadata,
+        job_pipeline_status: (row as { job_pipeline_status?: string | null }).job_pipeline_status,
+      }),
+    )
+    .map((row) => {
     const ids = (row as { customer_identifiers?: Array<{ type?: string; value?: string | null }> }).customer_identifiers ?? []
     const phone = ids.find((i) => i.type === "phone")?.value?.trim() ?? ""
     const email = ids.find((i) => i.type === "email")?.value?.trim() ?? ""

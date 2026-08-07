@@ -1,4 +1,4 @@
-import { isSandboxDemoUserId } from "./sandboxDemoTeam"
+import { isSandboxDemoUserId, resolveSandboxDataUserId } from "./sandboxDemoTeam"
 
 /** Sandbox training: which demo persona owns this job (real user_id stays the signed-in account). */
 export const CALENDAR_ASSIGNED_DEMO_USER_KEY = "assigned_demo_user_id"
@@ -27,6 +27,25 @@ export function resolveCalendarAssigneeForSave(
     return { dbUserId: owner, assignedDemoUserId: trimmed, assignedUserId: null }
   }
   return { dbUserId: owner, assignedDemoUserId: null, assignedUserId: trimmed }
+}
+
+/**
+ * Calendar rows stay on the account owner; team members see jobs via metadata.assigned_user_id.
+ * View-as uses the preview target as owner (not the admin auth id).
+ */
+export function resolveCalendarEventOwnerUserId(
+  scopedUserId: string,
+  authUserId: string,
+  accountStructureOwnerId?: string | null,
+): string {
+  const auth = authUserId.trim()
+  const scoped = scopedUserId.trim()
+  if (!scoped) return auth
+  if (isSandboxDemoUserId(scoped)) return auth
+  const dataUser = resolveSandboxDataUserId(scoped, auth)
+  const owner = accountStructureOwnerId?.trim()
+  if (owner && dataUser !== owner && !isSandboxDemoUserId(dataUser)) return owner
+  return dataUser
 }
 
 export function readAssignedDemoUserId(metadata: unknown): string | null {
