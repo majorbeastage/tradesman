@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react"
 import { supabase } from "../lib/supabase"
-import { useAuth } from "../contexts/AuthContext"
-import { usePortalViewOptional } from "../contexts/PortalViewContext"
+import { usePortalViewOptional, useEffectiveUserId } from "../contexts/PortalViewContext"
 import { useManagedByOfficeManager } from "./useManagedByOfficeManager"
 import { isSandboxDemoUserId } from "../lib/sandboxDemoTeam"
 import { resolveDemoTeamPolicyFromOwnerMetadata } from "../lib/sandboxDemoTeamPolicies"
@@ -9,7 +8,7 @@ import { parseOmCalendarPolicy, OM_CALENDAR_POLICY_UPDATED_EVENT, type OmCalenda
 
 /** Managed user's `profiles.metadata.om_calendar_policy` (same source as Calendar tab). */
 export function useManagedOmCalendarPolicy(): OmCalendarPolicyV1 {
-  const { userId } = useAuth()
+  const userId = useEffectiveUserId()
   const managedByOfficeManager = useManagedByOfficeManager()
   const portalView = usePortalViewOptional()
   const viewAsDemoId =

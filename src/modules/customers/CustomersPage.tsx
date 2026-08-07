@@ -379,8 +379,7 @@ const CUSTOMER_LIST_COMPACT_DETAIL = true
 export default function CustomersPage({ setPage }: { setPage?: (page: string) => void } = {}) {
   const userId = useScopedUserId()
   const emailSig = useEmailComposeSignature(userId)
-  const { session, user } = useAuth()
-  const authUserId = user?.id ?? null
+  const { session } = useAuth()
   const { t } = useLocale()
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const portalConfig = usePortalConfigForPage()
@@ -1201,15 +1200,15 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   }, [])
 
   useEffect(() => {
-    if (!supabase || !authUserId) return
+    if (!supabase || !userId) return
     let cancelled = false
     void (async () => {
-      const ownerId = await resolveWorkflowMetadataUserId(supabase, authUserId)
+      const ownerId = await resolveWorkflowMetadataUserId(supabase, userId)
       const { data } = await supabase.from("profiles").select("metadata").eq("id", ownerId).maybeSingle()
       if (cancelled || !data?.metadata || typeof data.metadata !== "object" || Array.isArray(data.metadata)) return
       const meta = data.metadata as Record<string, unknown>
       setAccountProfileMetadata(meta)
-      if (ownerId === authUserId) {
+      if (ownerId === userId) {
         setQuickViewPrefs(parseCustomerQuickViewPrefs(meta))
         setQuickViewTabStyles(parseCustomerQuickViewTabStyles(meta))
         hydrateLeadFilterPrefsFromMetadata(meta)
@@ -1218,7 +1217,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     return () => {
       cancelled = true
     }
-  }, [authUserId, hydrateLeadFilterPrefsFromMetadata])
+  }, [userId, hydrateLeadFilterPrefsFromMetadata])
 
   useEffect(() => {
     if (!visibleQuickViewTabIds.includes(quickViewTab)) {
@@ -1229,11 +1228,11 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   useEffect(() => {
     const onMeta = (ev: Event) => {
       const detail = (ev as CustomEvent<ProfileMetadataAppliedDetail>).detail
-      if (!detail || !authUserId) return
-      void resolveWorkflowMetadataUserId(supabase!, authUserId).then((ownerId) => {
+      if (!detail || !userId) return
+      void resolveWorkflowMetadataUserId(supabase!, userId).then((ownerId) => {
         if (detail.userId !== ownerId) return
         setAccountProfileMetadata(detail.metadata)
-        if (ownerId === authUserId) {
+        if (ownerId === userId) {
           setQuickViewPrefs(parseCustomerQuickViewPrefs(detail.metadata))
           setQuickViewTabStyles(parseCustomerQuickViewTabStyles(detail.metadata))
           hydrateLeadFilterPrefsFromMetadata(detail.metadata)
@@ -1242,7 +1241,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     }
     window.addEventListener(PROFILE_METADATA_APPLIED_EVENT, onMeta)
     return () => window.removeEventListener(PROFILE_METADATA_APPLIED_EVENT, onMeta)
-  }, [authUserId, hydrateLeadFilterPrefsFromMetadata])
+  }, [userId, hydrateLeadFilterPrefsFromMetadata])
 
   useEffect(() => {
     void loadCustomers()

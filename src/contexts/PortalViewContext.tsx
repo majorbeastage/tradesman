@@ -32,7 +32,9 @@ import {
   parseSandboxDemoTeam,
   sandboxDemoMemberById,
   sandboxDemoTeamToManageableRows,
+  type SandboxDemoTeamMember,
 } from "../lib/sandboxDemoTeam"
+import { isSandboxProfile } from "../lib/sandboxEnvironment"
 
 const STORAGE_VIEW_ROLE = "tradesman_portal_view_role"
 const STORAGE_TARGET_USER = "tradesman_portal_target_user"
@@ -105,6 +107,48 @@ function writeStoredTargetUser(id: string | null): void {
   } catch {
     /* ignore */
   }
+}
+
+/** Profile row that owns sandbox demo personas for the current view-as selection. */
+function resolveDemoTeamSourceUserId(authUserId: string, targetUserId: string | null): string {
+  if (targetUserId && isSandboxDemoUserId(targetUserId)) return authUserId
+  if (
+    targetUserId &&
+    !isPortalViewDefaultTarget(targetUserId) &&
+    targetUserId !== authUserId
+  ) {
+    return targetUserId
+  }
+  return authUserId
+}
+
+async function loadSandboxDemoTeamForProfile(profileUserId: string): Promise<SandboxDemoTeamMember[]> {
+  if (!supabase || !profileUserId) return []
+  const { data } = await supabase
+    .from("profiles")
+    .select("portal_config, metadata, role")
+    .eq("id", profileUserId)
+    .maybeSingle()
+  const portalConfig =
+    data?.portal_config && typeof data.portal_config === "object" && !Array.isArray(data.portal_config)
+      ? (data.portal_config as PortalConfig)
+      : null
+  const metadata =
+    data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+      ? (data.metadata as Record<string, unknown>)
+      : null
+  if (!isSandboxProfile(portalConfig, metadata, data?.role)) return []
+  return parseSandboxDemoTeam(metadata?.sandbox_demo_team)
+}
+
+function appendSandboxDemoRows(
+  rows: ManageableUserRow[],
+  team: SandboxDemoTeamMember[],
+): ManageableUserRow[] {
+  if (!team.length) return rows
+  const ids = new Set(rows.map((r) => r.userId))
+  const demoRows = sandboxDemoTeamToManageableRows(team).filter((r) => !ids.has(r.userId))
+  return demoRows.length ? [...rows, ...demoRows] : rows
 }
 
 async function loadAdminAccountOwners(accessToken: string, cacheUserId: string): Promise<ManageableUserRow[]> {
@@ -366,7 +410,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
     }
     if (authRole === "admin" && !hasAccessToken) return
 
-    const loadKey = `${authUserId}:${authRole ?? ""}:${authPortalConfig?.sandbox_account ? "sandbox" : "live"}`
+    const loadKey = `${authUserId}:${authRole ?? ""}:${targetUserId ?? ""}`
     if (usersLoadKeyRef.current !== loadKey) {
       usersLoadedOnceRef.current = false
       usersLoadKeyRef.current = loadKey
@@ -391,28 +435,16 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
         const token = accessTokenRef.current
         let rows: ManageableUserRow[] = []
         if (authRole === "admin" && token) {
-          rows = await loadAdminOrgScopedUsers(authUserId, authUserId, token, selfRow)
+          rows = await loadAdminOrgScopedUsers(authUserId, targetUserId, token, selfRow)
         } else if (authRole === "corporate_management" || authRole === "office_manager") {
           rows = await loadManagedOrgUsers(authUserId)
         } else if (authRole) {
           rows = [selfRow]
         }
-        if (authPortalConfig?.sandbox_account === true && supabase) {
-          const { data: metaRow } = await supabase
-            .from("profiles")
-            .select("metadata")
-            .eq("id", authUserId)
-            .maybeSingle()
-          const meta =
-            metaRow?.metadata && typeof metaRow.metadata === "object" && !Array.isArray(metaRow.metadata)
-              ? (metaRow.metadata as Record<string, unknown>)
-              : {}
-          const team = parseSandboxDemoTeam(meta.sandbox_demo_team)
-          setSandboxDemoTeam(team)
-          rows = [...rows, ...sandboxDemoTeamToManageableRows(team)]
-        } else {
-          setSandboxDemoTeam(parseSandboxDemoTeam(null))
-        }
+        const demoSourceId = resolveDemoTeamSourceUserId(authUserId, targetUserId)
+        const team = await loadSandboxDemoTeamForProfile(demoSourceId)
+        setSandboxDemoTeam(team)
+        rows = appendSandboxDemoRows(rows, team)
         if (loadSeq !== usersLoadSeqRef.current) return
         setManageableUsers(rows)
         usersLoadedOnceRef.current = true
@@ -424,7 +456,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
         if (loadSeq === usersLoadSeqRef.current) setLoadingUsers(false)
       }
     })()
-  }, [authUserId, authRole, hasAccessToken, authPortalConfig?.sandbox_account])
+  }, [authUserId, authRole, hasAccessToken, targetUserId])
 
   // Admin: merge org roster when view-as target changes — without toggling loadingUsers (avoids bar loop).
   useEffect(() => {
@@ -453,7 +485,12 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
           adminSelfRowRef.current,
           orgOwnerId,
         )
-        if (!cancelled) setManageableUsers(rows)
+        const demoSourceId = resolveDemoTeamSourceUserId(authUserId, targetUserId)
+        const team = await loadSandboxDemoTeamForProfile(demoSourceId)
+        if (!cancelled) {
+          setSandboxDemoTeam(team)
+          setManageableUsers(appendSandboxDemoRows(rows, team))
+        }
       } catch {
         /* keep prior list */
       }
@@ -491,20 +528,10 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
           },
         ]
       }
-      if (authPortalConfig?.sandbox_account === true && supabase) {
-        const { data: metaRow } = await supabase
-          .from("profiles")
-          .select("metadata")
-          .eq("id", authUserId)
-          .maybeSingle()
-        const meta =
-          metaRow?.metadata && typeof metaRow.metadata === "object" && !Array.isArray(metaRow.metadata)
-            ? (metaRow.metadata as Record<string, unknown>)
-            : {}
-        const team = parseSandboxDemoTeam(meta.sandbox_demo_team)
-        setSandboxDemoTeam(team)
-        rows = [...rows, ...sandboxDemoTeamToManageableRows(team)]
-      }
+      const demoSourceId = resolveDemoTeamSourceUserId(authUserId, targetUserId)
+      const team = await loadSandboxDemoTeamForProfile(demoSourceId)
+      setSandboxDemoTeam(team)
+      rows = appendSandboxDemoRows(rows, team)
       setManageableUsers(rows)
       usersLoadedOnceRef.current = true
     } catch (e) {
@@ -512,7 +539,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
     } finally {
       if (loadSeq === usersLoadSeqRef.current) setLoadingUsers(false)
     }
-  }, [authUserId, authRole, authPortalConfig?.sandbox_account, targetUserId])
+  }, [authUserId, authRole, targetUserId, user?.email])
 
   useEffect(() => {
     if (!isSandboxDemoUserId(targetUserId)) return
@@ -736,4 +763,12 @@ export function useEffectiveClientId(): string {
     if (row?.clientId) return row.clientId
   }
   return clientId
+}
+
+/** Role used for tab visibility and permission UI while the view-as bar is active. */
+export function useEffectiveViewRole(): UserRole {
+  const { role } = useAuth()
+  const ctx = useContext(PortalViewContext)
+  if (ctx?.showViewBar) return ctx.viewRole
+  return role ?? "user"
 }

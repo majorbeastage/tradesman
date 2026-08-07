@@ -6,7 +6,7 @@ import CalendarTeamManagementPanel from "../calendar/CalendarTeamManagementPanel
 import { theme } from "../../styles/theme"
 import { useLocale } from "../../i18n/LocaleContext"
 import { useAuth } from "../../contexts/AuthContext"
-import { usePortalViewOptional } from "../../contexts/PortalViewContext"
+import { usePortalViewOptional, useEffectiveUserId, useEffectivePortalConfig, useEffectiveViewRole } from "../../contexts/PortalViewContext"
 import { isSandboxDemoUserId } from "../../lib/sandboxDemoTeam"
 import { useManagedByOfficeManager } from "../../hooks/useManagedByOfficeManager"
 import { useManagedOmCalendarPolicy } from "../../hooks/useManagedOmCalendarPolicy"
@@ -39,18 +39,20 @@ const subNavBtn = (active: boolean): CSSProperties => ({
 
 export default function OperationsPage({ setPage, initialTab = "work_orders" }: OperationsPageProps) {
   const { t } = useLocale()
-  const { portalConfig, user, role } = useAuth()
+  const { user } = useAuth()
+  const portalConfig = useEffectivePortalConfig()
   const scopeCtx = useOfficeManagerScopeOptional()
   const managedByOfficeManager = useManagedByOfficeManager()
   const omCalendarPolicy = useManagedOmCalendarPolicy()
   const portalView = usePortalViewOptional()
+  const effectiveUserId = useEffectiveUserId()
+  const effectiveViewRole = useEffectiveViewRole()
   const viewAsDemoUserId =
     portalView?.showViewBar && portalView.targetUserId && isSandboxDemoUserId(portalView.targetUserId)
       ? portalView.targetUserId
       : null
   const omPolicyNavContext = omCalendarPolicyNavContext(viewAsDemoUserId, managedByOfficeManager)
-  const isOfficeManagerOrAdmin = isOfficeManagerLikeRole(role)
-  const authUserId = user?.id ?? null
+  const isOfficeManagerOrAdmin = isOfficeManagerLikeRole(effectiveViewRole)
 
   const enabledTabs = useMemo(() => {
     const all: OperationsSubModuleId[] = ["work_orders", "purchase_orders", "invoicing", "inventory", "team_management"]
@@ -105,10 +107,10 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
   }
 
   const roster =
-    scopeCtx?.clients?.length && authUserId
+    scopeCtx?.clients?.length && effectiveUserId
       ? scopeCtx.clients
-      : authUserId
-        ? [{ userId: authUserId, label: "My account", email: user?.email ?? null, clientId: null, isSelf: true }]
+      : effectiveUserId
+        ? [{ userId: effectiveUserId, label: "My account", email: user?.email ?? null, clientId: null, isSelf: true }]
         : []
 
   return (
@@ -160,7 +162,7 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
 
       <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: 8 }}>
         {showDocumentSearch ? (
-          <OperationsDocumentSearchPanel userId={authUserId} setPage={setPage} />
+          <OperationsDocumentSearchPanel userId={effectiveUserId} setPage={setPage} />
         ) : showCustomReceipt ? (
           <CustomReceiptModal
             open
@@ -170,7 +172,7 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
               setCustomReceiptPrefillCustomerId(null)
             }}
             supabase={supabase}
-            userId={authUserId}
+            userId={effectiveUserId}
             initialCustomerId={customReceiptPrefillCustomerId}
           />
         ) : (
@@ -178,11 +180,11 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
             {activeTab === "work_orders" ? <WorkOrdersPage setPage={setPage} embedded /> : null}
             {activeTab === "purchase_orders" ? <PurchaseOrdersPage setPage={setPage} embedded /> : null}
             {activeTab === "inventory" ? <PartsInventoryPage setPage={setPage} embedded /> : null}
-            {activeTab === "invoicing" ? <InvoicesWorkspace supabase={supabase} userId={authUserId} setPage={setPage} /> : null}
-            {activeTab === "team_management" && authUserId ? (
+            {activeTab === "invoicing" ? <InvoicesWorkspace supabase={supabase} userId={effectiveUserId} setPage={setPage} /> : null}
+            {activeTab === "team_management" && effectiveUserId ? (
               <CalendarTeamManagementPanel
-                officeManagerUserId={authUserId}
-                viewerUserId={authUserId}
+                officeManagerUserId={effectiveUserId}
+                viewerUserId={effectiveUserId}
                 roster={roster}
                 managedOnly={(scopeCtx?.clients ?? []).filter((c) => !c.isSelf)}
                 onOpenTimeClockWorkspace={setPage ? () => setPage("calendar") : undefined}

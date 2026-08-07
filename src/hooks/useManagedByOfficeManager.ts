@@ -1,13 +1,12 @@
 import { useEffect, useState } from "react"
 import { supabase } from "../lib/supabase"
-import { useAuth } from "../contexts/AuthContext"
+import { useEffectiveUserId } from "../contexts/PortalViewContext"
 
 /**
- * True when the signed-in user appears as `user_id` in `office_manager_clients`.
- * Requires RLS policy "Managed users can read own office_manager link" (see supabase-office-manager-clients-managed-user-read.sql).
+ * True when the previewed (or signed-in) user appears as `user_id` in `office_manager_clients`.
  */
 export function useManagedByOfficeManager(): boolean {
-  const { userId } = useAuth()
+  const userId = useEffectiveUserId()
   const [managed, setManaged] = useState(false)
 
   useEffect(() => {

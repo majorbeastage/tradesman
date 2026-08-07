@@ -1,8 +1,8 @@
-import { useMemo } from "react"
-import { useAuth } from "../contexts/AuthContext"
-import { useEffectivePortalConfig } from "../contexts/PortalViewContext"
+import { useEffect, useMemo, useState } from "react"
+import { useEffectivePortalConfig, useEffectiveUserId, useEffectiveViewRole } from "../contexts/PortalViewContext"
 import { isSandboxProfile } from "./sandboxEnvironment"
 import type { PortalConfig } from "../types/portal-builder"
+import { supabase } from "./supabase"
 
 export function isSandboxTrainingMode(
   portalConfig?: PortalConfig | null,
@@ -12,11 +12,38 @@ export function isSandboxTrainingMode(
   return isSandboxProfile(portalConfig, metadata, role)
 }
 
-/** True when the signed-in workspace is the training sandbox. */
+/** True when the previewed workspace is the training sandbox. */
 export function useSandboxTrainingMode(): boolean {
-  const { role } = useAuth()
+  const effectiveUserId = useEffectiveUserId()
+  const viewRole = useEffectiveViewRole()
   const portalConfig = useEffectivePortalConfig()
-  return useMemo(() => isSandboxTrainingMode(portalConfig, null, role), [portalConfig, role])
+  const [metadata, setMetadata] = useState<Record<string, unknown> | null>(null)
+
+  useEffect(() => {
+    if (!supabase || !effectiveUserId) {
+      setMetadata(null)
+      return
+    }
+    let cancelled = false
+    void supabase
+      .from("profiles")
+      .select("metadata")
+      .eq("id", effectiveUserId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return
+        const meta = data?.metadata
+        setMetadata(meta && typeof meta === "object" && !Array.isArray(meta) ? (meta as Record<string, unknown>) : null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [effectiveUserId])
+
+  return useMemo(
+    () => isSandboxTrainingMode(portalConfig, metadata, viewRole),
+    [portalConfig, metadata, viewRole],
+  )
 }
 
 export function isDemoUuidDbError(message: string | null | undefined): boolean {

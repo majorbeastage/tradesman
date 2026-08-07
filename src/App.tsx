@@ -83,7 +83,7 @@ import { formatPortalTabLabel } from "./i18n/navLabel"
 import { PRODUCT_PACKAGE_IDS, SIGNUP_OPEN_PRODUCT_ADVISOR_KEY, SIGNUP_PRODUCT_PACKAGE_STORAGE_KEY, type ProductPackageId } from "./lib/productPackages"
 import { normalizePasswordRecoveryUrlInBrowser } from "./lib/authRedirectBase"
 import { theme } from "./styles/theme"
-import { useEffectivePortalConfig, useEffectiveUserId, useEffectiveClientId, PortalViewProvider } from "./contexts/PortalViewContext"
+import { useEffectivePortalConfig, useEffectiveUserId, useEffectiveClientId, useEffectiveViewRole, PortalViewProvider } from "./contexts/PortalViewContext"
 import { AppSchemeProvider } from "./contexts/AppSchemeContext"
 import type { PortalShell } from "./lib/portalViewRules"
 import { AppNavigationProvider, useAppNavigation } from "./contexts/AppNavigationContext"
@@ -305,6 +305,7 @@ function MainAppInner() {
   const { role: authRole, user } = useAuth()
   const effectiveUserId = useEffectiveUserId()
   const effectiveClientId = useEffectiveClientId()
+  const effectiveViewRole = useEffectiveViewRole()
   const portalConfig = useEffectivePortalConfig()
   const { tabs: portalTabsFromApi } = usePortalTabs(effectiveClientId, "user")
   const managedByOfficeManager = useManagedByOfficeManager()
@@ -430,7 +431,7 @@ function MainAppInner() {
   const [setupGuideOpen, setSetupGuideOpen] = useState(false)
 
   useEffect(() => {
-    if (!user?.id || !supabase) {
+    if (!effectiveUserId || !supabase) {
       setProfileMetadata({})
       return
     }
@@ -438,7 +439,7 @@ function MainAppInner() {
     void supabase
       .from("profiles")
       .select("metadata")
-      .eq("id", user.id)
+      .eq("id", effectiveUserId)
       .maybeSingle()
       .then(({ data }) => {
         if (cancelled) return
@@ -448,7 +449,7 @@ function MainAppInner() {
     return () => {
       cancelled = true
     }
-  }, [user?.id])
+  }, [effectiveUserId])
 
   return (
     <JobTypesModalProvider>
@@ -465,10 +466,10 @@ function MainAppInner() {
       onMetadataPatch={setProfileMetadata}
       platform="user"
       availableTabIds={portalTabs.map((t) => t.tab_id)}
-      isAdmin={authRole === "admin"}
+      isAdmin={authRole === "admin" && effectiveUserId === user?.id}
       currentPage={page}
       portalConfig={portalConfig}
-      accountRole={authRole}
+      accountRole={effectiveViewRole}
     >
     <RegisterSetupGuideOpener onOpen={() => setSetupGuideOpen(true)} />
     <SetupGuideModal

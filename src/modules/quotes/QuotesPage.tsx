@@ -733,14 +733,14 @@ export default function QuotesPage(_props: QuotesPageProps) {
   }, [scopeCtx?.clients, userId])
 
   useEffect(() => {
-    if (!supabase || !authUserId) {
+    if (!supabase || !userId) {
       setAccountWorkflowBundle(null)
       setLinkableOrgUsers([])
       return
     }
     let cancelled = false
     void (async () => {
-      const ownerId = resolveSandboxDataUserId(authUserId, authUserId)
+      const ownerId = resolveSandboxDataUserId(userId, authUserId)
       const { data } = await supabase.from("profiles").select("metadata, role").eq("id", ownerId).maybeSingle()
       if (cancelled) return
       let meta =
@@ -768,11 +768,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
     return () => {
       cancelled = true
     }
-  }, [supabase, authUserId, sandboxTraining])
+  }, [supabase, userId, authUserId, sandboxTraining])
 
   useEffect(() => {
-    if (!authUserId) return
-    const ownerId = resolveSandboxDataUserId(authUserId, authUserId)
+    if (!userId) return
+    const ownerId = resolveSandboxDataUserId(userId, authUserId)
     const onMeta = (ev: Event) => {
       const detail = (ev as CustomEvent<ProfileMetadataAppliedDetail>).detail
       if (!detail || detail.userId !== ownerId) return
@@ -781,7 +781,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
     }
     window.addEventListener(PROFILE_METADATA_APPLIED_EVENT, onMeta)
     return () => window.removeEventListener(PROFILE_METADATA_APPLIED_EVENT, onMeta)
-  }, [authUserId])
+  }, [userId, authUserId])
 
   const quoteInternalWorkflowState = useMemo((): QuoteInternalWorkflowState => {
     return parseQuoteInternalWorkflow(selectedQuote?.metadata)
@@ -819,11 +819,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
     return filterWorkflowActionsForUser(raw, {
       workflow: accountWorkflowBundle.workflow,
       state: quoteInternalWorkflowState,
-      userId: authUserId ?? userId,
+      userId,
       profileRole,
       canBypassApprovals: sandboxTraining || canBypassEstimateApprovals(profileRole, profileMetadata),
     })
-  }, [accountWorkflowBundle, linkableOrgUsers, quoteInternalWorkflowState, selectedQuoteItems.length, sandboxTraining, profileRole, profileMetadata, authUserId, userId])
+  }, [accountWorkflowBundle, linkableOrgUsers, quoteInternalWorkflowState, selectedQuoteItems.length, sandboxTraining, profileRole, profileMetadata, userId])
 
   const estimateParallelHandoffs = useMemo((): WorkflowActionButton[] => {
     if (!accountWorkflowBundle) return []
