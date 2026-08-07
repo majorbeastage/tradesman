@@ -5,6 +5,7 @@ import { resolveOrgRosterOwnerId } from "./accountStructureOwner"
 import { resolveInternalMemberLabel } from "./profileContactMeta"
 import { roleFromProfileRow, type ManageableUserRow } from "./portalViewRules"
 import { isProductionLinkableProfile } from "./productionOrgMembers"
+import { loadTeamMembersBundle } from "./teamMembers"
 
 export type OrgRosterEntry = {
   userId: string
@@ -84,6 +85,60 @@ export async function loadOrgManageableUserRows(
   }
 
   return rows
+}
+
+/** Admin view-as / server-backed roster — includes invite shells RLS may hide from the browser client. */
+export async function loadOrgManageableUserRowsForViewAs(
+  supabase: SupabaseClient,
+  accountOwnerId: string,
+  opts?: { markSelfUserId?: string | null; accessToken?: string | null },
+): Promise<ManageableUserRow[]> {
+  const ownerId = accountOwnerId.trim()
+  if (!ownerId) return []
+  const markSelf = opts?.markSelfUserId?.trim() || null
+
+  if (opts?.accessToken) {
+    try {
+      const bundle = await loadTeamMembersBundle(
+        supabase,
+        ownerId,
+        opts.accessToken,
+        markSelf ?? undefined,
+      )
+      const rows: ManageableUserRow[] = []
+      const { data: ownerProf } = await supabase
+        .from("profiles")
+        .select("id, display_name, email, role, client_id")
+        .eq("id", ownerId)
+        .maybeSingle()
+      if (ownerProf) {
+        rows.push({
+          userId: ownerId,
+          label: resolveInternalMemberLabel(ownerProf),
+          email: ownerProf.email ?? null,
+          role: roleFromProfileRow(ownerProf.role),
+          clientId: ownerProf.client_id ?? null,
+          isSelf: markSelf ? ownerId === markSelf : false,
+        })
+      }
+      for (const member of bundle.activeMembers) {
+        if (!member.profileId || member.profileId === ownerId) continue
+        rows.push({
+          userId: member.profileId,
+          label: member.displayName,
+          email: member.email,
+          role: roleFromProfileRow(member.role),
+          clientId: null,
+          isSelf: markSelf ? member.profileId === markSelf : false,
+        })
+      }
+      if (rows.length > 0) return rows
+    } catch {
+      /* fall through to direct DB reads */
+    }
+  }
+
+  return loadOrgManageableUserRows(supabase, ownerId, { markSelfUserId: markSelf })
 }
 
 /** Owner + linked team members for one organization (no cross-org, no platform ops fallback). */

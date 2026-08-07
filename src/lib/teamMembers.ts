@@ -208,9 +208,11 @@ export async function loadTeamMembersBundle(
   client: SupabaseClient,
   accountOwnerId: string,
   accessToken: string | null,
+  actorUserId?: string | null,
 ): Promise<TeamMembersLoadResult> {
   if (accessToken) {
     const origins = [typeof window !== "undefined" ? window.location.origin : ""].filter(Boolean)
+    const authUserId = (actorUserId ?? accountOwnerId).trim()
     for (const origin of origins) {
       try {
         const res = await fetch(`${origin}/api/team-members?__action=load`, {
@@ -219,7 +221,7 @@ export async function loadTeamMembersBundle(
             "Content-Type": "application/json",
             Authorization: `Bearer ${accessToken}`,
           },
-          body: JSON.stringify({ userId: accountOwnerId, accountOwnerId }),
+          body: JSON.stringify({ userId: authUserId, accountOwnerId }),
         })
         const data = (await res.json().catch(() => ({}))) as {
           error?: string

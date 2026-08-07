@@ -38,7 +38,8 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
   SELECT
-    p_owner_id IS NOT NULL
+    NOT public.is_admin()
+    AND p_owner_id IS NOT NULL
     AND public.get_account_owner_id_for_auth_user() = p_owner_id;
 $$;
 

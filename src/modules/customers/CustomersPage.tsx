@@ -804,6 +804,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       if (!supabase) setLoadError("Supabase not configured.")
       return
     }
+    const client = supabase
     setLoadError("")
 
     const activeIds = new Set<string>()
@@ -952,12 +953,14 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       `
     let customers: CustomerRow[] | null = null
     let error: { message: string } | null = null
+    const selectCustomersByIds = (selectStr: string) =>
+      client.from("customers").select(selectStr).eq("user_id", userId).in("id", idList)
     {
-      const r0 = await supabase.from("customers").select(fullSelectPipeline).in("id", idList)
+      const r0 = await selectCustomersByIds(fullSelectPipeline)
       error = r0.error
       customers = (r0.data as CustomerRow[] | null) ?? null
       if (error && String(error.message || "").toLowerCase().includes("fit_")) {
-        const r1 = await supabase.from("customers").select(fullSelectPipelineNoFit).in("id", idList)
+        const r1 = await selectCustomersByIds(fullSelectPipelineNoFit)
         error = r1.error
         customers = (r1.data as CustomerRow[] | null) ?? null
         if (!error) {
@@ -965,7 +968,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         }
       }
       if (error && String(error.message || "").includes("communication_urgency")) {
-        const rU = await supabase.from("customers").select(fullSelectPipelineNoUrgency).in("id", idList)
+        const rU = await selectCustomersByIds(fullSelectPipelineNoUrgency)
         error = rU.error
         customers = (rU.data as CustomerRow[] | null) ?? null
         if (!error) {
@@ -974,16 +977,16 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       }
       if (error && String(error.message || "").toLowerCase().includes("metadata")) {
         const stripMeta = (s: string) => s.replace(/\s*metadata,\s*/g, "")
-        const rM = await supabase.from("customers").select(stripMeta(fullSelectPipeline)).in("id", idList)
+        const rM = await selectCustomersByIds(stripMeta(fullSelectPipeline))
         error = rM.error
         customers = (rM.data as CustomerRow[] | null) ?? null
         if (error && String(error.message || "").toLowerCase().includes("fit_")) {
-          const rM2 = await supabase.from("customers").select(stripMeta(fullSelectPipelineNoFit)).in("id", idList)
+          const rM2 = await selectCustomersByIds(stripMeta(fullSelectPipelineNoFit))
           error = rM2.error
           customers = (rM2.data as CustomerRow[] | null) ?? null
         }
         if (error) {
-          const rM3 = await supabase.from("customers").select(fullSelectLegacy).in("id", idList)
+          const rM3 = await selectCustomersByIds(fullSelectLegacy)
           error = rM3.error
           customers = (rM3.data as CustomerRow[] | null) ?? null
         }
@@ -993,9 +996,9 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       }
     }
     if (error && (error.message.includes("best_contact") || error.message.includes("job_pipeline") || error.message.includes("last_activity"))) {
-      const r2 = await supabase.from("customers").select(fullSelectLegacy).in("id", idList)
+      const r2 = await selectCustomersByIds(fullSelectLegacy)
       if (!r2.error) {
-        customers = (r2.data as CustomerRow[] | null) ?? null
+        customers = (r2.data as unknown as CustomerRow[] | null) ?? null
         error = null
         setLoadError("Run supabase/customers-pipeline-columns.sql to enable Best contact, Job status, and Last update columns.")
       }

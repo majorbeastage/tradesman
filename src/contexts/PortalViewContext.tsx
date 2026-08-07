@@ -26,7 +26,7 @@ import {
 } from "../lib/portalViewRules"
 import { resolveInternalMemberLabel } from "../lib/profileContactMeta"
 import { resolveOrgRosterOwnerId } from "../lib/accountStructureOwner"
-import { loadOrgManageableUserRows } from "../lib/orgRoster"
+import { loadOrgManageableUserRows, loadOrgManageableUserRowsForViewAs } from "../lib/orgRoster"
 import { isOfficeManagerAssignmentRole } from "../lib/profileRoles"
 import {
   isSandboxDemoUserId,
@@ -271,7 +271,10 @@ async function loadAdminOrgScopedUsers(
   }
 
   if (orgOwnerId && supabase) {
-    const orgRows = await loadManagedOrgUsers(orgOwnerId)
+    const orgRows = await loadOrgManageableUserRowsForViewAs(supabase, orgOwnerId, {
+      markSelfUserId: authUserId,
+      accessToken,
+    })
     const orgIds = new Set(orgRows.map((r) => r.userId))
     const switchTargets = accountOwners.filter((o) => !orgIds.has(o.userId))
     return { rows: withSelf([
@@ -568,16 +571,26 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
   }, [targetUserId, manageableUsers, viewRole, viewRoleOptions])
 
   const usersForCurrentViewRole = useMemo(() => {
-    if (authRole === "admin" && viewingOtherProfile && orgScopedUsers.length > 0) {
+    if (authRole === "admin" && viewingOtherProfile) {
       const switchOwners = manageableUsers.filter(
         (u) =>
           (isOfficeManagerAssignmentRole(u.role) || u.role === "corporate_management") &&
           !orgScopedUsers.some((o) => o.userId === u.userId),
       )
-      return [...orgScopedUsers, ...switchOwners]
+      if (orgScopedUsers.length > 0) {
+        return [...orgScopedUsers, ...switchOwners]
+      }
+      const selected =
+        targetUserId && !isPortalViewDefaultTarget(targetUserId)
+          ? manageableUsers.find((u) => u.userId === targetUserId)
+          : null
+      if (selected) {
+        return [selected, ...switchOwners.filter((u) => u.userId !== selected.userId)]
+      }
+      return switchOwners
     }
     return filterUsersForViewRole(manageableUsers, viewRole)
-  }, [authRole, viewingOtherProfile, orgScopedUsers, manageableUsers, viewRole])
+  }, [authRole, viewingOtherProfile, orgScopedUsers, manageableUsers, viewRole, targetUserId])
 
   useEffect(() => {
     if (loadingUsers) return
