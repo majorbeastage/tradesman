@@ -185,6 +185,7 @@ import {
   queueWorkOrdersHighlightQuote,
   queuePurchaseOrdersHighlightQuote,
   queuePaymentsCollectPrefill,
+  queueInvoicesPrefill,
   queueSchedulingCustomerPrefill,
 } from "../../lib/workflowNavigation"
 import { queueCustomerProfile } from "../../lib/customerNavigation"
@@ -4259,6 +4260,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
             ? meta.title
             : "Estimate"
       const total = totalFromQuoteItemRows(selectedQuoteItems)
+      queueInvoicesPrefill({
+        customerId: selectedQuote.customer_id,
+        quoteId: selectedQuote.id,
+      })
       queuePaymentsCollectPrefill({
         customerId: selectedQuote.customer_id,
         quoteId: selectedQuote.id,
@@ -4269,7 +4274,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
       try {
         const next = applyMarkApproved(quoteInternalWorkflowState, node, authUserId ?? userId)
         await persistQuoteInternalWorkflowState(next)
-        setPage?.("payments")
+        setPage?.("operations-invoicing")
       } finally {
         setWorkflowActionBusy(false)
       }

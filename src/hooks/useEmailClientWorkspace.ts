@@ -6,11 +6,11 @@ import {
   type EmailClientInboxOption,
   type EmailClientWorkspaceV1,
 } from "../lib/emailClientWorkspace"
+import { fetchFreshProfileMetadata } from "../lib/profileContactMeta"
 import { syncOutOfOfficeToCalendar } from "../lib/workforceCalendarSync"
 
 export function useEmailClientWorkspace(userId: string | null | undefined) {
   const [workspace, setWorkspace] = useState<EmailClientWorkspaceV1>(() => parseEmailClientWorkspace(null))
-  const [metadata, setMetadata] = useState<Record<string, unknown>>({})
   const [orgInboxes, setOrgInboxes] = useState<EmailClientInboxOption[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -36,7 +36,6 @@ export function useEmailClientWorkspace(userId: string | null | undefined) {
         profile?.metadata && typeof profile.metadata === "object" && !Array.isArray(profile.metadata)
           ? (profile.metadata as Record<string, unknown>)
           : {}
-      setMetadata(meta)
       setWorkspace(parseEmailClientWorkspace(meta))
       const inboxes: EmailClientInboxOption[] = []
       for (const row of routes ?? []) {
@@ -59,7 +58,8 @@ export function useEmailClientWorkspace(userId: string | null | undefined) {
     async (patch: Partial<EmailClientWorkspaceV1>) => {
       if (!userId || !supabase) return
       setSaving(true)
-      const nextMeta = mergeEmailClientWorkspace(metadata, patch)
+      const freshMeta = await fetchFreshProfileMetadata(supabase, userId)
+      const nextMeta = mergeEmailClientWorkspace(freshMeta, patch)
       let nextWs = parseEmailClientWorkspace(nextMeta)
 
       if (patch.outOfOffice && supabase) {
@@ -75,7 +75,6 @@ export function useEmailClientWorkspace(userId: string | null | undefined) {
             outOfOffice: { ...nextWs.outOfOffice, calendarEventId: eventId },
           })
           nextWs = parseEmailClientWorkspace(withCal)
-          setMetadata(withCal)
           setWorkspace(nextWs)
           const { error } = await supabase.from("profiles").update({ metadata: withCal }).eq("id", userId)
           setSaving(false)
@@ -84,13 +83,12 @@ export function useEmailClientWorkspace(userId: string | null | undefined) {
         }
       }
 
-      setMetadata(nextMeta)
       setWorkspace(nextWs)
       const { error } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", userId)
       setSaving(false)
       if (error) throw new Error(error.message)
     },
-    [metadata, userId],
+    [userId],
   )
 
   return { workspace, orgInboxes, loading, saving, saveWorkspacePatch, setWorkspace }

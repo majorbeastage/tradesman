@@ -106,3 +106,27 @@ export async function uploadEntityAttachmentFile(params: {
   if (!data?.publicUrl) return null
   return { public_url: data.publicUrl, storage_path: path }
 }
+
+export async function uploadInvoiceAttachmentFile(params: {
+  userId: string
+  invoiceId: string
+  file: File
+}): Promise<{ public_url: string; storage_path: string } | null> {
+  if (!supabase) return null
+  const { userId, invoiceId, file } = params
+  if (!invoiceId.trim()) return null
+  const normalized = normalizeEntityAttachmentFile(file)
+  const name = normalized.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80)
+  const path = `${userId}/invoices/${invoiceId}/${crypto.randomUUID()}-${name}`
+  const { error } = await supabase.storage.from(BUCKET).upload(path, normalized, {
+    upsert: false,
+    contentType: normalized.type || "application/octet-stream",
+  })
+  if (error) {
+    console.error("[uploadInvoiceAttachment]", error.message, { path, contentType: normalized.type, size: normalized.size })
+    return null
+  }
+  const { data } = supabase.storage.from(BUCKET).getPublicUrl(path)
+  if (!data?.publicUrl) return null
+  return { public_url: data.publicUrl, storage_path: path }
+}

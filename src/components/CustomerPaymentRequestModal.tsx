@@ -23,6 +23,7 @@ import { useAuth } from "../contexts/AuthContext"
 import { getFreshAccessToken } from "../lib/authPlatformApi"
 import { outboundMessagesJsonBody } from "../lib/platformToolsJsonBody"
 import { supabase as defaultSupabase } from "../lib/supabase"
+import { openInvoicesWorkspace } from "../lib/workflowNavigation"
 
 export type CustomerPaymentRequestModalProps = {
   open: boolean
@@ -384,6 +385,30 @@ export default function CustomerPaymentRequestModal({
               Build a payment message from your saved pay links (Payments → Send Payment Information to Customer), then send
               by email or SMS, or copy to paste manually.
             </p>
+            {customerId ? (
+              <button
+                type="button"
+                onClick={() =>
+                  openInvoicesWorkspace({
+                    customerId,
+                    quoteId: pickedQuoteId || quoteOptions?.[0]?.quoteId || undefined,
+                  })
+                }
+                style={{
+                  marginTop: 8,
+                  padding: "6px 10px",
+                  borderRadius: 6,
+                  border: `1px solid ${theme.primary}`,
+                  background: "#fff",
+                  color: theme.primary,
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: "pointer",
+                }}
+              >
+                Build itemized invoice (Operations)
+              </button>
+            ) : null}
           </div>
           <button
             type="button"

@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react"
 import defaultLogo from "../assets/logo.png"
 import { supabase } from "../lib/supabase"
+import { fetchFreshProfileMetadata } from "../lib/profileContactMeta"
 import {
   APP_SCHEME_META_KEY,
   customSchemeCssVars,
@@ -34,7 +35,6 @@ export function AppSchemeProvider({
   children: ReactNode
 }) {
   const [scheme, setScheme] = useState<AppSchemeV1>(() => defaultAppSchemeV1())
-  const [metadata, setMetadata] = useState<Record<string, unknown>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
@@ -58,7 +58,6 @@ export function AppSchemeProvider({
             data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
               ? (data.metadata as Record<string, unknown>)
               : {}
-          setMetadata(meta)
           setScheme(parseAppSchemeV1(meta))
         }),
     ).finally(() => {
@@ -73,14 +72,14 @@ export function AppSchemeProvider({
     async (next: AppSchemeV1) => {
       if (!profileUserId || !supabase) return
       setSaving(true)
-      const nextMeta = mergeAppSchemeV1(metadata, next)
-      setMetadata(nextMeta)
+      const freshMeta = await fetchFreshProfileMetadata(supabase, profileUserId)
+      const nextMeta = mergeAppSchemeV1(freshMeta, next)
       setScheme(parseAppSchemeV1(nextMeta))
       const { error } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", profileUserId)
       setSaving(false)
       if (error) console.warn("[AppScheme]", error.message)
     },
-    [metadata, profileUserId],
+    [profileUserId],
   )
 
   const setSchemeId = useCallback(

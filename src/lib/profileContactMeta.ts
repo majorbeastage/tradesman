@@ -1,3 +1,5 @@
+import type { SupabaseClient } from "@supabase/supabase-js"
+
 export const PROFILE_CONTACT_META_KEYS = {
   firstName: "contact_first_name",
   lastName: "contact_last_name",
@@ -46,6 +48,14 @@ export function mergeProfileContactMetadata(
     else delete next[PROFILE_CONTACT_META_KEYS.companyLogoUrl]
   }
   return next
+}
+
+/** Re-read profiles.metadata before any merge/write so parallel saves (photos, app scheme) are not wiped. */
+export async function fetchFreshProfileMetadata(client: SupabaseClient, userId: string): Promise<Record<string, unknown>> {
+  const { data } = await client.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+  return data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+    ? { ...(data.metadata as Record<string, unknown>) }
+    : {}
 }
 
 export function formatPersonName(firstName: string, lastName: string): string {

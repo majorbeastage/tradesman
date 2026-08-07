@@ -344,6 +344,7 @@ export function AccountProfilePanel({
   const [serviceCityInput, setServiceCityInput] = useState("")
   const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null)
   const [companyLogoUrl, setCompanyLogoUrl] = useState<string | null>(null)
+  const [profileContactLoaded, setProfileContactLoaded] = useState(false)
   const [uploadingCompanyLogo, setUploadingCompanyLogo] = useState(false)
   const [businessNameForSlug, setBusinessNameForSlug] = useState("")
   const [publicBusinessLine, setPublicBusinessLine] = useState<string | null>(null)
@@ -403,6 +404,7 @@ export function AccountProfilePanel({
   useEffect(() => {
     if (!supabase || !profileUserId) return
     setLoading(true)
+    setProfileContactLoaded(false)
     setError("")
     void (async () => {
       try {
@@ -477,6 +479,7 @@ export function AccountProfilePanel({
         })
         const line = await fetchUserPublicTwilioNumber(supabase, profileUserId)
         setPublicBusinessLine(line)
+        setProfileContactLoaded(true)
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))
         setPublicBusinessLine(null)
@@ -640,7 +643,7 @@ export function AccountProfilePanel({
       const nextMeta = mergeProfileContactMetadata(prevMeta, {
         firstName: form.first_name,
         lastName: form.last_name,
-        companyLogoUrl: companyLogoUrl,
+        ...(profileContactLoaded ? { companyLogoUrl } : {}),
       })
 
       const website_url = form.website_url.trim() ? normalizeUrl(form.website_url) : null

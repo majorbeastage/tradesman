@@ -18,7 +18,7 @@ import {
   type PaymentRequestRow,
   type PaymentSentVia,
 } from "../../lib/paymentRequests"
-import { consumePaymentsCollectPrefill } from "../../lib/workflowNavigation"
+import { consumePaymentsCollectPrefill, openInvoicesWorkspace } from "../../lib/workflowNavigation"
 import { PaymentRequestEditorModal } from "../../components/document-editors/PaymentRequestEditorModal"
 
 const inputStyle: React.CSSProperties = {
@@ -253,16 +253,30 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
             Create per-job payment links and send them by SMS or email. Your Helcim API token and hosted pay page are configured under Provider settings.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            setSettingsOpen((v) => !v)
-            onOpenProviderSettings?.()
-          }}
-          style={secondaryBtn}
-        >
-          Provider settings
-        </button>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <button
+            type="button"
+            onClick={() =>
+              openInvoicesWorkspace({
+                customerId: customerId || undefined,
+                quoteId: quoteId || undefined,
+              })
+            }
+            style={secondaryBtn}
+          >
+            Build itemized invoice
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSettingsOpen((v) => !v)
+              onOpenProviderSettings?.()
+            }}
+            style={secondaryBtn}
+          >
+            Provider settings
+          </button>
+        </div>
       </div>
 
       {providerStatus ? (

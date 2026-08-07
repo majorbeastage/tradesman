@@ -15,6 +15,7 @@ import ReportingPage from "./modules/reporting/ReportingPage"
 import BusinessWorkflowPage from "./modules/workflow/BusinessWorkflowPage"
 import OrganizationChartPage from "./modules/org-chart/OrganizationChartPage"
 import OperationsPage from "./modules/operations/OperationsPage"
+import { OPEN_INVOICES_EVENT } from "./lib/workflowNavigation"
 import GrowthPage from "./modules/growth/GrowthPage"
 import MarketingHomePage from "./modules/home/MarketingHomePage"
 import MarketingHomePreviewPage from "./modules/home/MarketingHomePreviewPage"
@@ -368,6 +369,12 @@ function MainAppInner() {
     else if (page === "purchase_orders") setPage("operations-purchase_orders")
     else if (page === "parts_inventory") setPage("operations-inventory")
   }, [page, setPage])
+
+  useEffect(() => {
+    const onOpenInvoices = () => setPage("operations-invoicing")
+    window.addEventListener(OPEN_INVOICES_EVENT, onOpenInvoices)
+    return () => window.removeEventListener(OPEN_INVOICES_EVENT, onOpenInvoices)
+  }, [setPage])
 
   useEffect(() => {
     if (page === "operations" || page.startsWith("operations-")) {

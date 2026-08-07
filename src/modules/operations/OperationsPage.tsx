@@ -16,6 +16,7 @@ import { useOfficeManagerScopeOptional } from "../../contexts/OfficeManagerScope
 import { operationsSubModuleEnabled, type OperationsSubModuleId } from "../../types/portal-builder"
 import OperationsDocumentSearchPanel from "../../components/OperationsDocumentSearchPanel"
 import CustomReceiptModal from "../../components/CustomReceiptModal"
+import InvoicesWorkspace from "../invoices/InvoicesWorkspace"
 import { supabase } from "../../lib/supabase"
 import { consumeCustomReceiptCustomerPrefill, consumeOpenCustomReceiptModal } from "../../lib/workflowNavigation"
 
@@ -177,7 +178,7 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
             {activeTab === "work_orders" ? <WorkOrdersPage setPage={setPage} embedded /> : null}
             {activeTab === "purchase_orders" ? <PurchaseOrdersPage setPage={setPage} embedded /> : null}
             {activeTab === "inventory" ? <PartsInventoryPage setPage={setPage} embedded /> : null}
-            {activeTab === "invoicing" ? <OperationsInvoicingPanel setPage={setPage} /> : null}
+            {activeTab === "invoicing" ? <InvoicesWorkspace supabase={supabase} userId={authUserId} setPage={setPage} /> : null}
             {activeTab === "team_management" && authUserId ? (
               <CalendarTeamManagementPanel
                 officeManagerUserId={authUserId}
@@ -190,33 +191,6 @@ export default function OperationsPage({ setPage, initialTab = "work_orders" }: 
           </>
         )}
       </div>
-    </div>
-  )
-}
-
-function OperationsInvoicingPanel({ setPage }: { setPage?: (page: string) => void }) {
-  const { t } = useLocale()
-  return (
-    <div style={{ padding: "8px 4px", maxWidth: 720 }}>
-      <h2 style={{ margin: "0 0 8px", fontSize: 18, color: theme.text }}>{t("nav.invoicing")}</h2>
-      <p style={{ margin: "0 0 14px", fontSize: 14, color: "#64748b", lineHeight: 1.55 }}>{t("operations.invoicingIntro")}</p>
-      {setPage ? (
-        <button
-          type="button"
-          onClick={() => setPage("payments")}
-          style={{
-            padding: "10px 16px",
-            borderRadius: 8,
-            border: "none",
-            background: theme.primary,
-            color: "#fff",
-            fontWeight: 700,
-            cursor: "pointer",
-          }}
-        >
-          {t("operations.openPayments")}
-        </button>
-      ) : null}
     </div>
   )
 }

@@ -14,6 +14,7 @@ const PURCHASE_ORDERS_HIGHLIGHT_QUOTE = "tradesman_purchase_orders_highlight_quo
 const PAYMENTS_COLLECT_PREFILL = "tradesman_payments_collect_prefill_v1"
 const SCHEDULING_QUOTE_PREFILL = "tradesman_scheduling_prefill_quote_v1"
 const CUSTOM_RECEIPT_PREFILL = "tradesman_custom_receipt_prefill_customer_id"
+const INVOICES_PREFILL = "tradesman_invoices_prefill_v1"
 const OPEN_SPECIALTY_REPORT_WIZARD = "tradesman_open_specialty_report_wizard"
 
 export type OpenSpecialtyReportWizardRequest = {
@@ -535,6 +536,53 @@ export function consumePaymentsCollectPrefill(): PaymentsCollectPrefill | null {
   } catch {
     return null
   }
+}
+
+export type InvoicesPrefill = {
+  customerId?: string
+  quoteId?: string
+}
+
+export function queueInvoicesPrefill(prefill: InvoicesPrefill): void {
+  if (typeof window === "undefined") return
+  const customerId = prefill.customerId?.trim()
+  const quoteId = prefill.quoteId?.trim()
+  if (!customerId && !quoteId) return
+  try {
+    sessionStorage.setItem(
+      INVOICES_PREFILL,
+      JSON.stringify({
+        customerId: customerId || undefined,
+        quoteId: quoteId || undefined,
+      }),
+    )
+  } catch {
+    /* ignore */
+  }
+}
+
+export function consumeInvoicesPrefill(): InvoicesPrefill | null {
+  if (typeof window === "undefined") return null
+  try {
+    const raw = sessionStorage.getItem(INVOICES_PREFILL)
+    if (!raw?.trim()) return null
+    sessionStorage.removeItem(INVOICES_PREFILL)
+    const j = JSON.parse(raw) as InvoicesPrefill
+    return {
+      customerId: typeof j.customerId === "string" ? j.customerId.trim() : undefined,
+      quoteId: typeof j.quoteId === "string" ? j.quoteId.trim() : undefined,
+    }
+  } catch {
+    return null
+  }
+}
+
+export const OPEN_INVOICES_EVENT = "tradesman:open-invoices"
+
+export function openInvoicesWorkspace(prefill?: InvoicesPrefill): void {
+  if (typeof window === "undefined") return
+  if (prefill?.customerId || prefill?.quoteId) queueInvoicesPrefill(prefill)
+  window.dispatchEvent(new CustomEvent(OPEN_INVOICES_EVENT))
 }
 
 export function queuePurchaseOrdersHighlightQuote(quoteId: string): void {
