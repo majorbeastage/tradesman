@@ -5,6 +5,8 @@ export type QuoteItemMetadata = {
   preset_id?: string
   job_type_id?: string | null
   line_kind?: string
+  /** User library category (Labor, Materials, custom, …). */
+  category_id?: string
 }
 
 export function parseQuoteItemMetadata(raw: unknown): QuoteItemMetadata {
@@ -19,7 +21,9 @@ export function parseQuoteItemMetadata(raw: unknown): QuoteItemMetadata {
   const job_type_id =
     typeof o.job_type_id === "string" && o.job_type_id.trim() ? o.job_type_id.trim() : o.job_type_id === null ? null : undefined
   const line_kind = typeof o.line_kind === "string" && o.line_kind.trim() ? o.line_kind.trim() : undefined
-  return { manpower, minimum_line_total, preset_id, job_type_id, line_kind }
+  const category_id =
+    typeof o.category_id === "string" && o.category_id.trim() ? o.category_id.trim().slice(0, 80) : undefined
+  return { manpower, minimum_line_total, preset_id, job_type_id, line_kind, category_id }
 }
 
 export function computeQuoteLineTotal(

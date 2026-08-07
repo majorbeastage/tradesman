@@ -1457,6 +1457,19 @@ export const DEFAULT_ESTIMATE_TEMPLATE_ITEMS: PortalSettingItem[] = [
     customFieldSubtype: "textarea",
   },
   {
+    id: "estimate_template_include_job_description",
+    type: "checkbox",
+    label: "Include job description on customer estimate (per-estimate field in wizard & editor)",
+    defaultChecked: false,
+  },
+  {
+    id: "estimate_template_job_description_label",
+    type: "custom_field",
+    customFieldSubtype: "text",
+    label: "Job description section heading (default: Job description)",
+    dependency: { dependsOnItemId: "estimate_template_include_job_description", showWhenValue: "checked" },
+  },
+  {
     id: "estimate_template_include_prepared_date",
     type: "checkbox",
     label: "Include “Prepared” date on the document",

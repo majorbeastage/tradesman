@@ -4,14 +4,18 @@ import SavedLineCategoryPicker from "./SavedLineCategoryPicker"
 import type { EstimateLinePresetRow } from "../lib/estimateLinePresets"
 import type { LibraryCategory } from "../lib/libraryCategories"
 
+import type { EstimateWizardStep } from "../lib/estimateWizardStepUtils"
+import { estimateWizardMaxStep, estimateWizardPhase, estimateWizardPhaseTitle } from "../lib/estimateWizardStepUtils"
+
 type CustomerOpt = { id: string; display_name?: string | null }
 type JobTypeOpt = { id: string; name: string }
 
-type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7
-
 type Props = {
   open: boolean
-  step: Step
+  step: EstimateWizardStep
+  /** When true, step 6 is customer job description (quote items → 7, review → 8). */
+  includeJobDescription?: boolean
+  jobDescriptionLabel?: string
   onClose: () => void
   customers: CustomerOpt[]
   customerPick: string
@@ -43,6 +47,13 @@ type Props = {
   jobDetailsVoiceListening?: boolean
   onJobDetailsVoiceStart?: () => void
   onJobDetailsVoiceStop?: () => void
+  onJobDescriptionContinue: () => void
+  onJobDescriptionSkip: () => void
+  onJobDescriptionOpen: () => void
+  jobDescriptionBusy: boolean
+  /** Customer-facing job description (shown on exported estimate). */
+  jobDescriptionNotes?: string
+  onJobDescriptionNotesChange?: (value: string) => void
   onQuoteItemsContinue: () => void
   onQuoteItemsSkip: () => void
   estimateLinePresets?: EstimateLinePresetRow[]
@@ -75,6 +86,8 @@ type Props = {
 export default function EstimateStartGuideModal({
   open,
   step,
+  includeJobDescription = false,
+  jobDescriptionLabel = "Job description",
   onClose,
   customers,
   customerPick,
@@ -105,6 +118,12 @@ export default function EstimateStartGuideModal({
   jobDetailsVoiceListening = false,
   onJobDetailsVoiceStart,
   onJobDetailsVoiceStop,
+  onJobDescriptionContinue,
+  onJobDescriptionSkip,
+  onJobDescriptionOpen,
+  jobDescriptionBusy,
+  jobDescriptionNotes = "",
+  onJobDescriptionNotesChange,
   onQuoteItemsContinue,
   onQuoteItemsSkip,
   estimateLinePresets = [],
@@ -130,6 +149,9 @@ export default function EstimateStartGuideModal({
 }: Props) {
   const [customerQuery, setCustomerQuery] = useState("")
   const [aiLinesNote, setAiLinesNote] = useState<string | null>(null)
+  const wizardPhase = estimateWizardPhase(step, includeJobDescription)
+  const wizardTotalSteps = estimateWizardMaxStep(includeJobDescription)
+  const wizardTitle = estimateWizardPhaseTitle(wizardPhase)
 
   const conversationBulletLines = useMemo(
     () =>
@@ -202,22 +224,10 @@ export default function EstimateStartGuideModal({
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
           <div>
             <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", letterSpacing: "0.04em", textTransform: "uppercase" }}>
-              Start quote · step {step} of 7
+              Start quote · step {step} of {wizardTotalSteps}
             </div>
             <h2 style={{ margin: "6px 0 0", fontSize: 18, fontWeight: 800, color: theme.text, lineHeight: 1.25 }}>
-              {step === 1
-                ? "Who is this estimate for?"
-                : step === 2
-                  ? "Select a job type"
-                  : step === 3
-                    ? "Conversations"
-                    : step === 4
-                      ? "Upload photos or files"
-                      : step === 5
-                        ? "Job details"
-                        : step === 6
-                          ? "Quick add quote items"
-                          : "Done — Review Estimate"}
+              {wizardTitle}
             </h2>
           </div>
           <button
@@ -241,7 +251,7 @@ export default function EstimateStartGuideModal({
           </button>
         </div>
 
-        {step === 1 ? (
+        {wizardPhase === "customer" ? (
           <div style={{ display: "grid", gap: 12 }}>
             <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.text }}>
               Customer (search)
@@ -347,7 +357,7 @@ export default function EstimateStartGuideModal({
               </button>
             </div>
           </div>
-        ) : step === 2 ? (
+        ) : wizardPhase === "jobType" ? (
           <div style={{ display: "grid", gap: 12 }}>
             <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.text }}>
               Job type
@@ -406,7 +416,7 @@ export default function EstimateStartGuideModal({
               </button>
             </div>
           </div>
-        ) : step === 3 ? (
+        ) : wizardPhase === "conversations" ? (
           <div style={{ display: "grid", gap: 12 }}>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
               <button
@@ -458,7 +468,7 @@ export default function EstimateStartGuideModal({
               </button>
             </div>
           </div>
-        ) : step === 4 ? (
+        ) : wizardPhase === "media" ? (
           <div style={{ display: "grid", gap: 12 }}>
             <button type="button" onClick={onMediaPickFiles} disabled={mediaBusy} style={secondaryBtnStyle}>
               {mediaBusy ? "Working…" : "Add photos or files"}
@@ -472,7 +482,7 @@ export default function EstimateStartGuideModal({
               </button>
             </div>
           </div>
-        ) : step === 5 ? (
+        ) : wizardPhase === "jobDetails" ? (
           <div style={{ display: "grid", gap: 12 }}>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
               <button
@@ -570,7 +580,45 @@ export default function EstimateStartGuideModal({
               </button>
             </div>
           </div>
-        ) : step === 6 ? (
+        ) : wizardPhase === "jobDescription" ? (
+          <div style={{ display: "grid", gap: 12 }}>
+            <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.45 }}>
+              Write a customer-facing summary of the work. This appears on the exported estimate PDF/Word document.
+            </p>
+            <div
+              style={{
+                border: `1px solid ${theme.border}`,
+                borderRadius: 10,
+                padding: "10px 12px",
+                background: "#f8fafc",
+                display: "grid",
+                gap: 8,
+              }}
+            >
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", letterSpacing: "0.06em" }}>
+                {jobDescriptionLabel.toUpperCase()}
+              </div>
+              <textarea
+                rows={5}
+                value={jobDescriptionNotes}
+                onChange={(e) => onJobDescriptionNotesChange?.(e.target.value)}
+                placeholder="Describe the work in plain language your customer will understand…"
+                style={{ ...theme.formInput, resize: "vertical", width: "100%", background: "#fff" }}
+              />
+            </div>
+            <button type="button" onClick={onJobDescriptionOpen} style={{ ...secondaryBtnStyle, fontWeight: 600, justifySelf: "start" }}>
+              Open job description section
+            </button>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "flex-end" }}>
+              <button type="button" disabled={jobDescriptionBusy} onClick={onJobDescriptionSkip} style={secondaryBtnStyle}>
+                Skip for now
+              </button>
+              <button type="button" disabled={jobDescriptionBusy} onClick={onJobDescriptionContinue} style={primaryBtnStyle}>
+                {jobDescriptionBusy ? "Working…" : "Continue"}
+              </button>
+            </div>
+          </div>
+        ) : wizardPhase === "quoteItems" ? (
           <div style={{ display: "grid", gap: 12 }}>
             {estimateLinePresets.length > 0 && savedLineCategories.length > 0 && onAddExistingLineItem ? (
               <SavedLineCategoryPicker

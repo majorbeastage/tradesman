@@ -1,6 +1,8 @@
 import type { CSSProperties, Dispatch, SetStateAction } from "react"
 import { theme } from "../../styles/theme"
 import { computeQuoteLineTotal, parseQuoteItemMetadata, type QuoteItemMetadata } from "../../lib/quoteItemMath"
+import { lineKindFromCategoryId, savedLineCategoryIdFromKind, type LibraryCategory } from "../../lib/libraryCategories"
+import { glyphForJobTypeIcon } from "../../lib/jobTypeIcons"
 
 export type QuoteLineDraft = {
   description: string
@@ -9,6 +11,7 @@ export type QuoteLineDraft = {
   minimum: string
   manpower: string
   job_type_id: string
+  category_id: string
 }
 
 type Props = {
@@ -16,6 +19,7 @@ type Props = {
   quoteLineDrafts: Record<string, QuoteLineDraft>
   setQuoteLineDrafts: Dispatch<SetStateAction<Record<string, QuoteLineDraft>>>
   showManpower: boolean
+  categories: LibraryCategory[]
   getItemDisplay: (item: any) => { desc: string; qty: number; up: number; meta: QuoteItemMetadata }
   persistQuoteItemUpdate: (id: string, patch: Record<string, unknown>) => Promise<void>
   mergeQuoteItemMetadataRow: (item: any, patch: Partial<QuoteItemMetadata>) => Record<string, unknown>
@@ -43,6 +47,7 @@ export function QuoteLineItemsMobileCards({
   quoteLineDrafts,
   setQuoteLineDrafts,
   showManpower,
+  categories,
   getItemDisplay,
   persistQuoteItemUpdate,
   mergeQuoteItemMetadataRow,
@@ -137,6 +142,39 @@ export function QuoteLineItemsMobileCards({
                 }}
                 style={mobileInput}
               />
+            </label>
+            <label style={{ display: "block", marginBottom: 10 }}>
+              <span style={mobileFieldLbl}>Category</span>
+              <select
+                value={dr?.category_id ?? savedLineCategoryIdFromKind(meta.line_kind)}
+                onChange={(e) => {
+                  const categoryId = e.target.value
+                  setQuoteLineDrafts((prev) => {
+                    const cur = prev[item.id]
+                    if (!cur) return prev
+                    return { ...prev, [item.id]: { ...cur, category_id: categoryId } }
+                  })
+                }}
+                onBlur={(e) => {
+                  const categoryId = e.target.value
+                  const serverCat = meta.category_id ?? savedLineCategoryIdFromKind(meta.line_kind)
+                  if (categoryId !== serverCat) {
+                    void persistQuoteItemUpdate(item.id, {
+                      metadata: mergeQuoteItemMetadataRow(item, {
+                        category_id: categoryId,
+                        line_kind: lineKindFromCategoryId(categoryId),
+                      }),
+                    })
+                  }
+                }}
+                style={mobileInput}
+              >
+                {categories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {glyphForJobTypeIcon(category.icon_id)} {category.title}
+                  </option>
+                ))}
+              </select>
             </label>
             <div
               style={{

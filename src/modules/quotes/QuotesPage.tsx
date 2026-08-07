@@ -105,7 +105,14 @@ import EstimateScopeAssistantPanel from "../../components/EstimateScopeAssistant
 import EstimateLineItemsHandoffPanel from "../../components/EstimateLineItemsHandoffPanel"
 import AddLineItemQuickForm from "../../components/AddLineItemQuickForm"
 import SavedLineCategoryPicker from "../../components/SavedLineCategoryPicker"
-import { loadLibraryCategorySettings, SAVED_LINE_DEFAULT_CATEGORIES, type LibraryCategory } from "../../lib/libraryCategories"
+import {
+  lineKindFromCategoryId,
+  loadLibraryCategorySettings,
+  savedLineCategoryIdFromKind,
+  SAVED_LINE_DEFAULT_CATEGORIES,
+  type LibraryCategory,
+} from "../../lib/libraryCategories"
+import { glyphForJobTypeIcon } from "../../lib/jobTypeIcons"
 import JobTypesLineItemsLibraryHub from "../../components/JobTypesLineItemsLibraryHub"
 import { notifyBusinessAiVocabularyChanged } from "../../lib/businessAiVocabulary"
 import { maybeAutoShareCustomerWithWorkflowAssignee } from "../../lib/workflowStepAutoShare"
@@ -121,10 +128,11 @@ import {
   saveEstimateGuideFlags,
   type EstimateGuideFlags,
 } from "../../lib/estimateGuidePrefs"
-import { estimateWizardScopeAnalysisReady, getResumeEstimateWizardStep } from "../../lib/estimateWizardStepUtils"
+import { estimateWizardScopeAnalysisReady, estimateWizardMaxStep, estimateWizardPhase, getResumeEstimateWizardStep, type EstimateWizardStep } from "../../lib/estimateWizardStepUtils"
 import {
   estimateGuideFlagsFromQuoteMetadata,
   mergeQuoteMetadataWithEstimateGuide,
+  quoteCustomerJobDescriptionFromMetadata,
   quoteJobDetailsFromMetadata,
 } from "../../lib/estimateQuoteMetadata"
 import { findLatestQuoteIdForCustomer } from "../../lib/quoteCustomerNavigation"
@@ -248,7 +256,12 @@ const ESTIMATE_TEMPLATE_DOCUMENT_BUNDLE_IDS = new Set([
 ])
 
 /** Intro / footer free-text fields — shown in a collapsed section (minimized by default). */
-const ESTIMATE_TEMPLATE_TEXT_GROUP_IDS = new Set(["estimate_template_notes", "estimate_template_footer"])
+const ESTIMATE_TEMPLATE_TEXT_GROUP_IDS = new Set([
+  "estimate_template_notes",
+  "estimate_template_footer",
+  "estimate_template_include_job_description",
+  "estimate_template_job_description_label",
+])
 
 const ESTIMATE_TEMPLATE_SPECIALTY_GROUP_IDS = new Set([
   "estimate_template_specialty_inspection",
@@ -531,7 +544,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [customerSummaryExpanded, setCustomerSummaryExpanded] = useState(false)
   const [estimateGuideFlags, setEstimateGuideFlags] = useState<EstimateGuideFlags>({})
   const [estimateStartGuideOpen, setEstimateStartGuideOpen] = useState(false)
-  const [estimateStartGuideStep, setEstimateStartGuideStep] = useState<1 | 2 | 3 | 4 | 5 | 6 | 7>(1)
+  const [estimateStartGuideStep, setEstimateStartGuideStep] = useState<EstimateWizardStep>(1)
   const [estimateGuideCustomerPick, setEstimateGuideCustomerPick] = useState("")
   const [estimateGuideJobTypePick, setEstimateGuideJobTypePick] = useState("")
   const [estimateGuideBusy, setEstimateGuideBusy] = useState(false)
@@ -541,6 +554,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [estimateConversationsFoldOpen, setEstimateConversationsFoldOpen] = useState(false)
   const [estimateMediaFoldOpen, setEstimateMediaFoldOpen] = useState(false)
   const [estimateJobDetailsFoldOpen, setEstimateJobDetailsFoldOpen] = useState(false)
+  const [estimateJobDescriptionFoldOpen, setEstimateJobDescriptionFoldOpen] = useState(false)
   const [estimateQuoteItemsQuickFoldOpen, setEstimateQuoteItemsQuickFoldOpen] = useState(false)
   const [conversationBulletsBusy, setConversationBulletsBusy] = useState(false)
   const [jobPackBulletsBusy, setJobPackBulletsBusy] = useState(false)
@@ -549,6 +563,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
   type EstimateCustomerDeliveryPanel = null | "email" | "sms" | "separate_email" | "both" | "esign"
   const [customerDeliveryPanel, setCustomerDeliveryPanel] = useState<EstimateCustomerDeliveryPanel>(null)
   const [quoteOfferEsign, setQuoteOfferEsign] = useState(false)
+  const [quoteIncludeJobDescription, setQuoteIncludeJobDescription] = useState(false)
+  const [quoteJobDescriptionLabel, setQuoteJobDescriptionLabel] = useState("Job description")
   const [esignLinkUrl, setEsignLinkUrl] = useState<string | null>(null)
   const [esignLinkBusy, setEsignLinkBusy] = useState(false)
   const [esignLinkError, setEsignLinkError] = useState<string | null>(null)
@@ -560,6 +576,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [quoteSmsSending, setQuoteSmsSending] = useState(false)
   const [quoteSmsAttachEntity, setQuoteSmsAttachEntity] = useState(true)
   const [jobDetailsText, setJobDetailsText] = useState("")
+  const [customerJobDescriptionText, setCustomerJobDescriptionText] = useState("")
   const [jobDetailsSpeechSupported, setJobDetailsSpeechSupported] = useState(false)
   const [jobDetailsVoiceListening, setJobDetailsVoiceListening] = useState(false)
   const jobDetailsRecognitionRef = useRef<SpeechRecognition | null>(null)
@@ -629,7 +646,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [quoteDetailJobTypes, setQuoteDetailJobTypes] = useState<{ id: string; name: string }[]>([])
   /** Controlled fields for quote_items table — fixes editing after quick add (uncontrolled defaultValue sync issues). */
   const [quoteLineDrafts, setQuoteLineDrafts] = useState<
-    Record<string, { description: string; quantity: string; unit_price: string; manpower: string; minimum: string; job_type_id: string }>
+    Record<string, { description: string; quantity: string; unit_price: string; manpower: string; minimum: string; job_type_id: string; category_id: string }>
   >({})
   const estimateReviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [profileDisplayNameForPdf, setProfileDisplayNameForPdf] = useState("")
@@ -671,6 +688,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const conversationsSectionRef = useRef<HTMLDetailsElement | null>(null)
   const mediaSectionRef = useRef<HTMLDetailsElement | null>(null)
   const jobDetailsSectionRef = useRef<HTMLDetailsElement | null>(null)
+  const jobDescriptionSectionRef = useRef<HTMLDetailsElement | null>(null)
   const quoteItemsSectionRef = useRef<HTMLDetailsElement | null>(null)
   const reviewSendSectionRef = useRef<HTMLDivElement | null>(null)
   const estimateWizardFileInputRef = useRef<HTMLInputElement | null>(null)
@@ -984,22 +1002,26 @@ export default function QuotesPage(_props: QuotesPageProps) {
   useEffect(() => {
     if (!estimateStartGuideOpen || !selectedQuoteId) return
     const s = estimateStartGuideStep
-    if (s === 7) {
+    const phase = estimateWizardPhase(s, quoteIncludeJobDescription)
+    const maxStep = estimateWizardMaxStep(quoteIncludeJobDescription)
+    if (s === maxStep) {
       setEstimateCustomerFoldOpen(false)
       setEstimateTemplatesFoldOpen(false)
       setEstimateConversationsFoldOpen(false)
       setEstimateMediaFoldOpen(false)
       setEstimateJobDetailsFoldOpen(false)
+      setEstimateJobDescriptionFoldOpen(false)
       setEstimateQuoteItemsQuickFoldOpen(false)
       return
     }
-    setEstimateCustomerFoldOpen(s === 1)
-    setEstimateTemplatesFoldOpen(s === 2)
-    setEstimateConversationsFoldOpen(s === 3)
-    setEstimateMediaFoldOpen(s === 4)
-    setEstimateJobDetailsFoldOpen(s === 5)
-    setEstimateQuoteItemsQuickFoldOpen(s === 6)
-  }, [estimateStartGuideOpen, estimateStartGuideStep, selectedQuoteId])
+    setEstimateCustomerFoldOpen(phase === "customer")
+    setEstimateTemplatesFoldOpen(phase === "jobType")
+    setEstimateConversationsFoldOpen(phase === "conversations")
+    setEstimateMediaFoldOpen(phase === "media")
+    setEstimateJobDetailsFoldOpen(phase === "jobDetails")
+    setEstimateJobDescriptionFoldOpen(phase === "jobDescription")
+    setEstimateQuoteItemsQuickFoldOpen(phase === "quoteItems")
+  }, [estimateStartGuideOpen, estimateStartGuideStep, selectedQuoteId, quoteIncludeJobDescription])
 
   const jobDetailsDbSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const selectedQuotePersistRef = useRef<QuoteRow | null>(null)
@@ -1008,8 +1030,45 @@ export default function QuotesPage(_props: QuotesPageProps) {
   }, [selectedQuote])
 
   useEffect(() => {
-    if (!selectedQuoteId) setJobDetailsText("")
+    if (!selectedQuoteId) {
+      setJobDetailsText("")
+      setCustomerJobDescriptionText("")
+    }
   }, [selectedQuoteId])
+
+  const customerJobDescriptionDbSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (!supabase || !userId || !selectedQuoteId || !quoteIncludeJobDescription) return
+    const client = supabase
+    const qRow = selectedQuotePersistRef.current
+    if (!qRow || qRow.id !== selectedQuoteId) return
+    if (customerJobDescriptionDbSaveTimerRef.current) clearTimeout(customerJobDescriptionDbSaveTimerRef.current)
+    customerJobDescriptionDbSaveTimerRef.current = setTimeout(() => {
+      customerJobDescriptionDbSaveTimerRef.current = null
+      void (async () => {
+        const latest = selectedQuotePersistRef.current
+        if (!latest || latest.id !== selectedQuoteId) return
+        const prevMeta =
+          latest.metadata && typeof latest.metadata === "object" && !Array.isArray(latest.metadata)
+            ? { ...(latest.metadata as Record<string, unknown>) }
+            : {}
+        const nextMeta: Record<string, unknown> = { ...prevMeta, customer_job_description: customerJobDescriptionText }
+        const { error } = await client
+          .from("quotes")
+          .update({ metadata: nextMeta, updated_at: new Date().toISOString() })
+          .eq("id", selectedQuoteId)
+          .eq("user_id", userId)
+        if (error && !supabaseQuotesMissingMetadataColumn(error.message)) {
+          console.error("[quotes] customer_job_description save", error.message)
+        } else {
+          setSelectedQuote((q: QuoteRow | null) => (q && q.id === selectedQuoteId ? { ...q, metadata: nextMeta } : q))
+        }
+      })()
+    }, 650)
+    return () => {
+      if (customerJobDescriptionDbSaveTimerRef.current) clearTimeout(customerJobDescriptionDbSaveTimerRef.current)
+    }
+  }, [customerJobDescriptionText, selectedQuoteId, supabase, userId, quoteIncludeJobDescription])
 
   useEffect(() => {
     if (!supabase || !userId || !selectedQuoteId) return
@@ -1377,6 +1436,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
       setQuoteCancellationText(typeof meta.estimate_template_cancellation_fee === "string" ? meta.estimate_template_cancellation_fee : "")
       setQuoteLegalSignatures(meta.estimate_template_legal_signatures !== false)
       setQuoteOfferEsign(meta.estimate_template_offer_esign === true)
+      setQuoteIncludeJobDescription(meta.estimate_template_include_job_description === true)
+      const jobDescLabel = typeof meta.estimate_template_job_description_label === "string" ? meta.estimate_template_job_description_label.trim() : ""
+      setQuoteJobDescriptionLabel(jobDescLabel || "Job description")
       const laborMeta = meta.estimate_default_labor_rate
       if (typeof laborMeta === "number" && Number.isFinite(laborMeta)) setEstimateDefaultLaborRate(String(laborMeta))
       else if (typeof laborMeta === "string") setEstimateDefaultLaborRate(laborMeta)
@@ -1466,10 +1528,16 @@ export default function QuotesPage(_props: QuotesPageProps) {
       const legalBody = typeof meta.estimate_template_legal_text === "string" ? meta.estimate_template_legal_text : ""
       const legalCancel = typeof meta.estimate_template_cancellation_fee === "string" ? meta.estimate_template_cancellation_fee : ""
       const legalSigs = meta.estimate_template_legal_signatures !== false
+      const includeJobDescription = meta.estimate_template_include_job_description === true
+      const jobDescriptionLabel =
+        typeof meta.estimate_template_job_description_label === "string" ? meta.estimate_template_job_description_label.trim() : ""
       const next: Record<string, string> = {}
       for (const item of estimateTemplateItems) {
         if (item.id === "estimate_template_notes") next[item.id] = notes
         else if (item.id === "estimate_template_footer") next[item.id] = footer
+        else if (item.id === "estimate_template_include_job_description")
+          next[item.id] = includeJobDescription ? "checked" : "unchecked"
+        else if (item.id === "estimate_template_job_description_label") next[item.id] = jobDescriptionLabel
         else if (item.id === "estimate_template_output_format")
           next[item.id] = item.options?.includes(fmt) ? fmt : item.options?.[0] ?? ESTIMATE_FMT_PDF
         else if (item.id === "estimate_template_include_prepared_date")
@@ -1582,6 +1650,15 @@ export default function QuotesPage(_props: QuotesPageProps) {
     if (hasItem("estimate_template_offer_esign")) {
       prevMeta.estimate_template_offer_esign = estimateTemplateFormValues.estimate_template_offer_esign === "checked"
     }
+    if (hasItem("estimate_template_include_job_description")) {
+      prevMeta.estimate_template_include_job_description =
+        estimateTemplateFormValues.estimate_template_include_job_description === "checked"
+    }
+    if (hasItem("estimate_template_job_description_label")) {
+      const labelRaw = (estimateTemplateFormValues.estimate_template_job_description_label ?? "").trim()
+      if (labelRaw) prevMeta.estimate_template_job_description_label = labelRaw
+      else delete prevMeta.estimate_template_job_description_label
+    }
     const { error } = await supabase
       .from("profiles")
       .update({
@@ -1626,6 +1703,13 @@ export default function QuotesPage(_props: QuotesPageProps) {
     }
     if (hasItem("estimate_template_offer_esign")) {
       setQuoteOfferEsign(estimateTemplateFormValues.estimate_template_offer_esign === "checked")
+    }
+    if (hasItem("estimate_template_include_job_description")) {
+      setQuoteIncludeJobDescription(estimateTemplateFormValues.estimate_template_include_job_description === "checked")
+    }
+    if (hasItem("estimate_template_job_description_label")) {
+      const labelRaw = (estimateTemplateFormValues.estimate_template_job_description_label ?? "").trim()
+      setQuoteJobDescriptionLabel(labelRaw || "Job description")
     }
     setShowEstimateTemplateModal(false)
   }
@@ -2637,7 +2721,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   function handleWizardStepBack() {
     setEstimateStartGuideStep((s) => {
       if (s <= 1) return 1
-      return (s - 1) as 1 | 2 | 3 | 4 | 5 | 6 | 7
+      return (s - 1) as EstimateWizardStep
     })
   }
 
@@ -2725,12 +2809,29 @@ export default function QuotesPage(_props: QuotesPageProps) {
     setEstimateStartGuideStep(6)
   }
 
+  function handleGuideJobDescriptionContinue() {
+    if (selectedQuote?.id) {
+      const provided = Boolean(customerJobDescriptionText.trim())
+      saveEstimateGuideFlags(selectedQuote.id, { jobDescriptionProvided: provided, jobDescriptionSkipped: !provided })
+      setEstimateGuideFlags((f) => ({ ...f, jobDescriptionProvided: provided, jobDescriptionSkipped: !provided }))
+    }
+    setEstimateStartGuideStep(7)
+  }
+
+  function handleGuideJobDescriptionSkip() {
+    if (selectedQuote?.id) {
+      saveEstimateGuideFlags(selectedQuote.id, { jobDescriptionSkipped: true })
+      setEstimateGuideFlags((f) => ({ ...f, jobDescriptionSkipped: true }))
+    }
+    setEstimateStartGuideStep(7)
+  }
+
   function handleGuideQuoteItemsContinue() {
     if (selectedQuote?.id) {
       saveEstimateGuideFlags(selectedQuote.id, { quoteItemsReady: selectedQuoteItems.length > 0, quoteItemsSkipped: false })
       setEstimateGuideFlags((f) => ({ ...f, quoteItemsReady: selectedQuoteItems.length > 0, quoteItemsSkipped: false }))
     }
-    setEstimateStartGuideStep(7)
+    setEstimateStartGuideStep(estimateWizardMaxStep(quoteIncludeJobDescription))
   }
 
   function openAddToCalendarFromEstimate() {
@@ -2874,7 +2975,12 @@ export default function QuotesPage(_props: QuotesPageProps) {
           description: row.description,
           quantity: row.quantity,
           unit_price: row.unit_price,
-          metadata: row.line_kind ? ({ line_kind: row.line_kind } as Record<string, unknown>) : undefined,
+          metadata: row.line_kind
+            ? ({
+                line_kind: row.line_kind,
+                category_id: savedLineCategoryIdFromKind(row.line_kind),
+              } as Record<string, unknown>)
+            : undefined,
         })
         if (result.ok) added += 1
       }
@@ -2902,7 +3008,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
       saveEstimateGuideFlags(selectedQuote.id, { quoteItemsSkipped: true })
       setEstimateGuideFlags((f) => ({ ...f, quoteItemsSkipped: true }))
     }
-    setEstimateStartGuideStep(7)
+    setEstimateStartGuideStep(estimateWizardMaxStep(quoteIncludeJobDescription))
   }
 
   function resolveEstimateWizardCustomerPick(): string {
@@ -2913,7 +3019,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
     return estimateGuideCustomerPick.trim()
   }
 
-  function openEstimateStartGuide(step: 1 | 2 | 3 | 4 | 5 | 6 | 7 = 1) {
+  function openEstimateStartGuide(step: EstimateWizardStep = 1) {
     if (selectedQuote?.id) {
       saveEstimateGuideFlags(selectedQuote.id, { wizardOpened: true })
       setEstimateGuideFlags((f) => ({ ...f, wizardOpened: true }))
@@ -3169,6 +3275,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
     setSelectedQuote({ ...row, job_type_id: row.job_type_id ?? null })
     const jobDetailsFromDb = quoteJobDetailsFromMetadata(row.metadata)
     if (jobDetailsFromDb.trim()) setJobDetailsText(jobDetailsFromDb)
+    const customerJobDescFromDb = quoteCustomerJobDescriptionFromMetadata(row.metadata)
+    if (customerJobDescFromDb.trim()) setCustomerJobDescriptionText(customerJobDescFromDb)
     applyQuoteCustomerFormFromCustomers(row.customers as CustomerRow | null | undefined)
     const linkedCustomerId = typeof row.customer_id === "string" ? row.customer_id.trim() : ""
     if (linkedCustomerId) {
@@ -3191,6 +3299,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
         ? { customerLinkedViaGuide: true, customerSkipped: false }
         : {}),
       ...(jobDetailsFromDb.trim() ? { jobDetailsProvided: true, jobDetailsSkipped: false } : {}),
+      ...(customerJobDescFromDb.trim() ? { jobDescriptionProvided: true, jobDescriptionSkipped: false } : {}),
       ...((items?.length ?? 0) > 0 ? { quoteItemsReady: true } : {}),
     }
     setEstimateGuideFlags(mergedGuide)
@@ -3279,6 +3388,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
       if (!patch.line_kind) delete prev.line_kind
       else prev.line_kind = patch.line_kind
     }
+    if (patch.category_id !== undefined) {
+      if (!patch.category_id) delete prev.category_id
+      else prev.category_id = patch.category_id
+    }
     return prev
   }
 
@@ -3295,7 +3408,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
         ? (selectedQuote as QuoteRow).job_type_id!.trim()
         : ""
     if (qJt) meta.job_type_id = qJt
-    if (lineKind) meta.line_kind = lineKind
+    if (lineKind) {
+      meta.line_kind = lineKind
+      meta.category_id = savedLineCategoryIdFromKind(lineKind)
+    }
     if (estimateLineTemplateOffered("eli_show_manpower") && (lineKind === "labor" || !lineKind)) meta.manpower = 1
     const result = await insertQuoteItemRowSafe(supabase, {
       quote_id: selectedQuoteId,
@@ -3326,7 +3442,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
     setQuoteLineDrafts((prev) => {
       const next: Record<
         string,
-        { description: string; quantity: string; unit_price: string; manpower: string; minimum: string; job_type_id: string }
+        { description: string; quantity: string; unit_price: string; manpower: string; minimum: string; job_type_id: string; category_id: string }
       > = {}
       for (const item of selectedQuoteItems) {
         const { desc, qty, up, meta } = getItemDisplay(item)
@@ -3334,6 +3450,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
         const minStr =
           meta.minimum_line_total != null && Number.isFinite(meta.minimum_line_total) ? String(meta.minimum_line_total) : ""
         const jt = typeof meta.job_type_id === "string" && meta.job_type_id.trim() ? meta.job_type_id.trim() : ""
+        const cat = meta.category_id ?? savedLineCategoryIdFromKind(meta.line_kind)
         const built = {
           description: String(desc),
           quantity: String(qty),
@@ -3341,6 +3458,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
           manpower: String(crew),
           minimum: minStr,
           job_type_id: jt,
+          category_id: cat,
         }
         next[item.id] = prev[item.id] ?? built
       }
@@ -3600,6 +3718,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
       if (m.minimum_line_total != null) meta.minimum_line_total = m.minimum_line_total
       if (m.job_type_id) meta.job_type_id = m.job_type_id
       if (m.line_kind) meta.line_kind = m.line_kind
+      if (m.category_id) meta.category_id = m.category_id
     }
     if (opts?.presetId) meta.preset_id = opts.presetId
     const qJt =
@@ -3699,6 +3818,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
           metadata: {
             minimum_line_total: p.minimum_line_total,
             line_kind: p.line_kind,
+            category_id: p.category_id ?? savedLineCategoryIdFromKind(p.line_kind),
             ...(p.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower")
               ? { manpower: DEFAULT_PRESET_LABOR_MANPOWER }
               : {}),
@@ -3854,6 +3974,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
       items,
       templateHeader: quotePdfTemplate,
       templateFooter: quoteTemplateFooter.trim() ? quoteTemplateFooter.trim() : null,
+      jobDescription:
+        quoteIncludeJobDescription && customerJobDescriptionText.trim() ? customerJobDescriptionText.trim() : null,
+      jobDescriptionLabel: quoteJobDescriptionLabel.trim() || "Job description",
       includePreparedDate: quoteIncludePreparedDate,
       showLineNumbers: quoteShowLineNumbers,
       logo: quoteShowLogo && quoteLogoUrl.trim() && logo ? logo : null,
@@ -5790,7 +5913,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                         jobTypeId: (selectedQuote as QuoteRow).job_type_id,
                                         entityCount: quoteMediaRows.length,
                                         jobDetailsText,
+                                        customerJobDescriptionText,
                                         lineItemCount: selectedQuoteItems.length,
+                                        includeJobDescription: quoteIncludeJobDescription,
                                       })
                                       openEstimateStartGuide(resume)
                                     }}
@@ -5850,6 +5975,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
                             <EstimateStartGuideModal
                               open={estimateStartGuideOpen}
                               step={estimateStartGuideStep}
+                              includeJobDescription={quoteIncludeJobDescription}
+                              jobDescriptionLabel={quoteJobDescriptionLabel}
                               onClose={closeGuideWizard}
                               customers={customerList.map((c: { id: string; display_name?: string | null }) => ({
                                 id: c.id,
@@ -5891,6 +6018,12 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               jobDetailsVoiceListening={jobDetailsVoiceListening}
                               onJobDetailsVoiceStart={() => startJobDetailsVoice()}
                               onJobDetailsVoiceStop={stopJobDetailsVoice}
+                              onJobDescriptionContinue={handleGuideJobDescriptionContinue}
+                              onJobDescriptionSkip={handleGuideJobDescriptionSkip}
+                              onJobDescriptionOpen={() => openGuideSection(jobDescriptionSectionRef)}
+                              jobDescriptionBusy={estimateGuideBusy}
+                              jobDescriptionNotes={customerJobDescriptionText}
+                              onJobDescriptionNotesChange={setCustomerJobDescriptionText}
                               onQuoteItemsContinue={handleGuideQuoteItemsContinue}
                               onQuoteItemsSkip={handleGuideQuoteItemsSkip}
                               estimateLinePresets={estimateLinePresets}
@@ -5901,6 +6034,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                   metadata: {
                                     minimum_line_total: preset.minimum_line_total,
                                     line_kind: preset.line_kind,
+                                    category_id: preset.category_id ?? savedLineCategoryIdFromKind(preset.line_kind),
                                     ...(preset.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower")
                                       ? { manpower: DEFAULT_PRESET_LABOR_MANPOWER }
                                       : {}),
@@ -5917,6 +6051,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                   estimateGuideFlags.conversationSkipped ||
                                   estimateGuideFlags.mediaSkipped ||
                                   estimateGuideFlags.jobDetailsSkipped ||
+                                  (quoteIncludeJobDescription && estimateGuideFlags.jobDescriptionSkipped) ||
                                   estimateGuideFlags.quoteItemsSkipped,
                               )}
                               onDoneReviewEstimate={() => {
@@ -5933,19 +6068,17 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               }}
                               onGoBackToSkippedSteps={() => {
                                 const flags = estimateGuideFlags
-                                const jump: 1 | 2 | 3 | 4 | 5 | 6 =
-                                  flags.customerSkipped
-                                    ? 1
-                                    : flags.templateSkipped
-                                      ? 2
-                                      : flags.conversationSkipped
-                                        ? 3
-                                        : flags.mediaSkipped
-                                          ? 4
-                                          : flags.jobDetailsSkipped
-                                            ? 5
-                                            : 6
-                                setEstimateStartGuideStep(jump)
+                                const skippedSteps: EstimateWizardStep[] = []
+                                if (flags.customerSkipped) skippedSteps.push(1)
+                                if (flags.templateSkipped) skippedSteps.push(2)
+                                if (flags.conversationSkipped) skippedSteps.push(3)
+                                if (flags.mediaSkipped) skippedSteps.push(4)
+                                if (flags.jobDetailsSkipped) skippedSteps.push(5)
+                                if (quoteIncludeJobDescription && flags.jobDescriptionSkipped) skippedSteps.push(6)
+                                if (flags.quoteItemsSkipped) {
+                                  skippedSteps.push(quoteIncludeJobDescription ? 7 : 6)
+                                }
+                                setEstimateStartGuideStep(skippedSteps[0] ?? 1)
                               }}
                               onStartOver={() => {
                                 setEstimateStartGuideStep(1)
@@ -6930,6 +7063,44 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               </div>
                             </details>
 
+                            {quoteIncludeJobDescription ? (
+                              <details
+                                ref={jobDescriptionSectionRef}
+                                open={estimateJobDescriptionFoldOpen}
+                                onToggle={(e) => setEstimateJobDescriptionFoldOpen((e.target as HTMLDetailsElement).open)}
+                                style={{ ...ESTIMATE_WORKFLOW_SECTION_BASE, background: "#fff" }}
+                              >
+                                <summary style={ESTIMATE_WORKFLOW_SUMMARY_STYLE}>
+                                  {quoteJobDescriptionLabel}
+                                  <EstimateGuideStatusMarker
+                                    show={showEstimateWizardMarkers}
+                                    variant={
+                                      customerJobDescriptionText.trim()
+                                        ? "done"
+                                        : estimateGuideFlags.jobDescriptionSkipped
+                                          ? "skipped"
+                                          : "none"
+                                    }
+                                    label={quoteJobDescriptionLabel}
+                                  />
+                                </summary>
+                                <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                                  <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                                    Customer-facing summary shown on the exported estimate PDF/Word document.
+                                  </p>
+                                  <textarea
+                                    id="estimate-customer-job-description"
+                                    aria-label={quoteJobDescriptionLabel}
+                                    rows={5}
+                                    placeholder="Describe the work in plain language your customer will understand…"
+                                    value={customerJobDescriptionText}
+                                    onChange={(e) => setCustomerJobDescriptionText(e.target.value)}
+                                    style={{ ...theme.formInput, resize: "vertical" }}
+                                  />
+                                </div>
+                              </details>
+                            ) : null}
+
               <details
                 ref={quoteItemsSectionRef}
                 open={estimateQuoteItemsQuickFoldOpen}
@@ -6958,6 +7129,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                         metadata: {
                           minimum_line_total: p.minimum_line_total,
                           line_kind: p.line_kind,
+                          category_id: p.category_id ?? savedLineCategoryIdFromKind(p.line_kind),
                           ...(p.line_kind === "labor" && estimateLineTemplateOffered("eli_show_manpower")
                             ? { manpower: DEFAULT_PRESET_LABOR_MANPOWER }
                             : {}),
@@ -7014,7 +7186,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   categories={savedLineCategoryOptions}
                   submitLabel="Add line item"
                   onSubmit={(values) => {
-                    const meta: QuoteItemMetadata = { line_kind: values.lineKind }
+                    const meta: QuoteItemMetadata = {
+                      line_kind: values.lineKind,
+                      category_id: values.categoryId,
+                    }
                     if (values.minEnabled && values.minBasis === "cost") meta.minimum_line_total = values.minValue
                     if (estimateLineTemplateOffered("eli_show_manpower") && values.lineKind === "labor") {
                       meta.manpower = DEFAULT_PRESET_LABOR_MANPOWER
@@ -7032,6 +7207,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   quoteLineDrafts={quoteLineDrafts}
                   setQuoteLineDrafts={setQuoteLineDrafts}
                   showManpower={estimateLineTemplateOffered("eli_show_manpower")}
+                  categories={savedLineCategoryOptions}
                   getItemDisplay={getItemDisplay}
                   persistQuoteItemUpdate={persistQuoteItemUpdate}
                   mergeQuoteItemMetadataRow={mergeQuoteItemMetadataRow}
@@ -7052,6 +7228,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   <tr style={{ textAlign: "left", borderBottom: "1px solid #94a3b8", background: "#e2e8f0" }}>
                     <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>#</th>
                     <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Description</th>
+                    <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13, minWidth: 120 }}>Category</th>
                     <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Qty</th>
                     {estimateLineTemplateOffered("eli_show_manpower") ? (
                       <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, fontSize: 13 }}>Crew</th>
@@ -7066,7 +7243,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   {selectedQuoteItems.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={7 + (estimateLineTemplateOffered("eli_show_manpower") ? 1 : 0)}
+                        colSpan={8 + (estimateLineTemplateOffered("eli_show_manpower") ? 1 : 0)}
                         style={{ padding: "12px", color: "#334155", fontWeight: 500 }}
                       >
                         No line items yet — use Quick add quote items above to add a line.
@@ -7121,6 +7298,39 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               }}
                               style={{ ...theme.formInput, padding: "6px 8px", width: "100%", minWidth: 120, boxSizing: "border-box" }}
                             />
+                          </td>
+                          <td style={{ padding: "6px 8px", fontSize: 13 }}>
+                            <select
+                              value={dr?.category_id ?? savedLineCategoryIdFromKind(meta.line_kind)}
+                              onChange={(e) => {
+                                const categoryId = e.target.value
+                                setQuoteLineDrafts((prev) => {
+                                  const cur = prev[item.id]
+                                  if (!cur) return prev
+                                  return { ...prev, [item.id]: { ...cur, category_id: categoryId } }
+                                })
+                              }}
+                              onBlur={(e) => {
+                                const categoryId = e.target.value
+                                const serverCat = meta.category_id ?? savedLineCategoryIdFromKind(meta.line_kind)
+                                if (categoryId !== serverCat) {
+                                  void persistQuoteItemUpdate(item.id, {
+                                    metadata: mergeQuoteItemMetadataRow(item, {
+                                      category_id: categoryId,
+                                      line_kind: lineKindFromCategoryId(categoryId),
+                                    }),
+                                  })
+                                }
+                              }}
+                              style={{ ...theme.formInput, padding: "6px 8px", width: "100%", minWidth: 110, boxSizing: "border-box" }}
+                              aria-label="Line item category"
+                            >
+                              {savedLineCategoryOptions.map((category) => (
+                                <option key={category.id} value={category.id}>
+                                  {glyphForJobTypeIcon(category.icon_id)} {category.title}
+                                </option>
+                              ))}
+                            </select>
                           </td>
                           <td style={{ padding: "6px 8px", fontSize: 13 }}>
                             <input
@@ -7255,7 +7465,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                   <tfoot>
                     <tr style={{ borderTop: "2px solid #94a3b8", background: "#f1f5f9" }}>
                       <td
-                        colSpan={5 + (estimateLineTemplateOffered("eli_show_manpower") ? 1 : 0)}
+                        colSpan={6 + (estimateLineTemplateOffered("eli_show_manpower") ? 1 : 0)}
                         style={{
                           padding: "10px 8px",
                           textAlign: "right",

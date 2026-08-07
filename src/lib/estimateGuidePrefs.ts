@@ -25,6 +25,10 @@ export type EstimateGuideFlags = {
   jobDetailsSkipped?: boolean
   /** Job details text was entered. */
   jobDetailsProvided?: boolean
+  /** Customer job description step skipped (when template option enabled). */
+  jobDescriptionSkipped?: boolean
+  /** Customer job description text was entered. */
+  jobDescriptionProvided?: boolean
   /** Quote items step reviewed or filled. */
   quoteItemsReady?: boolean
   /** Quote items step skipped for now. */

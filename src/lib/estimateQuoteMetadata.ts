@@ -13,6 +13,8 @@ const GUIDE_KEYS: (keyof EstimateGuideFlags)[] = [
   "mediaAdded",
   "jobDetailsSkipped",
   "jobDetailsProvided",
+  "jobDescriptionSkipped",
+  "jobDescriptionProvided",
   "quoteItemsReady",
   "quoteItemsSkipped",
   "previewReviewed",
@@ -26,6 +28,13 @@ export function quoteJobDetailsFromMetadata(meta: unknown): string {
   return typeof raw === "string" ? raw.trim() : ""
 }
 
+/** Customer-facing job description (shown on exported estimate when template option enabled). */
+export function quoteCustomerJobDescriptionFromMetadata(meta: unknown): string {
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return ""
+  const raw = (meta as Record<string, unknown>).customer_job_description
+  return typeof raw === "string" ? raw.trim() : ""
+}
+
 export function estimateGuideFlagsFromQuoteMetadata(meta: unknown): EstimateGuideFlags {
   if (!meta || typeof meta !== "object" || Array.isArray(meta)) return {}
   const raw = (meta as Record<string, unknown>).estimate_guide
@@ -34,7 +43,7 @@ export function estimateGuideFlagsFromQuoteMetadata(meta: unknown): EstimateGuid
   const out: EstimateGuideFlags = {}
   for (const k of GUIDE_KEYS) {
     const v = src[k]
-    if (k === "wizardOpened" || k === "customerSkipped" || k === "customerLinkedViaGuide" || k === "templateSkipped" || k === "templateAppliedViaGuide" || k === "conversationNeedsInfo" || k === "conversationReady" || k === "conversationSkipped" || k === "mediaSkipped" || k === "mediaAdded" || k === "jobDetailsSkipped" || k === "jobDetailsProvided" || k === "quoteItemsReady" || k === "quoteItemsSkipped" || k === "previewReviewed") {
+    if (k === "wizardOpened" || k === "customerSkipped" || k === "customerLinkedViaGuide" || k === "templateSkipped" || k === "templateAppliedViaGuide" || k === "conversationNeedsInfo" || k === "conversationReady" || k === "conversationSkipped" || k === "mediaSkipped" || k === "mediaAdded" || k === "jobDetailsSkipped" || k === "jobDetailsProvided" || k === "jobDescriptionSkipped" || k === "jobDescriptionProvided" || k === "quoteItemsReady" || k === "quoteItemsSkipped" || k === "previewReviewed") {
       if (typeof v === "boolean") out[k] = v
     } else if (typeof v === "string" && v.trim()) {
       out[k] = v.trim()
@@ -47,6 +56,7 @@ export function mergeQuoteMetadataWithEstimateGuide(
   meta: unknown,
   flags: EstimateGuideFlags,
   jobDetails?: string,
+  customerJobDescription?: string,
 ): Record<string, unknown> {
   const prev =
     meta && typeof meta === "object" && !Array.isArray(meta) ? { ...(meta as Record<string, unknown>) } : {}
@@ -63,5 +73,6 @@ export function mergeQuoteMetadataWithEstimateGuide(
   }
   const next: Record<string, unknown> = { ...prev, estimate_guide: nextGuide }
   if (jobDetails !== undefined) next.job_details = jobDetails
+  if (customerJobDescription !== undefined) next.customer_job_description = customerJobDescription
   return next
 }

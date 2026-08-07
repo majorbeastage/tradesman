@@ -86,6 +86,8 @@ export async function buildQuoteDocxBlob(params: {
   customerLastName?: string | null
   items: QuotePdfLineItem[]
   templateHeader?: string | null
+  jobDescription?: string | null
+  jobDescriptionLabel?: string | null
   templateFooter?: string | null
   includePreparedDate?: boolean
   showLineNumbers?: boolean
@@ -190,6 +192,27 @@ export async function buildQuoteDocxBlob(params: {
           new Paragraph({
             spacing: { after: 100 },
             children: [new TextRun({ text: t.slice(0, 2000), size: 22 })],
+          }),
+        )
+    }
+    children.push(new Paragraph({ text: "" }))
+  }
+
+  if (params.jobDescription?.trim()) {
+    const heading = params.jobDescriptionLabel?.trim() || "Job description"
+    children.push(
+      new Paragraph({
+        spacing: { before: 120, after: 80 },
+        children: [new TextRun({ text: heading, bold: true, size: 24 })],
+      }),
+    )
+    for (const para of params.jobDescription.trim().split(/\n+/).slice(0, 24)) {
+      const t = para.trim()
+      if (t)
+        children.push(
+          new Paragraph({
+            spacing: { after: 100 },
+            children: [new TextRun({ text: t.slice(0, 4000), size: 22 })],
           }),
         )
     }

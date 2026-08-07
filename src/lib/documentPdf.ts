@@ -82,6 +82,10 @@ export async function buildQuotePdfBytes(params: {
   items: QuotePdfLineItem[]
   /** Optional header note from profile template (plain text). */
   templateHeader?: string | null
+  /** Customer-facing job description (when template option enabled). */
+  jobDescription?: string | null
+  /** Section heading for job description block (default: Job description). */
+  jobDescriptionLabel?: string | null
   /** Optional footer note from profile template (plain text). */
   templateFooter?: string | null
   /** Default true: show "Prepared: &lt;date&gt;" under the title. */
@@ -199,6 +203,14 @@ export async function buildQuotePdfBytes(params: {
       drawWrappedParagraph(para, 10, 0.35)
     }
     y -= 6
+  }
+
+  if (params.jobDescription?.trim()) {
+    const heading = params.jobDescriptionLabel?.trim() || "Job description"
+    draw(heading, 11, true, 0.2)
+    y -= 2
+    drawWrappedParagraph(params.jobDescription, 10, 0.35)
+    y -= 8
   }
 
   draw("Line items", 11, true, 0.2)
