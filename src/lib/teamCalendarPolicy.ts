@@ -22,6 +22,11 @@ export type OmCalendarPolicyV1 = {
   allow_inventory_tool?: boolean
   /** When true, Customers tab only lists customers whose active workflow step matches this user/department. */
   workflow_only_customers?: boolean
+  /**
+   * When true, this user only sees customer profiles linked to their assigned calendar jobs.
+   * Default (false): full org customer profile mirror for all team members.
+   */
+  assignee_customer_profiles_opt_out?: boolean
   /** Department label for workflow routing display (e.g. Parts, Accounting). */
   department_label?: string | null
   /** When true, user may bypass workflow approval steps from the customer profile. */
@@ -62,6 +67,7 @@ const DEFAULT_POLICY: OmCalendarPolicyV1 = {
   allow_invoices_tool: false,
   allow_inventory_tool: false,
   workflow_only_customers: false,
+  assignee_customer_profiles_opt_out: false,
   department_label: null,
   allow_bypass_workflow_approval: false,
   allow_edit_organization_chart: false,
@@ -109,6 +115,7 @@ export function parseOmCalendarPolicy(metadata: unknown): OmCalendarPolicyV1 {
     allow_invoices_tool: o.allow_invoices_tool === true,
     allow_inventory_tool: o.allow_inventory_tool === true,
     workflow_only_customers: o.workflow_only_customers === true,
+    assignee_customer_profiles_opt_out: o.assignee_customer_profiles_opt_out === true,
     department_label:
       typeof o.department_label === "string" && o.department_label.trim() ? o.department_label.trim() : null,
     allow_bypass_workflow_approval: o.allow_bypass_workflow_approval === true,

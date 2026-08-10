@@ -66,6 +66,11 @@ import {
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
 import { formatAppError } from "../../lib/formatAppError"
 import { useManagedOmCalendarPolicy } from "../../hooks/useManagedOmCalendarPolicy"
+import { useCustomerDataScope } from "../../hooks/useCustomerDataScope"
+import {
+  filterCustomersToSharingScope,
+  loadAssigneeCalendarCustomerIds,
+} from "../../lib/orgCustomerSharing"
 import { usePortalViewOptional } from "../../contexts/PortalViewContext"
 import { loadAccountWorkflowBundleFromMetadata } from "../../lib/estimateWorkflowRuntime"
 import { customerMatchesWorkflowScope, parseCustomerWorkflowMeta } from "../../lib/customerWorkflowRouting"
@@ -377,6 +382,11 @@ const CUSTOMER_LIST_COMPACT_DETAIL = true
 
 export default function CustomersPage({ setPage }: { setPage?: (page: string) => void } = {}) {
   const userId = useScopedUserId()
+  const {
+    viewerUserId,
+    dataUserId: customerDataUserId,
+    sharingScope,
+  } = useCustomerDataScope()
   const emailSig = useEmailComposeSignature(userId)
   const { session } = useAuth()
   const { t } = useLocale()
@@ -800,7 +810,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   }, [])
 
   const loadCustomers = useCallback(async () => {
-    if (!userId || !supabase) {
+    const dataUserId = customerDataUserId || userId
+    if (!dataUserId || !supabase) {
       if (!supabase) setLoadError("Supabase not configured.")
       return
     }
@@ -817,32 +828,48 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       if (!r.error && r.data) r.data.forEach((row) => row.customer_id && bookedIds.add(row.customer_id))
     }
 
-    let eventsRes = await supabase.from("calendar_events").select("customer_id").eq("user_id", userId).is("removed_at", null).is("completed_at", null)
-    if (eventsRes.error) {
-      eventsRes = await supabase.from("calendar_events").select("customer_id").eq("user_id", userId).is("removed_at", null)
+    if (sharingScope === "assignee_only" && viewerUserId && dataUserId !== viewerUserId) {
+      const assignedBooked = await loadAssigneeCalendarCustomerIds(supabase, dataUserId, viewerUserId, {
+        incompleteOnly: true,
+      })
+      assignedBooked.forEach((id) => bookedIds.add(id))
+    } else {
+      let eventsRes = await supabase
+        .from("calendar_events")
+        .select("customer_id")
+        .eq("user_id", dataUserId)
+        .is("removed_at", null)
+        .is("completed_at", null)
+      if (eventsRes.error) {
+        eventsRes = await supabase
+          .from("calendar_events")
+          .select("customer_id")
+          .eq("user_id", dataUserId)
+          .is("removed_at", null)
+      }
+      addBooked(eventsRes)
     }
-    addBooked(eventsRes)
 
-    const leadsRes = await supabase.from("leads").select("customer_id").eq("user_id", userId).is("removed_at", null).is("converted_at", null)
+    const leadsRes = await supabase.from("leads").select("customer_id").eq("user_id", dataUserId).is("removed_at", null).is("converted_at", null)
     const leadsResFallback = leadsRes.error
-      ? await supabase.from("leads").select("customer_id").eq("user_id", userId).is("removed_at", null)
+      ? await supabase.from("leads").select("customer_id").eq("user_id", dataUserId).is("removed_at", null)
       : leadsRes
     addActive(leadsResFallback)
 
-    const convosRes = await supabase.from("conversations").select("customer_id").eq("user_id", userId).is("removed_at", null)
+    const convosRes = await supabase.from("conversations").select("customer_id").eq("user_id", dataUserId).is("removed_at", null)
     addActive(convosRes)
 
-    const quotesRes = await supabase.from("quotes").select("customer_id").eq("user_id", userId).is("removed_at", null).is("scheduled_at", null)
+    const quotesRes = await supabase.from("quotes").select("customer_id").eq("user_id", dataUserId).is("removed_at", null).is("scheduled_at", null)
     addActive(quotesRes)
 
     /** Customers referenced by leads, quotes, conversations, or calendar (any history). */
     const relatedIds = new Set<string>()
     const [allLeads, allConvos, allQuotes, allEvents, ownedCustomersRes] = await Promise.all([
-      supabase.from("leads").select("customer_id").eq("user_id", userId),
-      supabase.from("conversations").select("customer_id").eq("user_id", userId),
-      supabase.from("quotes").select("customer_id").eq("user_id", userId),
-      supabase.from("calendar_events").select("customer_id").eq("user_id", userId),
-      supabase.from("customers").select("id").eq("user_id", userId),
+      supabase.from("leads").select("customer_id").eq("user_id", dataUserId),
+      supabase.from("conversations").select("customer_id").eq("user_id", dataUserId),
+      supabase.from("quotes").select("customer_id").eq("user_id", dataUserId),
+      supabase.from("calendar_events").select("customer_id").eq("user_id", dataUserId),
+      supabase.from("customers").select("id").eq("user_id", dataUserId),
     ])
     ;[allLeads.data, allConvos.data, allQuotes.data, allEvents.data].forEach((data) => {
       if (data) data.forEach((row: { customer_id?: string }) => row.customer_id && relatedIds.add(row.customer_id))
@@ -869,7 +896,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       return
     }
 
-    const profRes = await supabase.from("profiles").select("metadata, display_name").eq("id", userId).maybeSingle()
+    const profRes = await supabase.from("profiles").select("metadata, display_name").eq("id", dataUserId).maybeSingle()
     const metaRaw = profRes.data?.metadata
     const dn = (profRes.data as { display_name?: string | null } | null)?.display_name
     setContractorSmsDisplayName(typeof dn === "string" ? dn.trim() : "")
@@ -954,7 +981,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     let customers: CustomerRow[] | null = null
     let error: { message: string } | null = null
     const selectCustomersByIds = (selectStr: string) =>
-      client.from("customers").select(selectStr).eq("user_id", userId).in("id", idList)
+      client.from("customers").select(selectStr).eq("user_id", dataUserId).in("id", idList)
     {
       const r0 = await selectCustomersByIds(fullSelectPipeline)
       error = r0.error
@@ -1018,10 +1045,15 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     orgGroupingRef.current = orgMaps
     list = groupedList
 
+    if (sharingScope === "assignee_only" && viewerUserId && dataUserId !== viewerUserId) {
+      const allowedIds = await loadAssigneeCalendarCustomerIds(supabase, dataUserId, viewerUserId)
+      list = filterCustomersToSharingScope(list, sharingScope, allowedIds)
+    }
+
     const { data: recentComm } = await supabase
       .from("communication_events")
       .select("customer_id, created_at")
-      .eq("user_id", userId)
+      .eq("user_id", dataUserId)
       .in("customer_id", idList)
       .order("created_at", { ascending: false })
       .limit(5000)
@@ -1078,11 +1110,12 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     setInProcessCustomers(inProcess)
     setActiveCustomers(active)
     setArchivedCustomers(archived)
-  }, [userId])
+  }, [userId, customerDataUserId, sharingScope, viewerUserId])
 
   const loadCustomerActivity = useCallback(
     async (customerId: string) => {
-      if (!supabase || !userId) return
+      const dataUserId = customerDataUserId || userId
+      if (!supabase || !dataUserId) return
       setCustomerActivityLoading(true)
       try {
         const siblingIds = resolveOrgSiblingCustomerIds(customerId, orgGroupingRef.current)
@@ -1090,7 +1123,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         const { data: convos } = await supabase
           .from("conversations")
           .select("id")
-          .eq("user_id", userId)
+          .eq("user_id", dataUserId)
           .in("customer_id", siblingIds)
           .is("removed_at", null)
           .order("created_at", { ascending: false })
@@ -1111,7 +1144,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         const { data: evCust } = await supabase
           .from("communication_events")
           .select(evSelect)
-          .eq("user_id", userId)
+          .eq("user_id", dataUserId)
           .in("customer_id", siblingIds)
           .order("created_at", { ascending: true })
           .limit(400)
@@ -1125,7 +1158,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
           const { data: evConvo } = await supabase
             .from("communication_events")
             .select(evSelect)
-            .eq("user_id", userId)
+            .eq("user_id", dataUserId)
             .in("conversation_id", convoIds)
             .order("created_at", { ascending: true })
             .limit(400)
@@ -1141,12 +1174,12 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         const eventIds = merged.map((e) => e.id).filter(Boolean)
         const attMap = await loadAttachmentsByCommunicationEventIds(eventIds)
         setCommAttachmentsByEvent(attMap)
-        setCustomerCalendarEvents(await loadCustomerCalendarEvents(supabase, userId, customerId))
+        setCustomerCalendarEvents(await loadCustomerCalendarEvents(supabase, dataUserId, customerId))
       } finally {
         setCustomerActivityLoading(false)
       }
     },
-    [userId],
+    [userId, customerDataUserId],
   )
 
   useSandboxTrafficRefresh(useCallback(() => {
@@ -3884,7 +3917,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                       tab={quickViewTab}
                                       customer={c}
                                       supabase={supabase}
-                                      userId={userId}
+                                      userId={customerDataUserId || userId}
                                       profileMetadata={accountProfileMetadata}
                                       globalQuickViewPrefs={quickViewPrefs}
                                       setPage={setPage}

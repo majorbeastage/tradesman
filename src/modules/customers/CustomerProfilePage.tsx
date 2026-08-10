@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } 
 import { useAuth } from "../../contexts/AuthContext"
 import { usePortalViewOptional } from "../../contexts/PortalViewContext"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
+import { useCustomerDataScope } from "../../hooks/useCustomerDataScope"
 import { useScopedAiAutomationsEnabled } from "../../hooks/useScopedAiAutomationsEnabled"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
@@ -344,6 +345,8 @@ export default function CustomerProfilePage({ setPage }: Props) {
   const viewAsDemoId =
     portalView?.showViewBar && isSandboxDemoUserId(portalView.targetUserId) ? portalView.targetUserId : null
   const userId = useScopedUserId() ?? user?.id ?? null
+  const { dataUserId: customerDataUserId } = useCustomerDataScope()
+  const customerOwnerUserId = customerDataUserId || userId
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const isMobile = useIsMobile()
   const sandboxTraining = useSandboxTrainingMode()
@@ -394,13 +397,13 @@ export default function CustomerProfilePage({ setPage }: Props) {
   const [shareContactTarget, setShareContactTarget] = useState<{ eventId?: string; eventTitle?: string } | null>(null)
 
   const reload = useCallback(async () => {
-    if (!supabase || !userId || !customerId) return
+    if (!supabase || !customerOwnerUserId || !customerId) return
     setLoading(true)
     setErr("")
     try {
       const [data, profRes] = await Promise.all([
-        loadCustomerProfileBundle(supabase, userId, customerId),
-        supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle(),
+        loadCustomerProfileBundle(supabase, customerOwnerUserId, customerId),
+        supabase.from("profiles").select("metadata").eq("id", customerOwnerUserId).maybeSingle(),
       ])
       setBundle(data)
       const profMeta = profRes.data?.metadata
@@ -446,7 +449,7 @@ export default function CustomerProfilePage({ setPage }: Props) {
     } finally {
       setLoading(false)
     }
-  }, [userId, customerId, user?.id, viewAsDemoId])
+  }, [customerOwnerUserId, customerId, user?.id, viewAsDemoId])
 
   useEffect(() => {
     if (!userId || viewAsDemoId) return
@@ -606,7 +609,7 @@ export default function CustomerProfilePage({ setPage }: Props) {
           fit_evaluated_at: now,
         })
         .eq("id", customerId)
-        .eq("user_id", userId)
+        .eq("user_id", customerOwnerUserId)
       if (uErr) {
         alert(uErr.message)
         return
@@ -733,10 +736,10 @@ export default function CustomerProfilePage({ setPage }: Props) {
         best_contact_method: contactForm.bestContact.trim() || null,
       }
 
-      let { error: custErr } = await supabase.from("customers").update(custPatch).eq("id", customerId).eq("user_id", userId)
+      let { error: custErr } = await supabase.from("customers").update(custPatch).eq("id", customerId).eq("user_id", customerOwnerUserId)
       if (custErr && String(custErr.message || "").toLowerCase().match(/service_|best_contact|last_activity/)) {
         const { best_contact_method: _bc, last_activity_at: _la, ...rest } = custPatch
-        const r = await supabase.from("customers").update(rest).eq("id", customerId).eq("user_id", userId)
+        const r = await supabase.from("customers").update(rest).eq("id", customerId).eq("user_id", customerOwnerUserId)
         custErr = r.error
       }
       if (custErr) throw custErr
@@ -745,7 +748,7 @@ export default function CustomerProfilePage({ setPage }: Props) {
         .from("customer_identifiers")
         .delete()
         .eq("customer_id", customerId)
-        .eq("user_id", userId)
+        .eq("user_id", customerOwnerUserId)
         .in("type", ["phone", "additional_phone"])
       if (delPhoneErr) throw delPhoneErr
       if (phoneValues.length > 0) {
@@ -766,7 +769,7 @@ export default function CustomerProfilePage({ setPage }: Props) {
         .from("customer_identifiers")
         .delete()
         .eq("customer_id", customerId)
-        .eq("user_id", userId)
+        .eq("user_id", customerOwnerUserId)
         .in("type", ["email", "additional_email"])
       if (delEmailErr) throw delEmailErr
       if (emailValues.length > 0) {
@@ -787,7 +790,7 @@ export default function CustomerProfilePage({ setPage }: Props) {
         .from("customer_identifiers")
         .delete()
         .eq("customer_id", customerId)
-        .eq("user_id", userId)
+        .eq("user_id", customerOwnerUserId)
         .eq("type", "name")
       if (delNameErr) throw delNameErr
       if (nameT) {
@@ -971,7 +974,7 @@ export default function CustomerProfilePage({ setPage }: Props) {
             updated_at: new Date().toISOString(),
           })
           .eq("id", quoteForWorkflow.id)
-          .eq("user_id", userId)
+          .eq("user_id", customerOwnerUserId)
         if (quoteErr) throw quoteErr
       }
 
@@ -987,7 +990,7 @@ export default function CustomerProfilePage({ setPage }: Props) {
         .from("customers")
         .update({ metadata: nextCustomerMeta, updated_at: new Date().toISOString() })
         .eq("id", c.id)
-        .eq("user_id", userId)
+        .eq("user_id", customerOwnerUserId)
       if (custErr) throw custErr
 
       const nowIso = new Date().toISOString()
@@ -1003,7 +1006,7 @@ export default function CustomerProfilePage({ setPage }: Props) {
           .from("calendar_events")
           .update({ removed_at: nowIso })
           .eq("id", eventId)
-          .eq("user_id", userId)
+          .eq("user_id", customerOwnerUserId)
       }
 
       if (payload.note.trim()) {
@@ -1071,7 +1074,7 @@ export default function CustomerProfilePage({ setPage }: Props) {
           updated_at: nowIso,
         })
         .eq("id", c.id)
-        .eq("user_id", userId)
+        .eq("user_id", customerOwnerUserId)
       if (custErr) throw custErr
 
       await reload()

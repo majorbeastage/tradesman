@@ -543,6 +543,17 @@ function TeamUserCard({
                   <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
                     <input
                       type="checkbox"
+                      checked={policy.assignee_customer_profiles_opt_out === true}
+                      disabled={savingUserId === member.userId}
+                      onChange={(e) =>
+                        updatePermissionDraft(member.userId, { assignee_customer_profiles_opt_out: e.target.checked })
+                      }
+                    />
+                    Limit customer profiles to assigned calendar jobs only (hide full org customer list)
+                  </label>
+                  <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
                       checked={policy.customer_map_access === true}
                       disabled={savingUserId === member.userId}
                       onChange={(e) => updatePermissionDraft(member.userId, { customer_map_access: e.target.checked })}
