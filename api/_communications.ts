@@ -876,36 +876,96 @@ export async function lookupChannelById(
   return (data as CommunicationChannel | null) ?? null
 }
 
-export async function getPrimarySmsChannelForUser(
+export async function resolveCommunicationAccountOwnerId(
   supabase: SupabaseClient,
-  userId: string
-): Promise<CommunicationChannel | null> {
-  if (!userId) return null
-  const { data, error } = await supabase
+  userId: string,
+): Promise<string> {
+  const uid = userId.trim()
+  if (!uid) return uid
+
+  const { data: link, error: linkErr } = await supabase
+    .from("office_manager_clients")
+    .select("office_manager_id")
+    .eq("user_id", uid)
+    .limit(1)
+    .maybeSingle()
+  if (linkErr) throw linkErr
+  const omId =
+    typeof link?.office_manager_id === "string" && link.office_manager_id.trim()
+      ? link.office_manager_id.trim()
+      : ""
+  if (omId && omId !== uid) return omId
+
+  const { data: invite, error: inviteErr } = await supabase
+    .from("team_member_invites")
+    .select("account_owner_id")
+    .eq("shell_profile_id", uid)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (!inviteErr) {
+    const ownerId =
+      typeof invite?.account_owner_id === "string" && invite.account_owner_id.trim()
+        ? invite.account_owner_id.trim()
+        : ""
+    if (ownerId && ownerId !== uid) return ownerId
+  }
+
+  return uid
+}
+
+async function querySmsChannelsForUser(
+  supabase: SupabaseClient,
+  userId: string,
+  smsEnabledOnly: boolean,
+): Promise<CommunicationChannel[]> {
+  if (!userId) return []
+  let q = supabase
     .from("client_communication_channels")
-    .select("id, user_id, provider, channel_kind, provider_sid, friendly_name, public_address, forward_to_phone, forward_to_email, voice_enabled, sms_enabled, email_enabled, voicemail_enabled, voicemail_mode, active")
+    .select(
+      "id, user_id, provider, channel_kind, provider_sid, friendly_name, public_address, forward_to_phone, forward_to_email, voice_enabled, sms_enabled, email_enabled, voicemail_enabled, voicemail_mode, active",
+    )
     .eq("user_id", userId)
     .eq("active", true)
-    .eq("sms_enabled", true)
-    .order("updated_at", { ascending: false })
-    .limit(25)
+  if (smsEnabledOnly) q = q.eq("sms_enabled", true)
+  else q = q.eq("voice_enabled", true)
+  const { data, error } = await q.order("updated_at", { ascending: false }).limit(25)
   if (error) throw error
-  const rows = (data as CommunicationChannel[] | null) ?? []
+  return (data as CommunicationChannel[] | null) ?? []
+}
+
+function pickBestSmsChannel(rows: CommunicationChannel[]): CommunicationChannel | null {
   if (rows.length === 0) return null
-  /** Prefer a row with the Twilio public number set (matches inbound webhook number). */
   const withPublic = rows.find((r) => typeof r.public_address === "string" && r.public_address.trim() !== "")
   return (withPublic ?? rows[0]) ?? null
 }
 
-export async function getPrimaryEmailChannelForUser(
+export async function getPrimarySmsChannelForUser(
   supabase: SupabaseClient,
-  userId: string
+  userId: string,
 ): Promise<CommunicationChannel | null> {
   if (!userId) return null
+  const commOwnerId = await resolveCommunicationAccountOwnerId(supabase, userId)
+  let rows = await querySmsChannelsForUser(supabase, commOwnerId, true)
+  if (rows.length === 0) {
+    /** Same Twilio DID often handles voice + SMS; voice-only flag is a common setup gap. */
+    rows = await querySmsChannelsForUser(supabase, commOwnerId, false)
+  }
+  return pickBestSmsChannel(rows)
+}
+
+export async function getPrimaryEmailChannelForUser(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<CommunicationChannel | null> {
+  if (!userId) return null
+  const commOwnerId = await resolveCommunicationAccountOwnerId(supabase, userId)
   const { data, error } = await supabase
     .from("client_communication_channels")
-    .select("id, user_id, provider, channel_kind, provider_sid, friendly_name, public_address, forward_to_phone, forward_to_email, voice_enabled, sms_enabled, email_enabled, voicemail_enabled, voicemail_mode, active, metadata")
-    .eq("user_id", userId)
+    .select(
+      "id, user_id, provider, channel_kind, provider_sid, friendly_name, public_address, forward_to_phone, forward_to_email, voice_enabled, sms_enabled, email_enabled, voicemail_enabled, voicemail_mode, active, metadata",
+    )
+    .eq("user_id", commOwnerId)
     .eq("active", true)
     .eq("channel_kind", "email")
     .eq("email_enabled", true)
@@ -929,7 +989,8 @@ export async function resolveOutboundEmailFromAddress(
     (typeof channel?.public_address === "string" && channel.public_address.trim()) || ""
   if (!userId) return fallback
 
-  const { data: profile } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+  const commOwnerId = await resolveCommunicationAccountOwnerId(supabase, userId)
+  const { data: profile } = await supabase.from("profiles").select("metadata").eq("id", commOwnerId).maybeSingle()
   const meta =
     profile?.metadata && typeof profile.metadata === "object" && !Array.isArray(profile.metadata)
       ? (profile.metadata as Record<string, unknown>)
@@ -941,7 +1002,7 @@ export async function resolveOutboundEmailFromAddress(
     .from("platform_email_routes")
     .select("local_part, domain, verified_at, route_kind")
     .eq("id", routeId)
-    .eq("account_id", userId)
+    .eq("account_id", commOwnerId)
     .maybeSingle()
 
   if (

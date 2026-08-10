@@ -1623,7 +1623,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   async function confirmCompleteCalendarEvent() {
     if (!supabase || !completeFlowEvent?.id) return
     const sb = supabase
-    const ownerUserId = completeFlowEvent.user_id ?? userId
+    const ownerUserId = calendarOwnerUserId || completeFlowEvent.user_id || userId
     let itemize = false
     let includeMileage = false
     let mileageRatePerMile = 0
@@ -2138,7 +2138,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       prev && prev.id === selectedEvent.id ? { ...prev, start_at: startIso, end_at: endIso } : prev,
     )
     if (eventScheduleDirty && selectedEvent.customer_id && (rescheduleNotifyEmail || rescheduleNotifySms)) {
-      const ownerUserId = resolveSandboxDataUserId(selectedEvent.user_id ?? userId, authUserId || userId)
+      const ownerUserId =
+        calendarOwnerUserId ||
+        resolveSandboxDataUserId(selectedEvent.user_id ?? userId, authUserId || userId)
       const notifyErrs = await sendCustomerAppointmentNotify({
         customerId: selectedEvent.customer_id,
         eventId: selectedEvent.id,
@@ -2147,7 +2149,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         kind: "reschedule",
         title: selectedEvent.title?.trim() || "Your appointment",
         startIso,
-        ownerUserId: ownerUserId || userId,
+        ownerUserId: ownerUserId || calendarOwnerUserId || userId,
       })
       if (notifyErrs.length > 0) {
         alert(`Schedule saved, but could not notify the customer:\n${notifyErrs.join("\n")}`)
@@ -2182,7 +2184,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
 
   async function removeCalendarEventWithOptionalNotify(event: CalendarEvent, removeFn: () => Promise<void>) {
     if (event.customer_id && (removeNotifyEmail || removeNotifySms)) {
-      const ownerUserId = resolveSandboxDataUserId(event.user_id ?? userId, authUserId || userId)
+      const ownerUserId =
+        calendarOwnerUserId ||
+        resolveSandboxDataUserId(event.user_id ?? userId, authUserId || userId)
       const notifyErrs = await sendCustomerAppointmentNotify({
         customerId: event.customer_id,
         eventId: event.id,
@@ -2191,7 +2195,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         kind: "cancel",
         title: event.title?.trim() || "Your appointment",
         startIso: event.start_at,
-        ownerUserId: ownerUserId || userId,
+        ownerUserId: ownerUserId || calendarOwnerUserId || userId,
       })
       if (notifyErrs.length > 0) {
         const proceed = window.confirm(
@@ -2285,7 +2289,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         kind: "reschedule",
         title: ev.title?.trim() || "Your appointment",
         startIso,
-        ownerUserId: eventOwnerUserId,
+        ownerUserId: calendarOwnerUserId || eventOwnerUserId,
       })
       if (notifyErrs.length > 0) {
         alert(`Schedule saved, but could not notify the customer:\n${notifyErrs.join("\n")}`)
@@ -2964,7 +2968,10 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       setAssigneeSaveNote("Assignee saved.")
       const assignedId = readAssignedUserId(savedMeta)
       if (assignedId && supabase) {
-        void notifyCalendarInvitees(supabase, selectedEvent.id, [assignedId], "assign")
+        const inviteResult = await notifyCalendarInvitees(supabase, selectedEvent.id, [assignedId], "assign")
+        if (!inviteResult.ok) {
+          setAssigneeSaveNote(`Assignee saved. Invite alert failed: ${inviteResult.error}`)
+        }
       }
       void loadEvents()
     } finally {
@@ -3158,6 +3165,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       return
     }
     if (insertedEventIds.length > 0) void invokeNotifyCalendarStatus(insertedEventIds, "", "Scheduled")
+    const sendErrs: string[] = []
     if (insertedEventIds.length > 0 && supabase) {
       const notifyIds = [
         ...new Set([
@@ -3166,12 +3174,15 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         ]),
       ]
       if (notifyIds.length > 0) {
-        void notifyCalendarInvitees(
+        const inviteResult = await notifyCalendarInvitees(
           supabase,
           insertedEventIds[0],
           notifyIds,
           (addVideoCall || addConferenceCall) && assignee.assignedUserId ? "both" : addVideoCall || addConferenceCall ? "video" : "assign",
         )
+        if (!inviteResult.ok) {
+          sendErrs.push(`Team calendar invite: ${inviteResult.error}`)
+        }
       }
     }
     if (addCustomerId) {
@@ -3179,7 +3190,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       await autoAdvanceCustomerWorkflow(supabase, eventOwnerUserId, addCustomerId, "job_scheduled")
     }
 
-    const sendErrs: string[] = []
     if ((addNotifyEmail || addNotifySms) && addCustomerId) {
       const notifyErrs = await sendCustomerAppointmentNotify({
         customerId: addCustomerId,
@@ -3189,12 +3199,12 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         kind: "confirm",
         title: addTitle.trim(),
         startIso: newRanges[0].s.toISOString(),
-        ownerUserId: eventOwnerUserId,
+        ownerUserId: calendarOwnerUserId || eventOwnerUserId,
       })
       sendErrs.push(...notifyErrs)
     }
     if (sendErrs.length > 0) {
-      alert(`Saved to calendar, but could not notify the customer:\n${sendErrs.join("\n")}`)
+      alert(`Saved to calendar, but some notifications failed:\n${sendErrs.join("\n")}`)
     }
 
     setShowAddItem(false)

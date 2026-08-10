@@ -94,19 +94,22 @@ Deno.serve(async (req) => {
   const ownerId = String(event.user_id ?? "")
   if (ownerId !== user.id) {
     const { data: callerProfile } = await admin.from("profiles").select("role").eq("id", user.id).maybeSingle()
-    if (callerProfile?.role !== "admin") {
-      const { data: omLink } = await admin
+    const isAdmin = callerProfile?.role === "admin"
+    let allowed = isAdmin
+    if (!allowed) {
+      const { data: teamLink } = await admin
         .from("office_manager_clients")
         .select("user_id")
-        .eq("office_manager_id", user.id)
-        .eq("user_id", ownerId)
+        .eq("office_manager_id", ownerId)
+        .eq("user_id", user.id)
         .maybeSingle()
-      if (!omLink) {
-        return new Response(JSON.stringify({ error: "Not allowed to notify for this event" }), {
-          status: 403,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        })
-      }
+      allowed = Boolean(teamLink)
+    }
+    if (!allowed) {
+      return new Response(JSON.stringify({ error: "Not allowed to notify for this event" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      })
     }
   }
 

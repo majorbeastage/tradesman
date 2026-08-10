@@ -10,6 +10,7 @@ import {
   pickFirstString,
   pickSupabaseAnonKeyForServer,
   pickSupabaseUrlForServer,
+  resolveCommunicationAccountOwnerId,
   resolveOutboundEmailFromAddress,
   toTwilioE164,
 } from "./_communications.js"
@@ -307,6 +308,7 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
   if (await isDemoRestrictedUser(supabase, userId)) {
     return res.status(403).json({ error: DEMO_COMM_BLOCK_MESSAGE })
   }
+  const commOwnerId = await resolveCommunicationAccountOwnerId(supabase, userId)
   if (await isSandboxUser(supabase, userId)) {
     const attachmentCount =
       (Array.isArray(inlineAttachments) ? inlineAttachments.length : 0) +
@@ -472,7 +474,7 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
 
   try {
     await logCommunicationEvent(supabase, {
-      user_id: userId,
+      user_id: commOwnerId,
       customer_id: customerId || null,
       conversation_id: conversationId || null,
       lead_id: leadId || null,
@@ -492,6 +494,7 @@ async function handleEmail(req: VercelRequest, res: VercelResponse): Promise<Ver
         resend_send_id: resendSendId || undefined,
         cc: ccList.length ? ccList : undefined,
         bcc: bccMerged.length ? bccMerged : undefined,
+        ...(userId !== commOwnerId ? { sent_by_user_id: userId } : {}),
       },
     })
   } catch (logErr) {
@@ -561,7 +564,9 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
 
   let complianceVariant: SmsOutboundComplianceVariant = "none"
   let businessDisplayName = ""
+  let commOwnerId = userId
   if (supabase && userId) {
+    commOwnerId = await resolveCommunicationAccountOwnerId(supabase, userId)
     if (await isDemoRestrictedUser(supabase, userId)) {
       return res.status(403).json({ error: DEMO_COMM_BLOCK_MESSAGE })
     }
@@ -578,7 +583,7 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
       })
       return res.status(200).json({ ok: true, provider: "sandbox", simulated: true, to, body: sandboxBody, ...sim })
     }
-    const resolved = await resolveFirstSmsComplianceForOutbound(supabase, userId, customerIdForCompliance || null)
+    const resolved = await resolveFirstSmsComplianceForOutbound(supabase, commOwnerId, customerIdForCompliance || null)
     complianceVariant = resolved.variant
     businessDisplayName = resolved.businessDisplayName
   }
@@ -617,7 +622,11 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
   if (userId && supabase && !fromNumber && !messagingServiceSid) {
     return res.status(400).json({
       error: "No Twilio SMS number on file for this user.",
-      hint: "Add an active channel with SMS enabled and set Public number to that Twilio phone (Admin → Communications). Inbound SMS must use the same number.",
+      hint:
+        commOwnerId !== userId
+          ? `Team member outbound SMS uses the business line on the account owner profile (${commOwnerId}). In Admin → Communications, open that account and ensure an active channel has SMS enabled (or voice + public number on the same Twilio DID), with Public number set.`
+          : "Add an active channel with SMS enabled and set Public number to that Twilio phone (Admin → Communications). Inbound SMS must use the same number. If voice works but SMS fails, enable SMS on the channel or ensure the Twilio number supports SMS.",
+      commOwnerUserId: commOwnerId,
     })
   }
   /** No service role on Vercel: cannot read communication_channels; allow send if a default From or Messaging Service is set. */
@@ -677,7 +686,7 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
     if (userId && supabase) {
       try {
         await logCommunicationEvent(supabase, {
-          user_id: userId,
+          user_id: commOwnerId,
           customer_id: typeof payload.customerId === "string" ? payload.customerId.trim() || null : null,
           conversation_id: conversationId || null,
           lead_id: leadIdSms || null,
@@ -692,6 +701,7 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
             provider: "twilio",
             twilio_sid: twilioParsed.sid ?? null,
             twilio_status: twilioParsed.status ?? null,
+            ...(userId !== commOwnerId ? { sent_by_user_id: userId } : {}),
           },
         })
       } catch (logErr) {
