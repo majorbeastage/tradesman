@@ -37,7 +37,8 @@
     "supabase:sql:calendar-view-as-rls": "npx --yes supabase@2.92.1 db query -f supabase/calendar-events-view-as-and-team-write-rls.sql --linked",
     "supabase:sql:org-customer-sharing-rls": "npx --yes supabase@2.92.1 db query -f supabase/org-customer-sharing-read-rls.sql --linked",
     "supabase:sql:quotes-view-as-rls": "npx --yes supabase@2.92.1 db query -f supabase/quotes-view-as-and-team-write-rls.sql --linked",
-    "supabase:sql:org-peers-profile-rls": "npx --yes supabase@2.92.1 db query -f supabase/org-peers-profile-read-rls.sql --linked"
+    "supabase:sql:org-peers-profile-rls": "npx --yes supabase@2.92.1 db query -f supabase/org-peers-profile-read-rls.sql --linked",
+    "supabase:sql:fix-org-peers-profile-recursion": "npx --yes supabase@2.92.1 db query -f supabase/fix-org-peers-profile-rls-recursion.sql --linked"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.0",

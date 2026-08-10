@@ -1,14 +1,8 @@
--- ============================================================
--- Org peer discovery: same-client profile reads
--- Run after supabase-profiles-roles.sql / supabase-office-manager-rls.sql
+-- FIX: infinite recursion detected in policy for relation "profiles"
+-- Run in Supabase SQL Editor immediately (safe to re-run).
 --
--- Lets org members list peers who share client_id (org chart, calendar
--- assign dropdown, share contact) without granting cross-tenant writes.
--- Admins still have full access via is_admin().
---
--- Uses SECURITY DEFINER lookup — never query profiles inside a profiles
--- policy directly (causes infinite recursion).
--- ============================================================
+-- Cause: "Org members read same client profiles" queried profiles inside
+-- its own RLS policy. Fix: SECURITY DEFINER helper bypasses RLS for lookup.
 
 CREATE OR REPLACE FUNCTION public.profile_shares_auth_user_client(p_profile_client_id uuid)
 RETURNS boolean
