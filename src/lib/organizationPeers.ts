@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import type { UserRole } from "../contexts/AuthContext"
 import { resolveInternalMemberLabel } from "./profileContactMeta"
 import { isProductionLinkableProfile } from "./productionOrgMembers"
+import type { ManageableUserRow } from "./portalViewRules"
 
 /** Matches AuthContext DEFAULT_CLIENT_ID — Tradesman platform org. */
 export const TRADESMAN_PLATFORM_ORG_CLIENT_ID = "00000000-0000-0000-0000-000000000001"
@@ -99,28 +100,17 @@ export async function loadOrganizationPeerIds(client: SupabaseClient, userId: st
 
   const peerIds = new Set<string>()
   const role = typeof self.role === "string" ? self.role : null
-  const clientId = typeof self.client_id === "string" && self.client_id.trim() ? self.client_id.trim() : TRADESMAN_PLATFORM_ORG_CLIENT_ID
-  const isPlatformOrg = clientId === TRADESMAN_PLATFORM_ORG_CLIENT_ID
+  const clientId =
+    typeof self.client_id === "string" && self.client_id.trim() ? self.client_id.trim() : TRADESMAN_PLATFORM_ORG_CLIENT_ID
   const isInternalRole = role === "admin" || role === "corporate_management" || role === "office_manager"
 
-  if (!isPlatformOrg) {
-    const { data: sameClient, error: clientErr } = await client
-      .from("profiles")
-      .select("id")
-      .eq("client_id", clientId)
-      .neq("id", userId)
-    if (clientErr) throw clientErr
-    for (const row of sameClient ?? []) peerIds.add(row.id as string)
-  } else if (isInternalRole) {
-    const { data: platformStaff, error: staffErr } = await client
-      .from("profiles")
-      .select("id")
-      .eq("client_id", TRADESMAN_PLATFORM_ORG_CLIENT_ID)
-      .in("role", ["admin", "corporate_management", "office_manager"])
-      .neq("id", userId)
-    if (staffErr) throw staffErr
-    for (const row of platformStaff ?? []) peerIds.add(row.id as string)
-  }
+  const { data: sameClient, error: clientErr } = await client
+    .from("profiles")
+    .select("id")
+    .eq("client_id", clientId)
+    .neq("id", userId)
+  if (clientErr) throw clientErr
+  for (const row of sameClient ?? []) peerIds.add(row.id as string)
 
   if (isInternalRole) {
     const { data: admins, error: adminErr } = await client.from("profiles").select("id").eq("role", "admin").neq("id", userId)
@@ -168,6 +158,31 @@ export async function usersShareSameOrganization(
   if (userA === userB) return true
   const peers = await loadOrganizationPeerIds(client, userA)
   return peers.includes(userB)
+}
+
+/** Append org peers missing from a scheduling / share roster (deduped by user id). */
+export function mergeOrganizationPeersIntoManageableRows(
+  base: ManageableUserRow[],
+  peers: OrganizationPeer[],
+  markSelfUserId?: string | null,
+): ManageableUserRow[] {
+  const byId = new Map(base.map((r) => [r.userId, r]))
+  for (const peer of peers) {
+    if (byId.has(peer.id)) continue
+    byId.set(peer.id, {
+      userId: peer.id,
+      label: peer.displayName,
+      email: peer.email,
+      role: peer.role ?? "user",
+      clientId: null,
+      isSelf: markSelfUserId ? peer.id === markSelfUserId : false,
+    })
+  }
+  return [...byId.values()].sort((a, b) => {
+    if (a.isSelf) return -1
+    if (b.isSelf) return 1
+    return a.label.localeCompare(b.label)
+  })
 }
 
 export function formatOrgSharedContactBody(payload: OrgSharedContactPayload): string {

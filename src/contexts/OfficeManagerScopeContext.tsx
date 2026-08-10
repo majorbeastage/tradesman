@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo } from "react"
+import { type ReactNode, useEffect, useMemo, useState } from "react"
 import {
   usePortalViewOptional,
   useEffectiveUserId,
@@ -6,6 +6,13 @@ import {
   useEffectiveClientId,
 } from "./PortalViewContext"
 import type { PortalConfig } from "../types/portal-builder"
+import type { ManageableUserRow } from "../lib/portalViewRules"
+import { supabase } from "../lib/supabase"
+import {
+  loadOrganizationPeers,
+  mergeOrganizationPeersIntoManageableRows,
+  type OrganizationPeer,
+} from "../lib/organizationPeers"
 
 export type ManagedClientRow = {
   userId: string
@@ -33,20 +40,53 @@ export function OfficeManagerScopeProvider({ children }: { children: ReactNode }
 
 export function useOfficeManagerScopeOptional(): OfficeScopeValue | null {
   const pv = usePortalViewOptional()
-  if (!pv) return null
-  const rosterSource = useMemo(() => {
+  const [orgPeers, setOrgPeers] = useState<OrganizationPeer[]>([])
+
+  useEffect(() => {
+    if (!supabase || !pv?.authUserId) {
+      setOrgPeers([])
+      return
+    }
+    let cancelled = false
+    void loadOrganizationPeers(supabase, pv.authUserId)
+      .then((peers) => {
+        if (!cancelled) setOrgPeers(peers)
+      })
+      .catch(() => {
+        if (!cancelled) setOrgPeers([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [pv?.authUserId])
+
+  const rosterSource = useMemo((): ManageableUserRow[] => {
+    if (!pv) return []
+
+    let base: ManageableUserRow[]
+    let mergePeers = false
+
     if (pv.authRole === "admin") {
-      if (pv.orgScopedUsers.length > 0) return pv.orgScopedUsers
-      if (pv.viewingOtherProfile && pv.targetUserId) {
+      if (pv.orgScopedUsers.length > 0) {
+        base = pv.orgScopedUsers
+      } else if (pv.viewingOtherProfile && pv.targetUserId) {
         const target =
           pv.manageableUsers.find((u) => u.userId === pv.targetUserId) ??
           pv.orgScopedUsers.find((u) => u.userId === pv.targetUserId)
-        return target ? [target] : []
+        base = target ? [target] : []
+      } else {
+        base = pv.manageableUsers.filter((u) => u.userId === pv.authUserId)
+        mergePeers = true
       }
-      return pv.manageableUsers.filter((u) => u.userId === pv.authUserId)
+    } else {
+      base = pv.manageableUsers
+      mergePeers = true
     }
-    return pv.manageableUsers
-  }, [pv])
+
+    if (!mergePeers || orgPeers.length === 0) return base
+    return mergeOrganizationPeersIntoManageableRows(base, orgPeers, pv.authUserId)
+  }, [pv, orgPeers])
+
   const clients = useMemo(
     () =>
       rosterSource.map((u) => ({
@@ -58,6 +98,7 @@ export function useOfficeManagerScopeOptional(): OfficeScopeValue | null {
       })),
     [rosterSource],
   )
+  if (!pv) return null
   return {
     clients,
     selectedUserId: pv.targetUserId,

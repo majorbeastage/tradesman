@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, type CSSProperties } from "react"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { theme } from "../../styles/theme"
 import { useAuth } from "../../contexts/AuthContext"
@@ -35,6 +35,16 @@ type Props = {
 
 function newInvoiceLine(): InvoiceLineItem {
   return { id: crypto.randomUUID(), description: "", quantity: 1, unit_price: 0, line_kind: "misc" }
+}
+
+const secondaryBtn: CSSProperties = {
+  padding: "8px 12px",
+  borderRadius: 6,
+  border: `1px solid ${theme.border}`,
+  background: "#fff",
+  color: theme.text,
+  fontWeight: 600,
+  cursor: "pointer",
 }
 
 export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) {
@@ -339,11 +349,11 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
       ) : null}
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-        <button type="button" onClick={startNewInvoice} style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "#fff", fontWeight: 600, cursor: "pointer" }}>
+        <button type="button" onClick={startNewInvoice} style={secondaryBtn}>
           New invoice
         </button>
         {setPage ? (
-          <button type="button" onClick={() => setPage("payments")} style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${theme.border}`, background: "#fff", fontWeight: 600, cursor: "pointer" }}>
+          <button type="button" onClick={() => setPage("payments")} style={secondaryBtn}>
             Payment collection
           </button>
         ) : null}
@@ -580,7 +590,7 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
         <button type="button" disabled={busy} onClick={() => void handleSave()} style={{ padding: "10px 16px", borderRadius: 8, border: "none", background: theme.primary, color: "#fff", fontWeight: 700, cursor: "pointer" }}>
           {busy ? "Working…" : "Save invoice"}
         </button>
-        <button type="button" disabled={busy} onClick={() => void handleDownloadPdf()} style={{ padding: "10px 16px", borderRadius: 8, border: `1px solid ${theme.border}`, background: "#fff", fontWeight: 700, cursor: "pointer" }}>
+        <button type="button" disabled={busy} onClick={() => void handleDownloadPdf()} style={{ ...secondaryBtn, padding: "10px 16px", borderRadius: 8, fontWeight: 700 }}>
           Download PDF
         </button>
         <div style={{ position: "relative" }}>
@@ -599,7 +609,7 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
                   key={ch}
                   type="button"
                   onClick={() => void handleSend(ch)}
-                  style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 14px", border: "none", background: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+                  style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 14px", border: "none", background: "#fff", color: theme.text, cursor: "pointer", fontSize: 13, fontWeight: 600 }}
                 >
                   {ch === "both" ? "Email + Text" : ch === "email" ? "Email" : "Text"}
                 </button>
