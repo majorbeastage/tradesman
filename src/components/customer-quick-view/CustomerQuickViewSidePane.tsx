@@ -44,7 +44,7 @@ import {
   type CustomerQuickViewTabVisibility,
 } from "../../lib/customerQuickViewPrefs"
 import { calendarEventDisplayStatus } from "../../lib/calendarEventProfile"
-import { queueSchedulingCustomerPrefill, queueSchedulingEventView } from "../../lib/workflowNavigation"
+import { queueSchedulingCustomerPrefill, queueSchedulingEventView, queueSchedulingForWorkflowStep } from "../../lib/workflowNavigation"
 import { useSandboxTrainingMode } from "../../lib/sandboxTrainingUi"
 
 type CustomerRowLite = {
@@ -508,6 +508,15 @@ export function CustomerQuickViewSidePane({
         pendingNodeIds={quoteWorkflowState?.pendingNodeIds ?? []}
         currentNodeId={activeNodeId}
         onCompleteStep={(nodeId) => void completeWorkflowStep(nodeId)}
+        onScheduleStep={(nodeId, stepLabel) => {
+          queueSchedulingForWorkflowStep({
+            customerId: customer.id,
+            workflowNodeId: nodeId,
+            stepLabel,
+            quoteId: quoteForWorkflow?.id ?? null,
+          })
+          if (setPage) setPage("calendar")
+        }}
         completeBusy={workflowStepCompleteBusy}
       />
     )

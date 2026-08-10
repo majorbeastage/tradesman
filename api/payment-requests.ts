@@ -14,6 +14,7 @@ import {
   buildSecretPayloadForSave,
   getPaymentProvider,
   parseProviderCredentialsFromDb,
+  PAYMENT_PROVIDER_IDS,
   type PaymentProviderId,
 } from "./_paymentProviders.js"
 import { PDFDocument, StandardFonts } from "pdf-lib"
@@ -83,7 +84,7 @@ async function loadProfilePaymentContext(sb: SupabaseClient, userId: string) {
   const autoReceipt = meta.payment_auto_receipt_on_paid !== false
   const defaultProvider =
     typeof meta.payment_default_provider === "string" &&
-    (meta.payment_default_provider === "helcim" || meta.payment_default_provider === "square" || meta.payment_default_provider === "manual")
+    PAYMENT_PROVIDER_IDS.includes(meta.payment_default_provider as PaymentProviderId)
       ? (meta.payment_default_provider as PaymentProviderId)
       : "helcim"
   return { customerPayLink, helcimCode, autoReceipt, defaultProvider, metadata: meta }
@@ -352,7 +353,7 @@ async function handleSend(req: VercelRequest, res: VercelResponse) {
 async function handleProviderStatus(req: VercelRequest, res: VercelResponse) {
   const body = (req.body ?? {}) as Json
   const { sb, userId } = await resolveSupabase(req, body)
-  const providers: PaymentProviderId[] = ["helcim", "square", "manual"]
+  const providers: PaymentProviderId[] = PAYMENT_PROVIDER_IDS
   const status: Record<string, { connected: boolean; accountLabel?: string | null }> = {}
   for (const p of providers) {
     const { data } = await sb
@@ -367,7 +368,14 @@ async function handleProviderStatus(req: VercelRequest, res: VercelResponse) {
         ? Boolean(creds?.manualPaymentUrlTemplate)
         : p === "helcim"
           ? Boolean(creds?.helcimApiToken || firstEnv("HELCIM_API_TOKEN"))
-          : Boolean(creds?.squareAccessToken && creds?.squareLocationId)
+          : p === "clover"
+            ? Boolean(
+                (creds?.cloverMerchantId && creds?.cloverPrivateKey) ||
+                  (firstEnv("CLOVER_MERCHANT_ID", "CLOVER_MID") && firstEnv("CLOVER_PRIVATE_KEY", "CLOVER_API_PRIVATE_KEY")),
+              )
+            : p === "stripe"
+              ? Boolean(creds?.stripeSecretKey || firstEnv("STRIPE_SECRET_KEY", "STRIPE_API_SECRET_KEY"))
+              : Boolean(creds?.squareAccessToken && creds?.squareLocationId)
     status[p] = { connected, accountLabel: data?.account_label ?? null }
   }
   const profileCtx = await loadProfilePaymentContext(sb, userId)
@@ -384,7 +392,7 @@ async function handleSaveCredentials(req: VercelRequest, res: VercelResponse) {
   const body = (req.body ?? {}) as Json
   const { sb, userId } = await resolveSupabase(req, body)
   const provider = String(body.provider ?? "").trim() as PaymentProviderId
-  if (!provider || !["helcim", "square", "manual"].includes(provider)) {
+  if (!provider || !PAYMENT_PROVIDER_IDS.includes(provider)) {
     res.status(400).json({ error: "Invalid provider." })
     return
   }
@@ -413,7 +421,7 @@ async function handleSaveCredentials(req: VercelRequest, res: VercelResponse) {
   const profileCtx = await loadProfilePaymentContext(sb, userId)
   const nextMeta = { ...profileCtx.metadata }
   let metaDirty = false
-  if (defaultProvider === "helcim" || defaultProvider === "square" || defaultProvider === "manual") {
+  if (PAYMENT_PROVIDER_IDS.includes(defaultProvider as PaymentProviderId)) {
     nextMeta.payment_default_provider = defaultProvider
     metaDirty = true
   }
@@ -440,11 +448,46 @@ async function handleSaveCredentials(req: VercelRequest, res: VercelResponse) {
 async function handleWebhook(req: VercelRequest, res: VercelResponse) {
   const sb = createServiceSupabase()
   const body = (req.body ?? {}) as Json
+  const bodyData = body.data && typeof body.data === "object" && !Array.isArray(body.data) ? (body.data as Json) : null
+  const stripeObject =
+    bodyData?.object && typeof bodyData.object === "object" && !Array.isArray(bodyData.object)
+      ? (bodyData.object as Json)
+      : null
+  const stripeEventType = String(body.type ?? "").trim()
+  const cloverSessionRef =
+    typeof body.checkoutSessionId === "string"
+      ? body.checkoutSessionId
+      : typeof body.Data === "string"
+        ? body.Data
+        : typeof body.data === "string"
+          ? body.data
+          : ""
+  const stripeSessionRef =
+    stripeEventType.startsWith("checkout.session") && typeof stripeObject?.id === "string" ? stripeObject.id : ""
   const providerRef =
-    String(body.invoiceId ?? body.invoice_id ?? body.transactionId ?? body.id ?? body.reference ?? "").trim() ||
-    String((body.data as Json | undefined)?.id ?? "").trim()
-  const statusRaw = String(body.status ?? body.paymentStatus ?? (body.data as Json | undefined)?.status ?? "").toLowerCase()
-  const paid = /paid|approved|captured|success|completed/.test(statusRaw)
+    String(
+      body.invoiceId ??
+        body.invoice_id ??
+        body.transactionId ??
+        body.checkoutSessionId ??
+        cloverSessionRef ??
+        stripeSessionRef ??
+        body.id ??
+        body.reference ??
+        "",
+    ).trim() || String(bodyData?.id ?? bodyData?.checkoutSessionId ?? stripeObject?.id ?? "").trim()
+  const statusRaw = String(
+    body.status ??
+      body.paymentStatus ??
+      stripeObject?.payment_status ??
+      bodyData?.status ??
+      (bodyData as Json | undefined)?.paymentStatus ??
+      "",
+  ).toLowerCase()
+  const paid =
+    /paid|approved|captured|success|completed/.test(statusRaw) ||
+    stripeEventType === "checkout.session.completed" ||
+    stripeObject?.payment_status === "paid"
   if (!providerRef) {
     res.status(200).json({ ok: true, ignored: true })
     return

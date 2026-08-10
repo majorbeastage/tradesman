@@ -3149,6 +3149,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             inviteeUserIds: addVideoCallInvitees,
           })
         }
+        if (addWorkflowNodeIdRef.current) {
+          meta = { ...meta, workflow_node_id: addWorkflowNodeIdRef.current }
+        }
         if (Object.keys(meta).length > 0) row.metadata = meta
         if (includeMat && materialsFromJobType) row.materials_list = materialsFromJobType
         if (includeMile && mileageMiles != null) row.mileage_miles = mileageMiles
@@ -3201,7 +3204,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     }
     if (addCustomerId) {
       await refreshCustomerPipelineOnEngagement(supabase, addCustomerId, "scheduled")
-      await autoAdvanceCustomerWorkflow(supabase, eventOwnerUserId, addCustomerId, "job_scheduled")
+      await autoAdvanceCustomerWorkflow(supabase, eventOwnerUserId, addCustomerId, "job_scheduled", {
+        targetNodeId: addWorkflowNodeIdRef.current,
+      })
     }
 
     if ((addNotifyEmail || addNotifySms) && addCustomerId) {
@@ -3244,9 +3249,12 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     setAddVideoCall(false)
     setAddConferenceCall(false)
     setAddVideoCallInvitees([])
+    addWorkflowNodeIdRef.current = null
   }
 
   const pendingAddJobTypeRef = useRef<string | null>(null)
+  const addWorkflowNodeIdRef = useRef<string | null>(null)
+  const pendingAddQuotePrefillRef = useRef<string | null>(null)
 
   const applySchedulingAddWizardPrefill = useCallback(
     (prefill: SchedulingAddWizardPrefill) => {
@@ -3268,7 +3276,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         }
       }
       if (prefill.customerId) setAddCustomerId(prefill.customerId)
+      if (prefill.quoteId?.trim()) pendingAddQuotePrefillRef.current = prefill.quoteId.trim()
       if (prefill.notes) setAddNotes(prefill.notes)
+      if (prefill.workflowNodeId?.trim()) addWorkflowNodeIdRef.current = prefill.workflowNodeId.trim()
       setShowAddItem(true)
       if (userId) setAddTargetUserId(userId)
     },
@@ -3398,6 +3408,9 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       resetAddForm()
       setAddCustomerId(quotePrefill.customerId)
       setAddQuoteId(quotePrefill.quoteId)
+      if (quotePrefill.workflowNodeId?.trim()) {
+        addWorkflowNodeIdRef.current = quotePrefill.workflowNodeId.trim()
+      }
       setShowAddItem(true)
       setAddTargetUserId(userId)
       void applyAddQuoteSelection(quotePrefill.quoteId)
@@ -3438,6 +3451,34 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       .then(setAddCustomerOptions)
       .catch(() => setAddCustomerOptions([]))
   }, [showAddItem, supabase, userId, teamStructureOwnerId, calendarDbUserId])
+
+  useEffect(() => {
+    if (!showAddItem || !addCustomerId || !supabase) return
+    if (addCustomerOptions.some((c) => c.id === addCustomerId)) return
+    void (async () => {
+      const { data } = await supabase
+        .from("customers")
+        .select("id, display_name, service_address, metadata, customer_identifiers ( type, value )")
+        .eq("id", addCustomerId)
+        .maybeSingle()
+      if (!data) return
+      const ids = (data as { customer_identifiers?: Array<{ type?: string; value?: string | null }> }).customer_identifiers ?? []
+      const phone = ids.find((i) => i.type === "phone")?.value?.trim() ?? ""
+      const email = ids.find((i) => i.type === "email")?.value?.trim() ?? ""
+      const service_address =
+        typeof (data as { service_address?: string | null }).service_address === "string"
+          ? String((data as { service_address?: string | null }).service_address).trim()
+          : ""
+      const row: CustomerReceiptPickerRow = {
+        id: String((data as { id: string }).id),
+        display_name: String((data as { display_name?: string | null }).display_name ?? "").trim() || "Customer",
+        phone,
+        email,
+        service_address,
+      }
+      setAddCustomerOptions((prev) => (prev.some((c) => c.id === row.id) ? prev : [...prev, row]))
+    })()
+  }, [showAddItem, addCustomerId, supabase, addCustomerOptions])
 
   useEffect(() => {
     if (!showAddItem) return
@@ -3662,7 +3703,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
 
   const filteredAddCustomers = useMemo(() => {
     const q = addCustomerSearch.trim().toLowerCase()
-    if (!q) return addCustomerOptions.slice(0, 80)
+    if (!q) return addCustomerOptions
     return addCustomerOptions
       .filter(
         (c) =>
@@ -3734,6 +3775,13 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     },
     [supabase, addQuoteOptions],
   )
+
+  useEffect(() => {
+    const qid = pendingAddQuotePrefillRef.current
+    if (!showAddItem || !qid) return
+    pendingAddQuotePrefillRef.current = null
+    void applyAddQuoteSelection(qid)
+  }, [showAddItem, applyAddQuoteSelection])
 
   const eventScheduleDirty = useMemo(() => {
     if (!selectedEvent) return false

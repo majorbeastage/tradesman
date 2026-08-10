@@ -43,7 +43,7 @@ export function inferWorkflowStepIntention(node: WorkflowNode, tool: WorkflowToo
   if (/work order|\bwo\b|field tech|technician dispatch/.test(label)) {
     return "create_work_order"
   }
-  if (/schedule|calendar|dispatch|assign.*crew|resource/.test(label)) {
+  if (/schedule|calendar|dispatch|assign.*crew|resource|site.?survey|\bsurvey\b/.test(label)) {
     return "schedule_resources"
   }
   if (/job complete|receipt|work order sent|close.?out/.test(label)) {

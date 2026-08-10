@@ -13,6 +13,7 @@ import { buildCustomerWorkflowStepCompleteUpdate } from "../../lib/customerWorkf
 import { maybeAutoShareCustomerWithWorkflowAssignee } from "../../lib/workflowStepAutoShare"
 import { inferCustomerWorkflowStep } from "../../lib/inferCustomerWorkflowStep"
 import { inferWorkflowStepIntention, intentionPrimaryButtonLabel } from "../../lib/workflowStepIntention"
+import { queueSchedulingForWorkflowStep } from "../../lib/workflowNavigation"
 import { loadLinkableOrgUsers } from "../../lib/orgChartMembers"
 import type { CustomerQuickViewTabId } from "./customerQuickViewTabs"
 
@@ -249,6 +250,16 @@ export function CustomerQuickViewNextSteps({
   function handleAction() {
     if (shouldCompleteStepOnAction(stepIntention) && currentNodeId) {
       void completeCurrentStep()
+      return
+    }
+    if (stepIntention === "schedule_resources" && setPage) {
+      queueSchedulingForWorkflowStep({
+        customerId: customer.id,
+        workflowNodeId: currentNodeId,
+        stepLabel,
+        quoteId,
+      })
+      setPage("calendar")
       return
     }
     if (targetTab === "estimates" && quoteId && onOpenQuote) {

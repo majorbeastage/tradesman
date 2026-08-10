@@ -7,6 +7,7 @@ import type { BusinessWorkflowDoc, WorkflowEdge, WorkflowNode } from "./business
 import {
   loadBusinessWorkflowFromMetadata,
   BUSINESS_WORKFLOW_META_KEY,
+  sortedWorkflowNodes,
 } from "./businessWorkflow"
 import { inferWorkflowStepIntention, intentionPrimaryButtonLabel } from "./workflowStepIntention"
 import type { ExternalContactsDoc } from "./externalContacts"
@@ -313,6 +314,23 @@ export function isOperationalHandoffNode(node: WorkflowNode): boolean {
   )
 }
 
+/** Hide estimate actions for steps the customer already finished or hasn't reached yet. */
+export function isEstimateActionVisibleForCustomerProgress(
+  workflow: BusinessWorkflowDoc,
+  nodeId: string,
+  customerCompletedNodeIds: string[],
+  pendingOnQuote: boolean,
+): boolean {
+  if (pendingOnQuote) return true
+  if (customerCompletedNodeIds.includes(nodeId)) return false
+  const nodes = sortedWorkflowNodes(workflow)
+  const firstOpen = nodes.find((n) => !customerCompletedNodeIds.includes(n.id))
+  if (!firstOpen) return false
+  const node = nodes.find((n) => n.id === nodeId)
+  if (!node) return false
+  return node.order <= firstOpen.order
+}
+
 export function isWorkflowProcessOverseer(
   userId: string | null | undefined,
   workflow: BusinessWorkflowDoc,
@@ -443,8 +461,10 @@ export function computeEstimateWorkflowActions(input: {
   state: QuoteInternalWorkflowState
   quoteHasLineItems: boolean
   canBypassApprovals?: boolean
+  customerCompletedNodeIds?: string[]
 }): WorkflowActionButton[] {
   const { workflow, orgChart, externalContacts, linkableUsers, state, quoteHasLineItems, canBypassApprovals } = input
+  const customerCompleted = input.customerCompletedNodeIds ?? []
   const actions: WorkflowActionButton[] = []
   const completed = new Set(state.completedNodeIds)
   const pending = new Set(state.pendingNodeIds)
@@ -453,6 +473,11 @@ export function computeEstimateWorkflowActions(input: {
 
   for (const node of workflow.nodes) {
     if (completed.has(node.id) || isCustomerSendNode(node)) continue
+    if (
+      !isEstimateActionVisibleForCustomerProgress(workflow, node.id, customerCompleted, pending.has(node.id))
+    ) {
+      continue
+    }
 
     if (pending.has(node.id)) {
       const assignee = resolveWorkflowNodeAssignee(node, orgChart, externalContacts, linkableUsers)

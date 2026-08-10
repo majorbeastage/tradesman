@@ -34,7 +34,7 @@ import { mergeSandboxWorkflowSeedMetadata } from "../../lib/sandboxWorkflowSeed"
 import { PROFILE_METADATA_APPLIED_EVENT, type ProfileMetadataAppliedDetail } from "../../lib/profileMetadataEvents"
 import type { WorkflowNode } from "../../lib/businessWorkflow"
 import { resolveEstimatePrimaryDeliveryAction, inferWorkflowStepIntention, operationalHandoffButtonLabel } from "../../lib/workflowStepIntention"
-import { mergeCustomerWorkflowMeta, snapshotFromQuoteWorkflow } from "../../lib/customerWorkflowRouting"
+import { mergeCustomerWorkflowMeta, parseCustomerWorkflowMeta, snapshotFromQuoteWorkflow } from "../../lib/customerWorkflowRouting"
 import { loadLinkableOrgUsers, type LinkableOrgUser } from "../../lib/orgChartMembers"
 import { sandboxTrainingAlert, useSandboxTrainingMode } from "../../lib/sandboxTrainingUi"
 import { useAuth } from "../../contexts/AuthContext"
@@ -384,6 +384,7 @@ function buildQuoteDetailSelect(opts: { withJobType: boolean; fullCustomer: bool
           service_address,
           service_lat,
           service_lng,
+          metadata,
           customer_identifiers (
             type,
             value
@@ -391,6 +392,7 @@ function buildQuoteDetailSelect(opts: { withJobType: boolean; fullCustomer: bool
         )`
       : `        customers (
           display_name,
+          metadata,
           customer_identifiers (
             type,
             value
@@ -788,6 +790,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
     return parseQuoteInternalWorkflow(selectedQuote?.metadata)
   }, [selectedQuote?.metadata, selectedQuote?.id])
 
+  const customerCompletedNodeIds = useMemo((): string[] => {
+    const meta = selectedQuote?.customers?.metadata
+    return parseCustomerWorkflowMeta(meta)?.completedNodeIds ?? []
+  }, [selectedQuote?.customers?.metadata, selectedQuote?.customer_id])
+
   useEffect(() => {
     if (!supabase || !userId || !selectedQuote?.id) {
       setExistingWorkOrder(null)
@@ -816,6 +823,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
       state: quoteInternalWorkflowState,
       quoteHasLineItems: selectedQuoteItems.length > 0,
       canBypassApprovals: sandboxTraining || canBypassEstimateApprovals(profileRole, profileMetadata),
+      customerCompletedNodeIds,
     })
     return filterWorkflowActionsForUser(raw, {
       workflow: accountWorkflowBundle.workflow,
@@ -824,7 +832,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
       profileRole,
       canBypassApprovals: sandboxTraining || canBypassEstimateApprovals(profileRole, profileMetadata),
     })
-  }, [accountWorkflowBundle, linkableOrgUsers, quoteInternalWorkflowState, selectedQuoteItems.length, sandboxTraining, profileRole, profileMetadata, userId])
+  }, [accountWorkflowBundle, linkableOrgUsers, quoteInternalWorkflowState, customerCompletedNodeIds, selectedQuoteItems.length, sandboxTraining, profileRole, profileMetadata, userId])
 
   const estimateParallelHandoffs = useMemo((): WorkflowActionButton[] => {
     if (!accountWorkflowBundle) return []

@@ -411,7 +411,7 @@ export async function loadCustomersForCustomReceipt(
     .select("id, display_name, service_address, job_pipeline_status, metadata, customer_identifiers ( type, value )")
     .eq("user_id", userId)
     .order("display_name", { ascending: true })
-    .limit(500)
+    .limit(3000)
   if (error) throw error
   return (data ?? [])
     .filter((row) =>

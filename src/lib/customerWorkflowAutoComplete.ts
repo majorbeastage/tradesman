@@ -2,10 +2,10 @@
  * Event-driven auto-completion of a customer's business-workflow steps.
  *
  * When a real event happens (estimate sent, signed estimate received, job added
- * to the calendar, customer payment received) we intelligently mark the matching
- * workflow step — and every step before it — complete, then advance the customer
- * to the next open step. Step matching is by label semantics (see stageForNodeLabel)
- * so it works regardless of what the business names their steps.
+ * to the calendar, customer payment received) we mark the matching workflow step
+ * complete and advance to the next open step. Only the current active step (or an
+ * explicit target node) is completed per event — never every step through the last
+ * label match (supports multiple schedule steps in one workflow).
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js"
@@ -39,20 +39,51 @@ export type WorkflowAutoCompleteResult = {
   currentNodeLabel: string | null
 }
 
+export type WorkflowAutoCompleteOptions = {
+  /** Explicit workflow node to complete (e.g. calendar event linked to a schedule step). */
+  targetNodeId?: string | null
+  /** Customer's current active node from metadata (used when targetNodeId omitted). */
+  activeNodeId?: string | null
+  /** Already completed node ids (used to pick the first matching open step). */
+  completedNodeIds?: string[]
+}
+
 /**
- * Node ids this event implies are done: the highest-order step matching the
- * event's stage plus every step before it (sequential workflows complete in order).
+ * Node ids this event should complete: only the target/active step when its label
+ * stage matches the event — not every prior step and not every later duplicate stage.
  */
-export function computeWorkflowAutoCompleteNodeIds(workflow: BusinessWorkflowDoc, event: WorkflowAutoEvent): string[] {
+export function computeWorkflowAutoCompleteNodeIds(
+  workflow: BusinessWorkflowDoc,
+  event: WorkflowAutoEvent,
+  options: WorkflowAutoCompleteOptions = {},
+): string[] {
   const nodes = sortedWorkflowNodes(workflow)
   if (nodes.length === 0) return []
   const stage = EVENT_STAGE[event]
-  let targetIdx = -1
-  nodes.forEach((node, i) => {
-    if (stageForNodeLabel(node.label) === stage) targetIdx = i
-  })
-  if (targetIdx < 0) return []
-  return nodes.slice(0, targetIdx + 1).map((n) => n.id)
+  const completed = new Set(options.completedNodeIds ?? [])
+
+  const tryNode = (nodeId: string | null | undefined, requireStageMatch: boolean): string[] => {
+    const id = nodeId?.trim()
+    if (!id || completed.has(id)) return []
+    const node = nodes.find((n) => n.id === id)
+    if (!node) return []
+    if (requireStageMatch && stageForNodeLabel(node.label) !== stage) return []
+    return [id]
+  }
+
+  // Explicit workflow node from calendar handoff — complete that step even when the label
+  // does not match the generic stage regex (e.g. custom "Site survey" steps).
+  const explicit = tryNode(options.targetNodeId, false)
+  if (explicit.length > 0) return explicit
+
+  const active = tryNode(options.activeNodeId, true)
+  if (active.length > 0) return active
+
+  for (const node of nodes) {
+    if (completed.has(node.id)) continue
+    if (stageForNodeLabel(node.label) === stage) return [node.id]
+  }
+  return []
 }
 
 /** Pure reducer: fold an event's implied completions into the existing set, never un-completing. */
@@ -60,11 +91,15 @@ export function applyWorkflowAutoComplete(
   workflow: BusinessWorkflowDoc,
   existingCompletedNodeIds: string[],
   event: WorkflowAutoEvent,
+  options: WorkflowAutoCompleteOptions = {},
 ): WorkflowAutoCompleteResult {
   const nodes = sortedWorkflowNodes(workflow)
   const validIds = new Set(nodes.map((n) => n.id))
   const set = new Set(existingCompletedNodeIds.filter((id) => validIds.has(id)))
-  const target = computeWorkflowAutoCompleteNodeIds(workflow, event)
+  const target = computeWorkflowAutoCompleteNodeIds(workflow, event, {
+    ...options,
+    completedNodeIds: [...set],
+  })
 
   let changed = false
   for (const id of target) {
@@ -94,6 +129,7 @@ export async function autoAdvanceCustomerWorkflow(
   ownerUserId: string | null | undefined,
   customerId: string | null | undefined,
   event: WorkflowAutoEvent,
+  options: WorkflowAutoCompleteOptions = {},
 ): Promise<boolean> {
   try {
     if (!supabase || !ownerUserId || !customerId) return false
@@ -105,8 +141,14 @@ export async function autoAdvanceCustomerWorkflow(
     const { data: cust } = await supabase.from("customers").select("metadata").eq("id", customerId).maybeSingle()
     if (!cust) return false
 
-    const existing = parseCustomerWorkflowMeta((cust as { metadata?: unknown }).metadata)?.completedNodeIds ?? []
-    const result = applyWorkflowAutoComplete(bundle.workflow, existing, event)
+    const customerMeta = parseCustomerWorkflowMeta((cust as { metadata?: unknown }).metadata)
+    const existing = customerMeta?.completedNodeIds ?? []
+    const activeNodeId = options.activeNodeId ?? customerMeta?.activeNodeId ?? null
+    const result = applyWorkflowAutoComplete(bundle.workflow, existing, event, {
+      ...options,
+      activeNodeId,
+      completedNodeIds: existing,
+    })
     if (!result.changed) return false
 
     const nextNode = result.currentNodeId

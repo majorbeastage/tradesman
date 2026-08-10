@@ -37,7 +37,7 @@ export function stageForNodeLabel(label: string): StageKey | null {
   if (/lead|intake|reception|inquir|contact|call/.test(l)) return "intake"
   if (/estimate|quote|bid|proposal/.test(l)) return "estimate"
   if (/approv|sign.?off|signoff|accept|review/.test(l)) return "approval"
-  if (/schedul|dispatch|assign|calendar|book/.test(l)) return "schedule"
+  if (/schedul|dispatch|assign|calendar|book|site.?survey|\bsurvey\b/.test(l)) return "schedule"
   if (/field|install|service|technician|job site|complete job|perform/.test(l)) return "field"
   if (/parts|purchase|order|inventory|shop|supply/.test(l)) return "parts"
   if (/invoice|bill|payment|collect|accounting/.test(l)) return "billing"

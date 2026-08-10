@@ -583,7 +583,7 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
 
       <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
         <input type="checkbox" checked={includePaymentLink} onChange={(e) => setIncludePaymentLink(e.target.checked)} />
-        Include payment link when sending (Helcim / configured provider)
+        Include payment link when sending (Helcim / Clover / Stripe / configured provider)
       </label>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>

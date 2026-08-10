@@ -7,13 +7,16 @@ import { loadCustomersForCustomReceipt, type CustomerReceiptPickerRow } from "..
 import {
   createPaymentRequestLink,
   fetchPaymentProviderStatus,
-  formatPaymentAmount,
   loadPaymentRequests,
   loadPaymentSourceEvents,
+  loadPaymentSourceInvoices,
   loadPaymentSourceQuotes,
   paymentStatusLabel,
+  resolvePaymentLinkSelection,
   savePaymentProviderCredentials,
   sendPaymentRequest,
+  PAYMENT_PROVIDER_IDS,
+  paymentProviderLabel,
   type PaymentProviderId,
   type PaymentRequestRow,
   type PaymentSentVia,
@@ -39,11 +42,13 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
   const [customerSearch, setCustomerSearch] = useState("")
   const [customerId, setCustomerId] = useState("")
   const [quoteId, setQuoteId] = useState("")
+  const [invoiceId, setInvoiceId] = useState("")
   const [eventId, setEventId] = useState("")
   const [amount, setAmount] = useState("")
   const [description, setDescription] = useState("")
   const [provider, setProvider] = useState<PaymentProviderId>("helcim")
   const [quotes, setQuotes] = useState<Awaited<ReturnType<typeof loadPaymentSourceQuotes>>>([])
+  const [invoices, setInvoices] = useState<Awaited<ReturnType<typeof loadPaymentSourceInvoices>>>([])
   const [events, setEvents] = useState<Awaited<ReturnType<typeof loadPaymentSourceEvents>>>([])
   const [requests, setRequests] = useState<PaymentRequestRow[]>([])
   const [activeRequest, setActiveRequest] = useState<PaymentRequestRow | null>(null)
@@ -57,10 +62,17 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
   const [helcimToken, setHelcimToken] = useState("")
   const [squareToken, setSquareToken] = useState("")
   const [squareLocation, setSquareLocation] = useState("")
+  const [cloverMerchantId, setCloverMerchantId] = useState("")
+  const [cloverPrivateKey, setCloverPrivateKey] = useState("")
+  const [cloverPageConfigUuid, setCloverPageConfigUuid] = useState("")
+  const [cloverSandbox, setCloverSandbox] = useState(false)
+  const [stripeSecretKey, setStripeSecretKey] = useState("")
+  const [stripeWebhookSecret, setStripeWebhookSecret] = useState("")
   const [manualUrl, setManualUrl] = useState("")
   const [fallbackPayUrl, setFallbackPayUrl] = useState("")
   const [autoReceipt, setAutoReceipt] = useState(true)
   const pendingQuotePrefillRef = useRef<string | null>(null)
+  const pendingInvoicePrefillRef = useRef<string | null>(null)
   const [editingRequest, setEditingRequest] = useState<PaymentRequestRow | null>(null)
 
   const filteredCustomers = useMemo(() => {
@@ -118,45 +130,84 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
       if (prefill.amount) setAmount(prefill.amount)
       if (prefill.description) setDescription(prefill.description)
       if (prefill.quoteId) pendingQuotePrefillRef.current = prefill.quoteId
+      if (prefill.invoiceId) pendingInvoicePrefillRef.current = prefill.invoiceId
     }
   }, [userId, reloadRequests, reloadProviderStatus])
 
   useEffect(() => {
     if (!userId || !customerId) {
       setQuotes([])
+      setInvoices([])
       setEvents([])
       if (!customerId) {
         setQuoteId("")
+        setInvoiceId("")
         setEventId("")
       }
       return
     }
-    void loadPaymentSourceQuotes(userId, customerId).then((loaded) => {
-      setQuotes(loaded)
-      const pending = pendingQuotePrefillRef.current
-      if (pending) {
+    void Promise.all([
+      loadPaymentSourceQuotes(userId, customerId),
+      loadPaymentSourceInvoices(userId, customerId),
+      loadPaymentSourceEvents(userId, customerId),
+    ]).then(([loadedQuotes, loadedInvoices, loadedEvents]) => {
+      setQuotes(loadedQuotes)
+      setInvoices(loadedInvoices)
+      setEvents(loadedEvents)
+
+      const pendingInvoice = pendingInvoicePrefillRef.current
+      if (pendingInvoice) {
+        pendingInvoicePrefillRef.current = null
         pendingQuotePrefillRef.current = null
-        setQuoteId(pending)
+        applyLinkedSelection("invoice", pendingInvoice, loadedQuotes, loadedInvoices, loadedEvents)
+        return
+      }
+
+      const pendingQuote = pendingQuotePrefillRef.current
+      if (pendingQuote) {
+        pendingQuotePrefillRef.current = null
+        applyLinkedSelection("quote", pendingQuote, loadedQuotes, loadedInvoices, loadedEvents)
       }
     })
-    void loadPaymentSourceEvents(userId, customerId).then(setEvents)
   }, [userId, customerId])
+
+  function applyLinkedSelection(
+    source: "quote" | "invoice" | "event",
+    id: string,
+    quoteRows = quotes,
+    invoiceRows = invoices,
+    eventRows = events,
+  ) {
+    const resolved = resolvePaymentLinkSelection({
+      source,
+      id,
+      quotes: quoteRows,
+      events: eventRows,
+      invoices: invoiceRows,
+    })
+    setQuoteId(resolved.quoteId)
+    setInvoiceId(resolved.invoiceId)
+    setEventId(resolved.eventId)
+    if (resolved.amount) setAmount(resolved.amount)
+    if (resolved.description) setDescription((prev) => prev.trim() || resolved.description)
+  }
 
   function applyQuoteSelection(id: string) {
     setQuoteId(id)
-    const q = quotes.find((x) => x.id === id)
-    if (!q) return
-    if (q.amount != null) setAmount(formatPaymentAmount(q.amount))
-    setDescription((prev) => prev.trim() || q.label)
+    if (!id) return
+    applyLinkedSelection("quote", id)
+  }
+
+  function applyInvoiceSelection(id: string) {
+    setInvoiceId(id)
+    if (!id) return
+    applyLinkedSelection("invoice", id)
   }
 
   function applyEventSelection(id: string) {
     setEventId(id)
-    const ev = events.find((x) => x.id === id)
-    if (!ev) return
-    if (ev.quote_total != null && ev.quote_total > 0) setAmount(formatPaymentAmount(ev.quote_total))
-    setDescription((prev) => prev.trim() || ev.title)
-    if (ev.quote_id) setQuoteId(ev.quote_id)
+    if (!id) return
+    applyLinkedSelection("event", id)
   }
 
   async function handleGenerate() {
@@ -176,6 +227,7 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
         description: description.trim() || "Payment",
         provider,
         quoteId: quoteId || null,
+        invoiceId: invoiceId || null,
         calendarEventId: eventId || null,
         accessToken,
       })
@@ -221,6 +273,16 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
         fields.square_access_token = squareToken
         fields.square_location_id = squareLocation
       }
+      if (settingsProvider === "clover") {
+        fields.clover_merchant_id = cloverMerchantId
+        fields.clover_private_key = cloverPrivateKey
+        if (cloverPageConfigUuid.trim()) fields.clover_page_config_uuid = cloverPageConfigUuid
+        fields.clover_sandbox = cloverSandbox ? "true" : "false"
+      }
+      if (settingsProvider === "stripe") {
+        fields.stripe_secret_key = stripeSecretKey
+        if (stripeWebhookSecret.trim()) fields.stripe_webhook_secret = stripeWebhookSecret
+      }
       if (settingsProvider === "manual") fields.manual_payment_url = manualUrl
       await savePaymentProviderCredentials({
         userId,
@@ -234,6 +296,8 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
       })
       setHelcimToken("")
       setSquareToken("")
+      setCloverPrivateKey("")
+      setStripeSecretKey("")
       setNotice("Provider settings saved securely on the server.")
       setSettingsOpen(false)
       await reloadProviderStatus()
@@ -250,7 +314,7 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
         <div>
           <h2 style={{ margin: "0 0 6px", fontSize: "1.25rem", fontWeight: 800, color: theme.text }}>Collect from customers</h2>
           <p style={{ margin: 0, fontSize: 14, color: "#64748b", lineHeight: 1.5, maxWidth: 560 }}>
-            Create per-job payment links and send them by SMS or email. Your Helcim API token and hosted pay page are configured under Provider settings.
+            Create per-job payment links and send them by SMS or email. Connect Helcim, Clover, Stripe, Square, or a manual hosted page under Provider settings.
           </p>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -281,7 +345,7 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
 
       {providerStatus ? (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {(["helcim", "square", "manual"] as PaymentProviderId[]).map((p) => (
+          {PAYMENT_PROVIDER_IDS.map((p) => (
             <span
               key={p}
               style={{
@@ -294,7 +358,7 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
                 border: `1px solid ${providerStatus[p]?.connected ? "#86efac" : theme.border}`,
               }}
             >
-              {p}: {providerStatus[p]?.connected ? "connected" : "not connected"}
+              {paymentProviderLabel(p)}: {providerStatus[p]?.connected ? "connected" : "not connected"}
             </span>
           ))}
         </div>
@@ -304,7 +368,7 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
         <section id="payment-provider-settings" style={card}>
           <h3 style={{ margin: "0 0 12px", fontSize: 16, fontWeight: 800 }}>Provider settings</h3>
           <p style={{ margin: "0 0 12px", fontSize: 13, color: "#64748b" }}>
-            API keys are saved server-only. Add your Helcim API token for invoice-style links, or a hosted pay URL as fallback when the API is unavailable.
+            API keys are saved server-only. Connect Helcim, Clover, Stripe, or Square for dynamic links, or save a hosted pay URL as fallback.
           </p>
           <div style={{ display: "grid", gap: 12, maxWidth: 480 }}>
             <label style={labelStyle}>
@@ -319,9 +383,11 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
             <label style={labelStyle}>
               Provider
               <select value={settingsProvider} onChange={(e) => setSettingsProvider(e.target.value as PaymentProviderId)} style={inputStyle}>
-                <option value="helcim">Helcim</option>
-                <option value="square">Square</option>
-                <option value="manual">Manual hosted link</option>
+                {PAYMENT_PROVIDER_IDS.map((p) => (
+                  <option key={p} value={p}>
+                    {paymentProviderLabel(p)}
+                  </option>
+                ))}
               </select>
             </label>
             <label style={labelStyle}>
@@ -344,6 +410,56 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
                   Square location ID
                   <input value={squareLocation} onChange={(e) => setSquareLocation(e.target.value)} style={inputStyle} />
                 </label>
+              </>
+            ) : null}
+            {settingsProvider === "clover" ? (
+              <>
+                <label style={labelStyle}>
+                  Clover merchant ID
+                  <input value={cloverMerchantId} onChange={(e) => setCloverMerchantId(e.target.value)} style={inputStyle} placeholder="From Clover Dashboard" />
+                </label>
+                <label style={labelStyle}>
+                  Clover private key (Ecommerce API)
+                  <input type="password" value={cloverPrivateKey} onChange={(e) => setCloverPrivateKey(e.target.value)} style={inputStyle} placeholder="Paste new key to update" />
+                </label>
+                <label style={labelStyle}>
+                  Hosted checkout page ID (optional)
+                  <input value={cloverPageConfigUuid} onChange={(e) => setCloverPageConfigUuid(e.target.value)} style={inputStyle} placeholder="pageConfigUuid for custom checkout page" />
+                </label>
+                <label style={{ ...labelStyle, flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <input type="checkbox" checked={cloverSandbox} onChange={(e) => setCloverSandbox(e.target.checked)} />
+                  Use Clover sandbox (test mode)
+                </label>
+                <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>
+                  Generate keys in Clover Dashboard → Account &amp; Setup → Ecommerce API Tokens (Hosted Checkout). Links expire in ~15 minutes — send soon after generating.
+                </p>
+              </>
+            ) : null}
+            {settingsProvider === "stripe" ? (
+              <>
+                <label style={labelStyle}>
+                  Stripe secret key
+                  <input
+                    type="password"
+                    value={stripeSecretKey}
+                    onChange={(e) => setStripeSecretKey(e.target.value)}
+                    style={inputStyle}
+                    placeholder="sk_live_... or sk_test_..."
+                  />
+                </label>
+                <label style={labelStyle}>
+                  Stripe webhook signing secret (optional)
+                  <input
+                    type="password"
+                    value={stripeWebhookSecret}
+                    onChange={(e) => setStripeWebhookSecret(e.target.value)}
+                    style={inputStyle}
+                    placeholder="whsec_... from Stripe Dashboard"
+                  />
+                </label>
+                <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>
+                  Use a restricted key with Checkout Sessions write access if possible. Enable Apple Pay and card payments in Stripe Dashboard → Settings → Payment methods.
+                </p>
               </>
             ) : null}
             {settingsProvider === "manual" ? (
@@ -395,7 +511,17 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
                   {quotes.map((q) => (
                     <option key={q.id} value={q.id}>
                       {q.label}
-                      {q.amount != null ? ` · $${q.amount.toFixed(2)}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={labelStyle}>
+                Invoice (optional)
+                <select value={invoiceId} onChange={(e) => applyInvoiceSelection(e.target.value)} style={inputStyle}>
+                  <option value="">— None —</option>
+                  {invoices.map((inv) => (
+                    <option key={inv.id} value={inv.id}>
+                      {inv.label}
                     </option>
                   ))}
                 </select>
@@ -425,9 +551,11 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
           <label style={labelStyle}>
             Payment provider
             <select value={provider} onChange={(e) => setProvider(e.target.value as PaymentProviderId)} style={inputStyle}>
-              <option value="helcim">Helcim</option>
-              <option value="square">Square</option>
-              <option value="manual">Manual hosted link</option>
+              {PAYMENT_PROVIDER_IDS.map((p) => (
+                <option key={p} value={p}>
+                  {paymentProviderLabel(p)}
+                </option>
+              ))}
             </select>
           </label>
 

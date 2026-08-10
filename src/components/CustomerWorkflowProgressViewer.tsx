@@ -6,6 +6,7 @@ import type { OrganizationChartDoc } from "../lib/organizationChart"
 import { resolveWorkflowNodeAssignee } from "../lib/estimateWorkflowRuntime"
 import type { ExternalContactsDoc } from "../lib/externalContacts"
 import type { LinkableOrgUser } from "../lib/orgChartMembers"
+import { inferWorkflowStepIntention } from "../lib/workflowStepIntention"
 
 type Props = {
   variant?: "modal" | "inline"
@@ -19,6 +20,7 @@ type Props = {
   pendingNodeIds: string[]
   currentNodeId: string | null
   onCompleteStep?: (nodeId: string) => void
+  onScheduleStep?: (nodeId: string, stepLabel: string) => void
   completeBusy?: boolean
 }
 
@@ -34,6 +36,7 @@ export default function CustomerWorkflowProgressViewer({
   pendingNodeIds,
   currentNodeId,
   onCompleteStep,
+  onScheduleStep,
   completeBusy,
 }: Props) {
   if (!open && variant === "modal") return null
@@ -66,6 +69,7 @@ export default function CustomerWorkflowProgressViewer({
             assignee.displayName?.trim() && !/unassigned/i.test(assignee.displayName)
               ? assignee.displayName.trim()
               : "Unassigned"
+          const isScheduleStep = inferWorkflowStepIntention(node, "generic") === "schedule_resources"
 
           return (
             <div
@@ -114,7 +118,28 @@ export default function CustomerWorkflowProgressViewer({
                   {assigneeLabel}
                   {isDone ? " · Completed" : isPending ? " · Awaiting approval" : isActive ? " · Current step" : " · Not complete"}
                 </div>
-                {!isDone && isActive && onCompleteStep ? (
+                {!isDone && isActive && onScheduleStep && isScheduleStep ? (
+                  <button
+                    type="button"
+                    disabled={completeBusy}
+                    onClick={() => onScheduleStep(node.id, node.label)}
+                    style={{
+                      marginTop: 8,
+                      marginRight: 8,
+                      padding: "5px 10px",
+                      borderRadius: 6,
+                      border: "none",
+                      background: theme.primary,
+                      color: "#fff",
+                      fontSize: 11,
+                      fontWeight: 700,
+                      cursor: completeBusy ? "wait" : "pointer",
+                    }}
+                  >
+                    Schedule on calendar
+                  </button>
+                ) : null}
+                {!isDone && isActive && onCompleteStep && !isScheduleStep ? (
                   <button
                     type="button"
                     disabled={completeBusy}

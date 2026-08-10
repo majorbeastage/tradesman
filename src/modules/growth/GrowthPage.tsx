@@ -39,6 +39,8 @@ import {
   usdToCents,
   type AdCampaignRow,
 } from "../../lib/adCampaigns"
+import { parseBusinessPublicProfileSettings } from "../../lib/businessPublicProfile"
+import { openHostedWebsiteEditor } from "../../lib/accountNavigation"
 
 type Props = {
   setPage: (page: string) => void
@@ -68,6 +70,8 @@ export default function GrowthPage({ setPage }: Props) {
   const [err, setErr] = useState("")
   const [adminCampaignRequests, setAdminCampaignRequests] = useState<AdCampaignRow[]>([])
   const [approvalBusyId, setApprovalBusyId] = useState("")
+  const [hostedWebsiteSlug, setHostedWebsiteSlug] = useState("")
+  const [hostedWebsitePublished, setHostedWebsitePublished] = useState(false)
   const saveTimer = useRef<number | null>(null)
   const docBeforeEdit = useRef<GrowthModuleDoc | null>(null)
 
@@ -82,6 +86,12 @@ export default function GrowthPage({ setPage }: Props) {
   const ctaUrl =
     typeof window !== "undefined" ? `${window.location.origin}/cta/${encodeURIComponent(ctaSlug)}` : `/cta/${ctaSlug}`
 
+  const hostedWebsiteUrl = useMemo(() => {
+    const slug = hostedWebsiteSlug.trim().toLowerCase()
+    if (!slug || !hostedWebsitePublished) return ""
+    return typeof window !== "undefined" ? `${window.location.origin}/${encodeURIComponent(slug)}` : `/${slug}`
+  }, [hostedWebsiteSlug, hostedWebsitePublished])
+
   useEffect(() => {
     if (!supabase || !userId) {
       setLoading(false)
@@ -90,7 +100,7 @@ export default function GrowthPage({ setPage }: Props) {
     let cancelled = false
     void supabase
       .from("profiles")
-      .select("metadata, embed_lead_slug, website_url")
+      .select("metadata, embed_lead_slug, website_url, business_web_profile_slug")
       .eq("id", userId)
       .maybeSingle()
       .then(({ data, error }) => {
@@ -111,6 +121,12 @@ export default function GrowthPage({ setPage }: Props) {
           if (typeof data?.embed_lead_slug === "string" && data.embed_lead_slug.trim()) {
             setLeadCaptureSlug(data.embed_lead_slug.trim())
           }
+          const webSettings = parseBusinessPublicProfileSettings(data?.metadata)
+          const slugFromCol =
+            typeof data?.business_web_profile_slug === "string" ? data.business_web_profile_slug.trim().toLowerCase() : ""
+          const slug = slugFromCol || webSettings.publishedSlug.trim().toLowerCase()
+          setHostedWebsiteSlug(slug)
+          setHostedWebsitePublished(Boolean(webSettings.enabled && slug))
         }
         setLoading(false)
       })
@@ -296,6 +312,8 @@ export default function GrowthPage({ setPage }: Props) {
           scores={scores}
           recommendations={recommendations}
           ctaUrl={ctaUrl}
+          hostedWebsiteUrl={hostedWebsiteUrl}
+          hostedWebsitePublished={hostedWebsitePublished}
           onGrade={runGrading}
           grading={grading}
           onOpenProfiles={() => setSection("profiles")}
@@ -305,7 +323,16 @@ export default function GrowthPage({ setPage }: Props) {
       ) : null}
 
       {section === "profiles" ? (
-        <ProfilesSection doc={doc} updateDoc={updateDoc} onSave={saveNow} onGrade={runGrading} grading={grading} />
+        <ProfilesSection
+          doc={doc}
+          updateDoc={updateDoc}
+          onSave={saveNow}
+          onGrade={runGrading}
+          grading={grading}
+          hostedWebsiteUrl={hostedWebsiteUrl}
+          hostedWebsitePublished={hostedWebsitePublished}
+          setPage={setPage}
+        />
       ) : null}
 
       {section === "grades" ? (
@@ -348,11 +375,66 @@ export default function GrowthPage({ setPage }: Props) {
   )
 }
 
+function HostedWebsitePanel({
+  hostedWebsiteUrl,
+  hostedWebsitePublished,
+  setPage,
+  compact,
+}: {
+  hostedWebsiteUrl: string
+  hostedWebsitePublished: boolean
+  setPage: (p: string) => void
+  compact?: boolean
+}) {
+  return (
+    <div style={{ ...panelStyle, marginBottom: compact ? 0 : 14 }}>
+      <h2 style={h2}>Tradesman-hosted website</h2>
+      <p style={p}>
+        Edit your public business page with the same Tradesman login you use here — no separate admin username or password.
+      </p>
+      {hostedWebsitePublished && hostedWebsiteUrl ? (
+        <>
+          <label style={labelStyle}>
+            Live site
+            <input readOnly value={hostedWebsiteUrl} style={inputStyle} onFocus={(e) => e.target.select()} />
+          </label>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+            <button type="button" style={primaryBtn} onClick={() => openHostedWebsiteEditor(setPage)}>
+              Edit website
+            </button>
+            <button type="button" style={secondaryBtn} onClick={() => window.open(hostedWebsiteUrl, "_blank", "noopener,noreferrer")}>
+              View live site
+            </button>
+            <button
+              type="button"
+              style={secondaryBtn}
+              onClick={() => void navigator.clipboard?.writeText(hostedWebsiteUrl)}
+            >
+              Copy link
+            </button>
+          </div>
+        </>
+      ) : (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+          <p style={{ ...p, margin: 0, flex: "1 1 220px" }}>
+            Publish a business page on Tradesman (templates, photos, contact form). Setup takes a few minutes in MyT.
+          </p>
+          <button type="button" style={primaryBtn} onClick={() => openHostedWebsiteEditor(setPage)}>
+            Set up hosted website
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function OverviewSection({
   doc,
   scores,
   recommendations,
   ctaUrl,
+  hostedWebsiteUrl,
+  hostedWebsitePublished,
   onGrade,
   grading,
   onOpenProfiles,
@@ -363,6 +445,8 @@ function OverviewSection({
   scores: ReturnType<typeof computeScoresFromGrades>
   recommendations: ReturnType<typeof buildGrowthRecommendations>
   ctaUrl: string
+  hostedWebsiteUrl: string
+  hostedWebsitePublished: boolean
   onGrade: () => void
   grading: boolean
   onOpenProfiles: () => void
@@ -379,6 +463,12 @@ function OverviewSection({
         <ScoreCard label="Monthly budget" value={doc.marketingBudget?.monthlyCap} suffix="$" hint="Placeholder until payments" />
         <ScoreCard label="Active campaigns" value={liveCampaigns} />
       </div>
+
+      <HostedWebsitePanel
+        hostedWebsiteUrl={hostedWebsiteUrl}
+        hostedWebsitePublished={hostedWebsitePublished}
+        setPage={setPage}
+      />
 
       <div style={{ ...panelStyle, marginBottom: 14 }}>
         <h2 style={h2}>Lead capture link</h2>
@@ -425,12 +515,18 @@ function ProfilesSection({
   onSave,
   onGrade,
   grading,
+  hostedWebsiteUrl,
+  hostedWebsitePublished,
+  setPage,
 }: {
   doc: GrowthModuleDoc
   updateDoc: (patch: Partial<GrowthModuleDoc> | ((prev: GrowthModuleDoc) => GrowthModuleDoc)) => void
   onSave: () => void
   onGrade: () => void
   grading: boolean
+  hostedWebsiteUrl: string
+  hostedWebsitePublished: boolean
+  setPage: (p: string) => void
 }) {
   const [accessGuideOpen, setAccessGuideOpen] = useState(true)
   const [openPlatformId, setOpenPlatformId] = useState<string | null>("google")
@@ -479,6 +575,12 @@ function ProfilesSection({
   }
   return (
     <div style={{ display: "grid", gap: 14 }}>
+    <HostedWebsitePanel
+      hostedWebsiteUrl={hostedWebsiteUrl}
+      hostedWebsitePublished={hostedWebsitePublished}
+      setPage={setPage}
+      compact
+    />
     <div style={panelStyle}>
       <h2 style={h2}>Business profiles</h2>
       <p style={p}>

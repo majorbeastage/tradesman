@@ -51,6 +51,7 @@ export function consumeOpenSpecialtyReportWizard(): OpenSpecialtyReportWizardReq
 export type SchedulingQuotePrefill = {
   customerId: string
   quoteId: string
+  workflowNodeId?: string
 }
 
 export function queueQuotesCustomerPrefill(customerId: string): void {
@@ -240,12 +241,35 @@ export const SCHEDULING_ADD_WIZARD_PREFILL_EVENT = "tradesman-scheduling-add-wiz
 
 export type SchedulingAddWizardPrefill = {
   customerId?: string | null
+  quoteId?: string | null
   title?: string
   startDate?: string
   startTime?: string
   durationMinutes?: number
   jobTypeId?: string | null
   notes?: string
+  /** Links this calendar event to a specific workflow step (supports multiple schedule steps). */
+  workflowNodeId?: string | null
+}
+
+/** Queue calendar add wizard for a workflow schedule step. */
+export function queueSchedulingForWorkflowStep(input: {
+  customerId: string
+  workflowNodeId?: string | null
+  stepLabel?: string | null
+  quoteId?: string | null
+}): void {
+  const customerId = input.customerId.trim()
+  if (!customerId) return
+  const label = input.stepLabel?.trim() || ""
+  queueSchedulingAddWizardPrefill({
+    customerId,
+    quoteId: input.quoteId?.trim() || undefined,
+    title: label || undefined,
+    notes: label ? `Workflow step: ${label}` : undefined,
+    workflowNodeId: input.workflowNodeId?.trim() || undefined,
+  })
+  notifySchedulingAddWizardPrefill()
 }
 
 export function queueSchedulingAddWizardPrefill(prefill: SchedulingAddWizardPrefill): void {
@@ -349,7 +373,11 @@ export function queueSchedulingQuotePrefill(prefill: SchedulingQuotePrefill): vo
   const quoteId = prefill.quoteId?.trim()
   if (!customerId || !quoteId) return
   try {
-    sessionStorage.setItem(SCHEDULING_QUOTE_PREFILL, JSON.stringify({ customerId, quoteId }))
+    sessionStorage.setItem(SCHEDULING_QUOTE_PREFILL, JSON.stringify({
+      customerId,
+      quoteId,
+      ...(prefill.workflowNodeId?.trim() ? { workflowNodeId: prefill.workflowNodeId.trim() } : {}),
+    }))
   } catch {
     /* ignore */
   }
@@ -361,11 +389,15 @@ export function consumeSchedulingQuotePrefill(): SchedulingQuotePrefill | null {
     const raw = sessionStorage.getItem(SCHEDULING_QUOTE_PREFILL)
     if (!raw?.trim()) return null
     sessionStorage.removeItem(SCHEDULING_QUOTE_PREFILL)
-    const j = JSON.parse(raw) as { customerId?: string; quoteId?: string }
+    const j = JSON.parse(raw) as { customerId?: string; quoteId?: string; workflowNodeId?: string }
     const customerId = String(j.customerId ?? "").trim()
     const quoteId = String(j.quoteId ?? "").trim()
     if (!customerId || !quoteId) return null
-    return { customerId, quoteId }
+    return {
+      customerId,
+      quoteId,
+      workflowNodeId: typeof j.workflowNodeId === "string" ? j.workflowNodeId.trim() : undefined,
+    }
   } catch {
     return null
   }
@@ -495,6 +527,7 @@ export function consumeWorkOrdersCustomerPrefill(): string | null {
 export type PaymentsCollectPrefill = {
   customerId: string
   quoteId?: string
+  invoiceId?: string
   amount?: string
   description?: string
 }
@@ -509,6 +542,7 @@ export function queuePaymentsCollectPrefill(prefill: PaymentsCollectPrefill): vo
       JSON.stringify({
         customerId,
         quoteId: prefill.quoteId?.trim() || undefined,
+        invoiceId: prefill.invoiceId?.trim() || undefined,
         amount: prefill.amount?.trim() || undefined,
         description: prefill.description?.trim() || undefined,
       }),
@@ -530,6 +564,7 @@ export function consumePaymentsCollectPrefill(): PaymentsCollectPrefill | null {
     return {
       customerId,
       quoteId: typeof j.quoteId === "string" ? j.quoteId.trim() : undefined,
+      invoiceId: typeof j.invoiceId === "string" ? j.invoiceId.trim() : undefined,
       amount: typeof j.amount === "string" ? j.amount.trim() : undefined,
       description: typeof j.description === "string" ? j.description.trim() : undefined,
     }

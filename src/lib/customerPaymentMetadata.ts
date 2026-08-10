@@ -4,7 +4,7 @@ import { normalizeHelcimPayPortalUrl } from "./billingProfileMetadata"
 
 export type CustomerPaymentProfileMetadata = {
   /** Processor currently configured by contractor (Helcim first; more coming). */
-  customer_pay_provider?: "helcim" | "stripe" | "square" | "other"
+  customer_pay_provider?: "helcim" | "stripe" | "square" | "clover" | "other"
   /** Free text account label from contractor (merchant/account nickname). */
   customer_pay_provider_account_label?: string
   /** Setup state for customer-facing collections. */
@@ -36,7 +36,7 @@ export function parseCustomerPaymentMetadata(meta: Record<string, unknown>): Cus
   else out.customer_pay_require_review_before_send = true
   if (typeof meta.customer_pay_provider === "string" && meta.customer_pay_provider.trim()) {
     const p = meta.customer_pay_provider.trim().toLowerCase()
-    if (p === "helcim" || p === "stripe" || p === "square" || p === "other") out.customer_pay_provider = p
+    if (p === "helcim" || p === "stripe" || p === "square" || p === "clover" || p === "other") out.customer_pay_provider = p
   }
   if (typeof meta.customer_pay_provider_account_label === "string" && meta.customer_pay_provider_account_label.trim()) {
     out.customer_pay_provider_account_label = meta.customer_pay_provider_account_label.trim()

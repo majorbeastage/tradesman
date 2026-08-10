@@ -15,6 +15,7 @@ import {
   queueSchedulingAddWizardPrefill,
   queueSchedulingCustomerPrefill,
   queueSchedulingEventView,
+  queueSchedulingForWorkflowStep,
   queueQuotesOpenQuote,
   notifySchedulingAddWizardPrefill,
 } from "../../lib/workflowNavigation"
@@ -944,6 +945,17 @@ export default function CustomerProfilePage({ setPage }: Props) {
     setPage("calendar")
   }
 
+  function scheduleWorkflowStepOnCalendar(nodeId: string, stepLabel: string) {
+    if (!c?.id) return
+    queueSchedulingForWorkflowStep({
+      customerId: c.id,
+      workflowNodeId: nodeId,
+      stepLabel,
+      quoteId: quoteForWorkflow?.id ?? null,
+    })
+    setPage("calendar")
+  }
+
   async function submitWorkflowRollback(payload: CustomerWorkflowRollbackSubmit) {
     if (!supabase || !userId || !c?.id || !workflowBundle) return
     setWorkflowRollbackBusy(true)
@@ -1554,6 +1566,7 @@ export default function CustomerProfilePage({ setPage }: Props) {
                 pendingNodeIds={quoteWorkflowState?.pendingNodeIds ?? []}
                 currentNodeId={inferredWorkflow.currentNodeId}
                 onCompleteStep={(nodeId) => void completeWorkflowStepManually(nodeId)}
+                onScheduleStep={(nodeId, stepLabel) => scheduleWorkflowStepOnCalendar(nodeId, stepLabel)}
                 completeBusy={workflowStepCompleteBusy}
               />
             </div>

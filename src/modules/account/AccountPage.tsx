@@ -1,5 +1,6 @@
 import {
   Fragment,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -9,6 +10,10 @@ import {
   type ReactNode,
 } from "react"
 import { HELP_DESK_PHONE_DISPLAY, HELP_DESK_PHONE_E164 } from "../../constants/helpDesk"
+import {
+  ACCOUNT_SECTION_PREFILL_EVENT,
+  consumeAccountSectionPrefill,
+} from "../../lib/accountNavigation"
 import { fetchUserPublicTwilioNumber } from "../../lib/userPublicBusinessLine"
 import { supabase } from "../../lib/supabase"
 import { getPasswordRecoveryRedirectTo } from "../../lib/authRedirectBase"
@@ -147,6 +152,7 @@ function AccountFold({
   children,
   shellStyle,
   category,
+  sectionId,
 }: {
   title: string
   open: boolean
@@ -154,11 +160,13 @@ function AccountFold({
   children: ReactNode
   shellStyle?: CSSProperties
   category?: AccountSettingsCategory
+  sectionId?: string
 }) {
   const foldBtnStyle = category ? accountSettingsFoldButtonStyle(category) : ACCOUNT_FOLD_BTN
   const cardShell = category ? accountSettingsCategoryStyle(category) : undefined
   return (
     <div
+      id={sectionId ? `account-section-${sectionId}` : undefined}
       style={{
         ...ACCOUNT_SECTION_CARD,
         padding: 0,
@@ -337,6 +345,26 @@ export function AccountProfilePanel({
     password_reset: false,
   })
   const toggleFold = (key: keyof typeof foldOpen) => () => setFoldOpen((prev) => ({ ...prev, [key]: !prev[key] }))
+
+  const applyAccountSectionPrefill = useCallback((sectionId: string) => {
+    const key = sectionId as keyof typeof foldOpen
+    if (!(key in foldOpen)) return
+    setFoldOpen((prev) => ({ ...prev, [key]: true }))
+    window.requestAnimationFrame(() => {
+      document.getElementById(`account-section-${sectionId}`)?.scrollIntoView({ behavior: "smooth", block: "start" })
+    })
+  }, [])
+
+  useEffect(() => {
+    const onPrefill = () => {
+      const sectionId = consumeAccountSectionPrefill()
+      if (sectionId) applyAccountSectionPrefill(sectionId)
+    }
+    onPrefill()
+    window.addEventListener(ACCOUNT_SECTION_PREFILL_EVENT, onPrefill)
+    return () => window.removeEventListener(ACCOUNT_SECTION_PREFILL_EVENT, onPrefill)
+  }, [applyAccountSectionPrefill])
+
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
   const [languageSaving, setLanguageSaving] = useState(false)
@@ -1037,6 +1065,7 @@ export function AccountProfilePanel({
               open={foldOpen.business_web_profile}
               onToggle={toggleFold("business_web_profile")}
               category={cat}
+              sectionId="business_web_profile"
             >
               <BusinessWebProfilePanel
                 profileUserId={profileUserId}

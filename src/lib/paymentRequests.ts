@@ -1,9 +1,29 @@
 import { supabase } from "./supabase"
 import { withSupabasePublicCredentials, platformToolsFetchOrigins } from "./platformToolsJsonBody"
 import { totalFromQuoteItemRows } from "./quoteItemMath"
+import { invoiceSubtotal, loadInvoicesFromProfile, type InvoiceRecord } from "./invoices"
 
 export type PaymentRequestStatus = "draft" | "sent" | "paid" | "failed" | "canceled"
-export type PaymentProviderId = "helcim" | "square" | "manual"
+export type PaymentProviderId = "helcim" | "square" | "clover" | "stripe" | "manual"
+
+export const PAYMENT_PROVIDER_IDS: PaymentProviderId[] = ["helcim", "square", "clover", "stripe", "manual"]
+
+export function paymentProviderLabel(id: PaymentProviderId): string {
+  switch (id) {
+    case "helcim":
+      return "Helcim"
+    case "square":
+      return "Square"
+    case "clover":
+      return "Clover"
+    case "stripe":
+      return "Stripe"
+    case "manual":
+      return "Manual hosted link"
+    default:
+      return id
+  }
+}
 export type PaymentSentVia = "sms" | "email" | "both"
 
 export type PaymentRequestRow = {
@@ -41,6 +61,25 @@ export type PaymentSourceEvent = {
   customer_id: string | null
   quote_id: string | null
   quote_total: number | null
+}
+
+export type PaymentSourceInvoice = {
+  id: string
+  label: string
+  amount: number | null
+  customer_id: string | null
+  quote_id: string | null
+  calendar_event_id: string | null
+  job_title: string
+  invoice_number: string
+}
+
+export type PaymentLinkSelection = {
+  quoteId: string
+  invoiceId: string
+  eventId: string
+  amount: string
+  description: string
 }
 
 async function paymentApiFetch<T>(
@@ -233,6 +272,108 @@ export async function loadPaymentSourceEvents(userId: string, customerId: string
     })
   }
   return []
+}
+
+export async function loadPaymentSourceInvoices(userId: string, customerId: string): Promise<PaymentSourceInvoice[]> {
+  if (!supabase) return []
+  try {
+    const rows = await loadInvoicesFromProfile(supabase, userId)
+    return rows
+      .filter((inv) => inv.customer_id === customerId)
+      .map((inv) => mapInvoiceToPaymentSource(inv))
+  } catch {
+    return []
+  }
+}
+
+function mapInvoiceToPaymentSource(inv: InvoiceRecord): PaymentSourceInvoice {
+  const amount = invoiceSubtotal(inv.line_items)
+  const title = inv.job_title.trim() || "Invoice"
+  const priceLabel = amount > 0 ? ` · $${amount.toFixed(2)}` : ""
+  return {
+    id: inv.id,
+    label: `${inv.invoice_number} — ${title}${priceLabel}`,
+    amount: amount > 0 ? amount : null,
+    customer_id: inv.customer_id,
+    quote_id: inv.quote_id,
+    calendar_event_id: inv.calendar_event_id,
+    job_title: inv.job_title,
+    invoice_number: inv.invoice_number,
+  }
+}
+
+function paymentQuoteTitle(label: string): string {
+  return label.replace(/\s·\s\$[\d,.]+$/, "").trim()
+}
+
+function invoiceDescription(inv: PaymentSourceInvoice): string {
+  const title = inv.job_title.trim()
+  return title ? `${inv.invoice_number} — ${title}` : inv.invoice_number
+}
+
+function firstPositiveAmount(...values: Array<number | null | undefined>): number | null {
+  for (const value of values) {
+    if (value != null && Number.isFinite(value) && value > 0) return value
+  }
+  return null
+}
+
+export function resolvePaymentLinkSelection(input: {
+  source: "quote" | "invoice" | "event"
+  id: string
+  quotes: PaymentSourceQuote[]
+  events: PaymentSourceEvent[]
+  invoices: PaymentSourceInvoice[]
+}): PaymentLinkSelection {
+  const empty: PaymentLinkSelection = { quoteId: "", invoiceId: "", eventId: "", amount: "", description: "" }
+  const id = input.id.trim()
+  if (!id) return empty
+
+  if (input.source === "quote") {
+    const quote = input.quotes.find((row) => row.id === id)
+    const invoice = input.invoices.find((row) => row.quote_id === id)
+    const event = input.events.find((row) => row.quote_id === id)
+    const amount = firstPositiveAmount(quote?.amount, event?.quote_total, invoice?.amount)
+    return {
+      quoteId: id,
+      invoiceId: invoice?.id ?? "",
+      eventId: event?.id ?? "",
+      amount: formatPaymentAmount(amount),
+      description: quote ? paymentQuoteTitle(quote.label) : invoice ? invoiceDescription(invoice) : event?.title ?? "",
+    }
+  }
+
+  if (input.source === "invoice") {
+    const invoice = input.invoices.find((row) => row.id === id)
+    if (!invoice) return { ...empty, invoiceId: id }
+    const event =
+      (invoice.calendar_event_id ? input.events.find((row) => row.id === invoice.calendar_event_id) : undefined) ??
+      (invoice.quote_id ? input.events.find((row) => row.quote_id === invoice.quote_id) : undefined)
+    const quote = invoice.quote_id ? input.quotes.find((row) => row.id === invoice.quote_id) : undefined
+    const amount = firstPositiveAmount(invoice.amount, quote?.amount, event?.quote_total)
+    return {
+      quoteId: invoice.quote_id ?? "",
+      invoiceId: id,
+      eventId: event?.id ?? "",
+      amount: formatPaymentAmount(amount),
+      description: invoiceDescription(invoice),
+    }
+  }
+
+  const event = input.events.find((row) => row.id === id)
+  if (!event) return { ...empty, eventId: id }
+  const invoice =
+    input.invoices.find((row) => row.calendar_event_id === id) ??
+    (event.quote_id ? input.invoices.find((row) => row.quote_id === event.quote_id) : undefined)
+  const quote = event.quote_id ? input.quotes.find((row) => row.id === event.quote_id) : undefined
+  const amount = firstPositiveAmount(event.quote_total, quote?.amount, invoice?.amount)
+  return {
+    quoteId: event.quote_id ?? invoice?.quote_id ?? "",
+    invoiceId: invoice?.id ?? "",
+    eventId: id,
+    amount: formatPaymentAmount(amount),
+    description: event.title.trim() || (quote ? paymentQuoteTitle(quote.label) : invoice ? invoiceDescription(invoice) : ""),
+  }
 }
 
 function parseQuoteAmountFromMetadata(meta: Record<string, unknown>): number | null {
