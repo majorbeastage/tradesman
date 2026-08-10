@@ -1384,10 +1384,23 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         .is("removed_at", null)
         .lte("start_at", end.toISOString())
         .gte("end_at", start.toISOString())
-    const scopedQuery = (selectStr: string) =>
-      canViewOrgEvents
-        ? baseQuery(selectStr).in("user_id", scopedCalendarUserIds)
-        : baseQuery(selectStr).eq("user_id", calendarDbUserId)
+    const scopedQuery = (selectStr: string) => {
+      const viewerId = (userId || calendarDbUserId || authUserId || "").trim()
+      const isManagedAssigneeView =
+        managedByOfficeManager &&
+        !isOfficeManagerOrAdmin &&
+        !managedSchedulingToolsEnabled &&
+        Boolean(calendarOwnerUserId && calendarOwnerUserId !== viewerId)
+      if (canViewOrgEvents) {
+        return baseQuery(selectStr).in("user_id", scopedCalendarUserIds)
+      }
+      if (isManagedAssigneeView && calendarOwnerUserId) {
+        return baseQuery(selectStr)
+          .eq("user_id", calendarOwnerUserId)
+          .eq("metadata->>assigned_user_id", viewerId)
+      }
+      return baseQuery(selectStr).eq("user_id", calendarDbUserId)
+    }
 
     const selectTiers = [
       "id, user_id, title, start_at, end_at, job_type_id, quote_id, customer_id, notes, quote_total, recurrence_series_id, materials_list, mileage_miles, metadata, customers ( display_name, service_address, service_lat, service_lng ), job_types ( id, name, materials_list, color_hex, duration_minutes, description, track_mileage )",
@@ -1428,7 +1441,19 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             let q = extraQuery.order("start_at")
             if (filterCompleted) q = q.is("completed_at", null)
             const { data: extra, error: extraErr } = await q
-            if (extraErr) return
+            if (extraErr) {
+              console.warn("[calendar] assignee merge:", extraErr.message)
+              if (
+                managedByOfficeManager &&
+                !isOfficeManagerOrAdmin &&
+                /policy|permission|row-level security/i.test(extraErr.message)
+              ) {
+                setLoadError(
+                  "Could not load assigned jobs. Run supabase/calendar-events-invitee-rls.sql in Supabase SQL Editor.",
+                )
+              }
+              return
+            }
             for (const row of (extra ?? []) as unknown as Record<string, unknown>[]) {
               const id = typeof row.id === "string" ? row.id : ""
               if (!id || seen.has(id)) continue

@@ -114,6 +114,42 @@ export function filterUsersForViewRole(users: ManageableUserRow[], viewRole: Use
   }
 }
 
+/**
+ * Org-scoped view-as filter — team members are often stored as role `user` but invited as internal.
+ * Excludes the account owner when previewing internal/external personas.
+ */
+export function filterUsersForViewRoleInOrg(
+  users: ManageableUserRow[],
+  viewRole: UserRole,
+  orgOwnerId?: string | null,
+): ManageableUserRow[] {
+  const ownerId = orgOwnerId?.trim() || null
+  const withoutOwner = ownerId ? users.filter((u) => u.userId !== ownerId) : users
+  switch (viewRole) {
+    case "corporate_internal":
+      return withoutOwner.filter(
+        (u) =>
+          u.role === "corporate_internal" ||
+          u.role === "user" ||
+          u.role === "new_user",
+      )
+    case "corporate_external":
+      return withoutOwner.filter((u) => u.role === "corporate_external" || u.role === "user")
+    case "user":
+      return withoutOwner.filter(
+        (u) =>
+          u.role === "user" ||
+          u.role === "corporate_external" ||
+          u.role === "corporate_internal" ||
+          u.role === "new_user",
+      )
+    case "office_manager":
+      return users.filter((u) => u.role === "office_manager" || u.role === "corporate_management")
+    default:
+      return filterUsersForViewRole(users, viewRole)
+  }
+}
+
 /** Whether authRole may preview targetUserId (subscription / assignment rules). */
 export function canPreviewUser(
   authRole: UserRole | null | undefined,

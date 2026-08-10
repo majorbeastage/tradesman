@@ -39,6 +39,7 @@ export default function PortalViewBar() {
     setTargetUserId,
     viewRoleOptions,
     usersForCurrentViewRole,
+    orgScopedUsers,
     loadingUsers,
     loadingPortalConfig,
     error,
@@ -223,6 +224,11 @@ export default function PortalViewBar() {
         <span style={{ fontSize: 12, opacity: 0.75 }}>Loading profile…</span>
       ) : null}
       {error ? <span style={{ fontSize: 12, color: "#b91c1c" }}>{error}</span> : null}
+      {!loadingPortalConfig && authRole === "admin" && orgScopedUsers.length === 0 && viewRole !== authRole && !usingDefault ? (
+        <span style={{ fontSize: 12, opacity: 0.8, flex: "1 1 200px" }}>
+          Pick the <strong>account owner</strong> (e.g. shair@hairplumbing.com) first — then team members like internal users appear in this list.
+        </span>
+      ) : null}
       {!loadingPortalConfig && usingDefault && viewRole !== authRole ? (
         <span style={{ fontSize: 12, opacity: 0.8, flex: "1 1 200px" }}>
           Default <strong>{labelForViewRoleOption(viewRole, false)}</strong> layout — tabs match a fresh account of this type.

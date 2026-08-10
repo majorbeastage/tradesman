@@ -16,6 +16,7 @@ import {
   defaultPortalConfigForViewRole,
   defaultViewRoleForAuthRole,
   filterUsersForViewRole,
+  filterUsersForViewRoleInOrg,
   isPortalViewDefaultTarget,
   portalShellForViewRole,
   PORTAL_VIEW_DEFAULT_USER,
@@ -313,6 +314,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
   const targetValidatedRef = useRef<string | null>(null)
   const adminSelfRowRef = useRef<ManageableUserRow | null>(null)
   const lastOrgOwnerRef = useRef<string | null>(null)
+  const [adminOrgOwnerId, setAdminOrgOwnerId] = useState<string | null>(null)
   const adminTargetHydratedRef = useRef(false)
   const accessTokenRef = useRef<string | null>(null)
   const usersLoadSeqRef = useRef(0)
@@ -349,17 +351,21 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
       targetUserId !== authUserId,
   )
 
-  // View-only is the default every time a different profile is selected.
+  // View-only for non-admins; platform admins preview with edit mode on by default.
   useEffect(() => {
-    setEditMode(false)
-  }, [targetUserId])
+    if (authRole === "admin" && viewingOtherProfile) {
+      setEditMode(true)
+    } else {
+      setEditMode(false)
+    }
+  }, [targetUserId, authRole, viewingOtherProfile])
 
   // Enforce at the Supabase fetch layer: block writes while previewing another
-  // profile without Edit mode.
+  // profile without Edit mode (platform admins are never blocked).
   useEffect(() => {
-    setPortalViewWriteBlock(viewingOtherProfile && !editMode)
+    setPortalViewWriteBlock(viewingOtherProfile && !editMode && authRole !== "admin")
     return () => setPortalViewWriteBlock(false)
-  }, [viewingOtherProfile, editMode])
+  }, [viewingOtherProfile, editMode, authRole])
 
   const viewRoleOptions = useMemo(() => viewRoleOptionsForAuthRole(authRole), [authRole])
 
@@ -457,10 +463,12 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
     if (authRole !== "admin" || !authUserId || !hasAccessToken) return
     if (!targetUserId || isPortalViewDefaultTarget(targetUserId) || isSandboxDemoUserId(targetUserId)) {
       lastOrgOwnerRef.current = null
+      setAdminOrgOwnerId(null)
       return
     }
     if (targetUserId === authUserId) {
       lastOrgOwnerRef.current = null
+      setAdminOrgOwnerId(null)
       return
     }
     let cancelled = false
@@ -470,7 +478,9 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
         if (supabase) {
           orgOwnerId = await resolveOrgRosterOwnerId(supabase, targetUserId)
         }
-        if (cancelled || orgOwnerId === lastOrgOwnerRef.current) return
+        if (cancelled) return
+        if (orgOwnerId) setAdminOrgOwnerId(orgOwnerId)
+        if (orgOwnerId === lastOrgOwnerRef.current) return
         lastOrgOwnerRef.current = orgOwnerId
         const loaded = await loadAdminOrgScopedUsers(
           authUserId,
@@ -555,42 +565,65 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
     }
   }, [targetUserId, sandboxDemoTeam, viewRole, viewRoleOptions])
 
-  // Match preview role to the selected profile so tabs and roster align with what they see.
+  // Match preview role to the selected profile when the profile picker changes (not when role dropdown changes).
   useEffect(() => {
     if (!targetUserId || isPortalViewDefaultTarget(targetUserId) || isSandboxDemoUserId(targetUserId)) return
-    const row = manageableUsers.find((u) => u.userId === targetUserId)
+    const row =
+      manageableUsers.find((u) => u.userId === targetUserId) ??
+      orgScopedUsers.find((u) => u.userId === targetUserId)
     const role = row?.role
     if (!role || !viewRoleOptions.includes(role)) return
-    if (viewRole === role) return
-    setViewRoleState(role)
-    try {
-      sessionStorage.setItem(STORAGE_VIEW_ROLE, role)
-    } catch {
-      /* ignore */
-    }
-  }, [targetUserId, manageableUsers, viewRole, viewRoleOptions])
+    setViewRoleState((prev) => {
+      if (prev === role) return prev
+      try {
+        sessionStorage.setItem(STORAGE_VIEW_ROLE, role)
+      } catch {
+        /* ignore */
+      }
+      return role
+    })
+  }, [targetUserId, manageableUsers, orgScopedUsers, viewRoleOptions])
 
   const usersForCurrentViewRole = useMemo(() => {
-    if (authRole === "admin" && viewingOtherProfile) {
-      const switchOwners = manageableUsers.filter(
-        (u) =>
-          (isOfficeManagerAssignmentRole(u.role) || u.role === "corporate_management") &&
-          !orgScopedUsers.some((o) => o.userId === u.userId),
-      )
-      if (orgScopedUsers.length > 0) {
-        return [...orgScopedUsers, ...switchOwners]
-      }
-      const selected =
-        targetUserId && !isPortalViewDefaultTarget(targetUserId)
-          ? manageableUsers.find((u) => u.userId === targetUserId)
-          : null
-      if (selected) {
-        return [selected, ...switchOwners.filter((u) => u.userId !== selected.userId)]
-      }
-      return switchOwners
+    if (authRole !== "admin") {
+      return filterUsersForViewRole(manageableUsers, viewRole)
     }
+
+    const switchOwners = manageableUsers.filter(
+      (u) =>
+        (isOfficeManagerAssignmentRole(u.role) || u.role === "corporate_management") &&
+        !orgScopedUsers.some((o) => o.userId === u.userId),
+    )
+
+    if (orgScopedUsers.length > 0) {
+      const filtered = filterUsersForViewRoleInOrg(orgScopedUsers, viewRole, adminOrgOwnerId)
+      const ownerRow = adminOrgOwnerId
+        ? orgScopedUsers.find((u) => u.userId === adminOrgOwnerId)
+        : null
+      const includeOwner =
+        ownerRow &&
+        (viewRole === "office_manager" ||
+          viewRole === "corporate_management" ||
+          viewRole === "user" ||
+          filterUsersForViewRole([ownerRow], viewRole).length > 0)
+      const core = includeOwner && ownerRow ? [ownerRow, ...filtered.filter((u) => u.userId !== ownerRow.userId)] : filtered
+      return [...core, ...switchOwners]
+    }
+
+    // Org not loaded yet — show account owners for this role so admin can pick the business first.
+    const accountOwners = manageableUsers.filter(
+      (u) =>
+        u.role === "user" ||
+        u.role === "office_manager" ||
+        u.role === "corporate_management" ||
+        isOfficeManagerAssignmentRole(u.role),
+    )
+    if (viewRole === "corporate_internal" || viewRole === "corporate_external" || viewRole === "user") {
+      return accountOwners.length > 0 ? accountOwners : filterUsersForViewRole(manageableUsers, viewRole)
+    }
+
     return filterUsersForViewRole(manageableUsers, viewRole)
-  }, [authRole, viewingOtherProfile, orgScopedUsers, manageableUsers, viewRole, targetUserId])
+  }, [authRole, orgScopedUsers, manageableUsers, viewRole, adminOrgOwnerId])
 
   useEffect(() => {
     if (loadingUsers) return
@@ -616,6 +649,21 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
     }
 
     targetValidatedRef.current = validationKey
+    if (authRole === "admin") {
+      const orgFiltered =
+        orgScopedUsers.length > 0
+          ? filterUsersForViewRoleInOrg(orgScopedUsers, viewRole, adminOrgOwnerId)
+          : []
+      const orgPick = orgFiltered[0] ?? usersForCurrentViewRole[0]
+      if (orgPick?.userId) {
+        setTargetUserIdState(orgPick.userId)
+        writeStoredTargetUser(orgPick.userId)
+      } else {
+        setTargetUserIdState(PORTAL_VIEW_DEFAULT_USER)
+        writeStoredTargetUser(PORTAL_VIEW_DEFAULT_USER)
+      }
+      return
+    }
     if (viewRole === authRole && authUserId) {
       setTargetUserIdState(authUserId)
       writeStoredTargetUser(authUserId)
@@ -629,6 +677,15 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
     (role: UserRole) => {
       if (!viewRoleOptions.includes(role)) return
       setViewRoleState(role)
+      if (authRole === "admin") {
+        targetValidatedRef.current = null
+        try {
+          sessionStorage.setItem(STORAGE_VIEW_ROLE, role)
+        } catch {
+          /* ignore */
+        }
+        return
+      }
       const nextTarget =
         role === authRole && authUserId ? authUserId : PORTAL_VIEW_DEFAULT_USER
       setTargetUserIdState(nextTarget)
@@ -787,6 +844,7 @@ export function useViewingOtherProfile(): boolean {
 export function usePortalViewReadOnly(): boolean {
   const ctx = useContext(PortalViewContext)
   if (!ctx) return false
+  if (ctx.authRole === "admin") return false
   return ctx.viewingOtherProfile && !ctx.editMode
 }
 

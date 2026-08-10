@@ -2,8 +2,6 @@ import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "r
 import logo from "../../assets/logo.png"
 import { supabase } from "../../lib/supabase"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
-import { useViewingOtherProfile } from "../../contexts/PortalViewContext"
-import PortalViewCommsHiddenNotice from "../../components/PortalViewCommsHiddenNotice"
 import { useAuth } from "../../contexts/AuthContext"
 import { theme } from "../../styles/theme"
 import { useIsMobile } from "../../hooks/useIsMobile"
@@ -89,15 +87,6 @@ const MOBILE_FOLDER_OPTIONS = [
 ] as const
 
 export default function CustomersEmailInboxPage(props: Props) {
-  const viewingOtherProfile = useViewingOtherProfile()
-  if (viewingOtherProfile) {
-    return (
-      <div style={{ maxWidth: 720 }}>
-        <h1 style={{ marginTop: 0 }}>Email</h1>
-        <PortalViewCommsHiddenNotice label="emails" />
-      </div>
-    )
-  }
   return <CustomersEmailInboxPageInner {...props} />
 }
 

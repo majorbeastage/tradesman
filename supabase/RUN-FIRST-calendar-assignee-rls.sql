@@ -1,6 +1,12 @@
--- Team members can READ calendar events they are assigned to or invited to (video/conference).
--- Run in Supabase SQL Editor after supabase-office-manager-rls.sql and calendar-events-metadata.sql.
--- Does not grant write — assignee edits still go through the account owner row.
+-- REQUIRED for team members (e.g. bhair@hairplumbing.com) to see jobs assigned to them.
+-- Safe to run — does NOT add heavy org-wide policies (no customer timeouts).
+-- Run in Supabase SQL Editor after emergency-revert-team-member-rls.sql if that was applied.
+--
+-- How assignments work in Tradesman:
+-- - Manager (shair) saves calendar events on HER calendar (user_id = owner).
+-- - Assignee is stored in metadata.assigned_user_id (e.g. bhair's user id).
+-- - Team member calendar loads events where assigned_user_id = their auth uid.
+-- - Org chart links people to nodes; scheduling assignee picker sets metadata on save.
 
 DROP POLICY IF EXISTS "calendar_events_read_assignee_invitee" ON public.calendar_events;
 CREATE POLICY "calendar_events_read_assignee_invitee"

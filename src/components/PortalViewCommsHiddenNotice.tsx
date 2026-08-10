@@ -1,9 +1,8 @@
 import { theme } from "../styles/theme"
 
 /**
- * Shown in place of real email/SMS/call content while an admin or manager is
- * previewing another profile ("Viewing as"). Communications stay private even
- * in Edit mode.
+ * Legacy placeholder — view-as no longer hides client communications for admins.
+ * @deprecated Kept for reference; not used in the app shell.
  */
 export default function PortalViewCommsHiddenNotice({ label = "communications" }: { label?: string }) {
   return (
