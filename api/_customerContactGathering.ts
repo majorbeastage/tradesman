@@ -5,6 +5,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { firstEnv, normalizePhone, samePhoneDigits } from "./_communications.js"
 import { isPromotionalEmailAddress, mergeCustomerHubMetadata } from "./_customerContactKind.js"
+import { parseEmailAddressFromHeader } from "./_emailThreadHeaders.js"
 
 /** Server-side Nominatim geocode (self-contained — no ../src imports for Vercel). */
 async function geocodeAddressToLatLng(address: string): Promise<{ lat: number; lng: number } | null> {
@@ -49,6 +50,25 @@ const ADDRESS_LABEL_RE =
 
 const NOREPLY_RE = /(?:noreply|no-reply|donotreply|mailer-daemon|postmaster)/i
 const GENERIC_NAME_RE = /^unknown\s*\(/i
+const MAX_GATHERED_EMAILS = 4
+
+/** Cut quoted reply chains before scanning email bodies (avoids CC/thread participant noise). */
+const QUOTED_REPLY_SPLIT_RE =
+  /\n(?:On .{8,200} wrote:\s*(?:\n|$)|-{3,}\s*Original Message\s*-{3,}|From:\s*.+\n(?:Sent|Date):\s*.+\n(?:To|Cc):\s*.+\n(?:Subject|Subj):\s*)/i
+
+const EXPLICIT_EMAIL_RE =
+  /\b(?:my email is|email (?:is|me at|address is)|reach me at|contact me at|send (?:it )?to|you can reach me at)\s*[:\s]*<?([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})>?/gi
+
+type CommEventRow = {
+  direction?: string | null
+  event_type?: string | null
+  subject?: string | null
+  body?: string | null
+  transcript_text?: string | null
+  summary_text?: string | null
+  metadata?: unknown
+  conversation_id?: string | null
+}
 
 export type GatheredContactSignals = {
   displayName: string | null
@@ -94,14 +114,66 @@ function isBlockedPhone(phone: string, blocked: Set<string>): boolean {
   return false
 }
 
-function extractEmailsFromText(text: string, blockDomains: Set<string>): string[] {
+function stripQuotedEmailContent(text: string): string {
+  let t = text.replace(/\r\n/g, "\n")
+  const split = t.search(QUOTED_REPLY_SPLIT_RE)
+  if (split > 40) t = t.slice(0, split)
+  t = t
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith(">"))
+    .join("\n")
+  return t.trim()
+}
+
+function isInboundDirection(direction: string | null | undefined): boolean {
+  const d = String(direction ?? "").toLowerCase()
+  return d === "inbound" || d === "in"
+}
+
+function eventMetadata(row: CommEventRow): Record<string, unknown> {
+  return row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+    ? (row.metadata as Record<string, unknown>)
+    : {}
+}
+
+function addUniqueEmail(out: string[], seen: Set<string>, raw: string, blockDomains: Set<string>): void {
+  const e = normalizeEmail(raw)
+  if (!e || seen.has(e) || !isPlausibleCustomerEmail(e, blockDomains)) return
+  seen.add(e)
+  out.push(e)
+}
+
+/** Inbound email: sender From + explicit "email me at …" in the non-quoted top of the message only. */
+function extractEmailsFromInboundEmailEvent(
+  row: CommEventRow,
+  blockDomains: Set<string>,
+  seen: Set<string>,
+  out: string[],
+): void {
+  const meta = eventMetadata(row)
+  for (const key of ["from", "from_email", "sender"] as const) {
+    const raw = meta[key]
+    if (typeof raw === "string" && raw.trim()) {
+      addUniqueEmail(out, seen, parseEmailAddressFromHeader(raw), blockDomains)
+    }
+  }
+
+  const parts: string[] = []
+  if (typeof row.subject === "string" && row.subject.trim()) parts.push(row.subject.trim())
+  if (typeof row.body === "string" && row.body.trim()) parts.push(stripQuotedEmailContent(row.body))
+  const text = parts.join("\n")
+  if (!text) return
+
+  for (const m of text.matchAll(EXPLICIT_EMAIL_RE)) {
+    addUniqueEmail(out, seen, m[1] ?? "", blockDomains)
+  }
+}
+
+function extractExplicitEmailsFromText(text: string, blockDomains: Set<string>): string[] {
   const out: string[] = []
   const seen = new Set<string>()
-  for (const m of text.matchAll(EMAIL_RE)) {
-    const e = normalizeEmail(m[0] ?? "")
-    if (!e || seen.has(e) || !isPlausibleCustomerEmail(e, blockDomains)) continue
-    seen.add(e)
-    out.push(e)
+  for (const m of text.matchAll(EXPLICIT_EMAIL_RE)) {
+    addUniqueEmail(out, seen, m[1] ?? "", blockDomains)
   }
   return out
 }
@@ -164,19 +236,8 @@ function screeningAnswersToText(meta: Record<string, unknown>): string {
     .join("\n")
 }
 
-function eventChunk(row: {
-  direction?: string | null
-  event_type?: string | null
-  subject?: string | null
-  body?: string | null
-  transcript_text?: string | null
-  summary_text?: string | null
-  metadata?: unknown
-}): string {
-  const meta =
-    row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
-      ? (row.metadata as Record<string, unknown>)
-      : {}
+function eventChunk(row: CommEventRow, opts?: { includeEmailBody?: boolean }): string {
+  const meta = eventMetadata(row)
   const parts: string[] = []
   if (typeof row.subject === "string" && row.subject.trim()) parts.push(row.subject.trim())
   if (typeof row.transcript_text === "string" && row.transcript_text.trim()) parts.push(row.transcript_text.trim())
@@ -184,11 +245,16 @@ function eventChunk(row: {
     const qa = screeningAnswersToText(meta)
     if (qa) parts.push(qa)
   }
-  if (typeof row.body === "string" && row.body.trim()) parts.push(row.body.trim())
+  const isEmail = row.event_type === "email"
+  if (typeof row.body === "string" && row.body.trim()) {
+    if (isEmail) {
+      if (opts?.includeEmailBody !== false) parts.push(stripQuotedEmailContent(row.body))
+    } else {
+      parts.push(row.body.trim())
+    }
+  }
   if (typeof row.summary_text === "string" && row.summary_text.trim()) parts.push(row.summary_text.trim())
-  const dir = String(row.direction ?? "").toLowerCase()
-  const isInbound = dir === "inbound" || dir === "in"
-  if (row.event_type === "email" && isInbound) {
+  if (isEmail && isInboundDirection(row.direction)) {
     const from = meta.from ?? meta.from_email ?? meta.sender
     if (typeof from === "string" && from.trim()) parts.push(`From: ${from.trim()}`)
   }
@@ -237,12 +303,11 @@ async function loadBlockedContactValues(supabase: SupabaseClient, userId: string
   return { phones, emailDomains }
 }
 
-async function buildCustomerContactCorpus(
+async function loadInboundCustomerCommEvents(
   supabase: SupabaseClient,
   userId: string,
   customerId: string,
-): Promise<string> {
-  const chunks: string[] = []
+): Promise<CommEventRow[]> {
   const evSelect =
     "id, direction, event_type, subject, body, transcript_text, summary_text, metadata, conversation_id, created_at"
 
@@ -254,13 +319,56 @@ async function buildCustomerContactCorpus(
     .order("created_at", { ascending: true })
     .limit(MAX_COMM_EVENTS)
 
+  return (events ?? []).filter((ev) => isInboundDirection((ev as CommEventRow).direction)) as CommEventRow[]
+}
+
+function extractEmailsFromSmsCallCorpus(text: string, blockDomains: Set<string>): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const m of text.matchAll(EMAIL_RE)) {
+    addUniqueEmail(out, seen, m[0] ?? "", blockDomains)
+  }
+  for (const e of extractExplicitEmailsFromText(text, blockDomains)) {
+    addUniqueEmail(out, seen, e, blockDomains)
+  }
+  return out.slice(0, MAX_GATHERED_EMAILS)
+}
+
+function extractCustomerEmailsFromEvents(events: CommEventRow[], blockDomains: Set<string>, smsCallCorpus: string): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+
+  for (const ev of events) {
+    if (ev.event_type === "email") {
+      extractEmailsFromInboundEmailEvent(ev, blockDomains, seen, out)
+    }
+  }
+
+  for (const e of extractEmailsFromSmsCallCorpus(smsCallCorpus, blockDomains)) {
+    addUniqueEmail(out, seen, e, blockDomains)
+  }
+
+  return out.slice(0, MAX_GATHERED_EMAILS)
+}
+
+async function buildCustomerContactCorpus(
+  supabase: SupabaseClient,
+  userId: string,
+  customerId: string,
+  inboundEvents?: CommEventRow[],
+): Promise<{ corpus: string; smsCallCorpus: string }> {
+  const chunks: string[] = []
+  const smsCallChunks: string[] = []
+  const events = inboundEvents ?? (await loadInboundCustomerCommEvents(supabase, userId, customerId))
+
   const convoIds = new Set<string>()
-  for (const ev of events ?? []) {
-    const direction = String((ev as { direction?: string | null }).direction ?? "").toLowerCase()
-    if (direction === "outbound" || direction === "out") continue
-    const text = eventChunk(ev as Parameters<typeof eventChunk>[0])
+  for (const ev of events) {
+    const text = eventChunk(ev)
     if (text.trim()) chunks.push(text)
-    const cid = (ev as { conversation_id?: string | null }).conversation_id
+    if (ev.event_type !== "email") {
+      if (text.trim()) smsCallChunks.push(text)
+    }
+    const cid = ev.conversation_id
     if (cid) convoIds.add(cid)
   }
 
@@ -287,11 +395,17 @@ async function buildCustomerContactCorpus(
       const sender = String((m as { sender?: string }).sender ?? "").toLowerCase()
       if (sender && sender !== "customer") continue
       const content = String((m as { content?: string }).content ?? "").trim()
-      if (content) chunks.push(content)
+      if (content) {
+        chunks.push(content.includes("@") ? stripQuotedEmailContent(content) : content)
+        smsCallChunks.push(content.includes("@") ? stripQuotedEmailContent(content) : content)
+      }
     }
   }
 
-  return chunks.join("\n\n---\n\n").slice(0, CORPUS_LIMIT)
+  return {
+    corpus: chunks.join("\n\n---\n\n").slice(0, CORPUS_LIMIT),
+    smsCallCorpus: smsCallChunks.join("\n\n---\n\n").slice(0, CORPUS_LIMIT),
+  }
 }
 
 function pickBestPhone(candidates: string[]): string | null {
@@ -309,15 +423,18 @@ function pickBestAddress(candidates: string[]): string | null {
   return candidates.sort((a, b) => b.length - a.length)[0] ?? null
 }
 
-function extractContactSignalsFromCorpus(corpus: string, blocked: { phones: Set<string>; emailDomains: Set<string> }): GatheredContactSignals {
-  const emails = extractEmailsFromText(corpus, blocked.emailDomains)
+function extractContactSignalsFromCorpus(
+  corpus: string,
+  blocked: { phones: Set<string>; emailDomains: Set<string> },
+  emailCandidates: string[],
+): GatheredContactSignals {
   const phones = extractPhonesFromText(corpus, blocked.phones)
   const addresses = extractAddressesFromText(corpus)
   const displayName = extractNameFromText(corpus)
   return {
     displayName,
     phones,
-    emails,
+    emails: emailCandidates.slice(0, MAX_GATHERED_EMAILS),
     serviceAddress: pickBestAddress(addresses),
   }
 }
@@ -335,7 +452,7 @@ async function aiExtractContactSignals(corpus: string): Promise<Partial<Gathered
           {
             role: "system",
             content:
-              'Extract customer contact details from contractor conversation history. Reply with one JSON object only: displayName (string or empty), phone (string digits, US if possible, or empty), email (string or empty), serviceAddress (full US mailing address or empty). Only include values clearly stated by the customer. Do not invent data.',
+              'Extract customer contact details from contractor conversation history. Reply with one JSON object only: displayName (string or empty), phone (string digits, US if possible, or empty), email (string or empty), serviceAddress (full US mailing address or empty). Only include values clearly stated by the customer as their own contact info. Ignore CC/BCC recipients, quoted reply headers, signatures from other people, and contractor/staff addresses. Do not invent data.',
           },
           { role: "user", content: corpus.slice(0, 12_000) },
         ],
@@ -363,6 +480,19 @@ async function aiExtractContactSignals(corpus: string): Promise<Partial<Gathered
   } catch {
     return null
   }
+}
+
+function mergeEmailSignals(base: string[], extra: Partial<GatheredContactSignals> | null, blockDomains: Set<string>): string[] {
+  const seen = new Set(base.map(normalizeEmail))
+  const out = [...base]
+  for (const raw of extra?.emails ?? []) {
+    const e = normalizeEmail(raw)
+    if (!e || seen.has(e) || !isPlausibleCustomerEmail(e, blockDomains)) continue
+    seen.add(e)
+    out.push(e)
+    if (out.length >= MAX_GATHERED_EMAILS) break
+  }
+  return out
 }
 
 function mergeSignals(base: GatheredContactSignals, extra: Partial<GatheredContactSignals> | null): GatheredContactSignals {
@@ -505,11 +635,19 @@ export async function gatherAndApplyCustomerContactFromHistory(
   opts?: { force?: boolean; source?: string; supplementalText?: string },
 ): Promise<GatherCustomerContactResult> {
   const blocked = await loadBlockedContactValues(supabase, userId)
-  let corpus = await buildCustomerContactCorpus(supabase, userId, customerId)
+  const inboundEvents = await loadInboundCustomerCommEvents(supabase, userId, customerId)
+  const { corpus: builtCorpus, smsCallCorpus } = await buildCustomerContactCorpus(
+    supabase,
+    userId,
+    customerId,
+    inboundEvents,
+  )
+  let corpus = builtCorpus
   const extra = opts?.supplementalText?.trim()
   if (extra) corpus = `${corpus}\n\n---\n\n${extra}`.slice(0, CORPUS_LIMIT)
 
-  let signals = extractContactSignalsFromCorpus(corpus, blocked)
+  const emailCandidates = extractCustomerEmailsFromEvents(inboundEvents, blocked.emailDomains, smsCallCorpus)
+  let signals = extractContactSignalsFromCorpus(corpus, blocked, emailCandidates)
   const needsAi =
     !signals.serviceAddress ||
     signals.phones.length === 0 ||
@@ -517,9 +655,16 @@ export async function gatherAndApplyCustomerContactFromHistory(
     !signals.displayName
   if (needsAi && corpus.trim().length >= 40) {
     const ai = await aiExtractContactSignals(corpus)
-    signals = mergeSignals(signals, ai)
-    signals.phones = signals.phones.filter((p) => !isBlockedPhone(p, blocked.phones))
-    signals.emails = signals.emails.filter((e) => isPlausibleCustomerEmail(e, blocked.emailDomains))
+    if (ai) {
+      signals = {
+        displayName: signals.displayName || ai.displayName || null,
+        phones: [...new Set([...signals.phones, ...(ai.phones ?? [])])].filter(
+          (p) => !isBlockedPhone(p, blocked.phones),
+        ),
+        emails: mergeEmailSignals(signals.emails, ai, blocked.emailDomains),
+        serviceAddress: signals.serviceAddress || ai.serviceAddress || null,
+      }
+    }
   }
 
   const updatedFields = await applyGatheredContactToCustomer(supabase, userId, customerId, signals, {
