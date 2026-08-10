@@ -6,6 +6,7 @@ import {
   snapMinutesToIncrement,
 } from "../../lib/numericFormInput"
 import { useOfficeManagerScopeOptional, usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
+import { useCustomerDataScope } from "../../hooks/useCustomerDataScope"
 import { filterRealUserIds, resolveSandboxDataUserId } from "../../lib/sandboxDemoTeam"
 import EstimateWorkflowActionsPanel from "../../components/EstimateWorkflowActionsPanel"
 import EstimateWorkflowRouteModal from "../../components/EstimateWorkflowRouteModal"
@@ -499,8 +500,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const globalAssistant = useGlobalAssistantOptional()
   const jobTypesModal = useJobTypesModalOptional()
   const scopeCtx = useOfficeManagerScopeOptional()
-  const userId = useScopedUserId()
-  const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
+  const viewerUserId = useScopedUserId()
+  const { dataUserId: quotesDbUserId } = useCustomerDataScope()
+  /** Account owner scope for quotes/customers (view-as team members write to owner rows). */
+  const userId = quotesDbUserId || viewerUserId
+  const aiAutomationsEnabled = useScopedAiAutomationsEnabled(viewerUserId)
   const portalConfig = usePortalConfigForPage()
   const sandboxTraining = useSandboxTrainingMode()
   const [showSettings, setShowSettings] = useState(false)
@@ -726,8 +730,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
 
   const selectableUsers = useMemo(() => {
     if (scopeCtx?.clients?.length) return scopeCtx.clients
-    return [{ userId, label: "My calendar", email: null, clientId: null, isSelf: true }]
-  }, [scopeCtx?.clients, userId])
+    return [{ userId: viewerUserId, label: "My calendar", email: null, clientId: null, isSelf: true }]
+  }, [scopeCtx?.clients, viewerUserId])
 
   useEffect(() => {
     if (!supabase || !userId) {
@@ -890,12 +894,12 @@ export default function QuotesPage(_props: QuotesPageProps) {
       }
       const clients = scopeCtx?.clients ?? []
       if (clients.length === 0) {
-        setVarianceAssigneeOptions([{ userId, label: "Me (this account)" }])
+        setVarianceAssigneeOptions([{ userId: viewerUserId, label: "Me (this account)" }])
         return
       }
       const ids = filterRealUserIds(clients.map((c) => c.userId).filter(Boolean))
       if (ids.length === 0) {
-        setVarianceAssigneeOptions([{ userId, label: "Me (this account)" }])
+        setVarianceAssigneeOptions([{ userId: viewerUserId, label: "Me (this account)" }])
         return
       }
       const { data, error } = await supabase.from("profiles").select("id, display_name, metadata").in("id", ids)
@@ -915,8 +919,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
       }
       out.sort((a, b) => a.label.localeCompare(b.label))
       /** Solo contractors (no OM team list) or teams with nobody flagged still need self-route for variance/registry. */
-      if (!out.some((o) => o.userId === userId)) {
-        out.unshift({ userId, label: "Me (this account)" })
+      if (!out.some((o) => o.userId === viewerUserId)) {
+        out.unshift({ userId: viewerUserId, label: "Me (this account)" })
       }
       setVarianceAssigneeOptions(out)
     }
@@ -924,7 +928,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
     return () => {
       cancelled = true
     }
-  }, [scopeCtx?.clients, supabase, userId])
+  }, [scopeCtx?.clients, supabase, viewerUserId])
 
   const estimateGuidePersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const estimateGuideFlagsRef = useRef(estimateGuideFlags)

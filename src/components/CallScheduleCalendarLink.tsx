@@ -3,6 +3,11 @@ import { useAppNavigationOptional } from "../contexts/AppNavigationContext"
 import { queueCalendarSuiteNavigation } from "../lib/workflowNavigation"
 import { theme } from "../styles/theme"
 import { useLocale } from "../i18n/LocaleContext"
+import { useManagedByOfficeManager } from "../hooks/useManagedByOfficeManager"
+import { useManagedOmCalendarPolicy } from "../hooks/useManagedOmCalendarPolicy"
+import { isOfficeManagerLikeRole } from "../lib/profileRoles"
+import { useAuth } from "../contexts/AuthContext"
+import { useEffectiveViewRole } from "../contexts/PortalViewContext"
 
 type Props = {
   style?: CSSProperties
@@ -12,6 +17,16 @@ type Props = {
 export function CallScheduleCalendarLink({ style, variant = "button" }: Props) {
   const nav = useAppNavigationOptional()
   const { t } = useLocale()
+  const { role: authRole } = useAuth()
+  const effectiveViewRole = useEffectiveViewRole()
+  const managedByOfficeManager = useManagedByOfficeManager()
+  const managedSelfPolicy = useManagedOmCalendarPolicy()
+  const isOfficeManagerOrAdmin = isOfficeManagerLikeRole(effectiveViewRole ?? authRole)
+
+  const canAccessCallSchedule =
+    isOfficeManagerOrAdmin || !managedByOfficeManager || managedSelfPolicy.allow_call_schedule === true
+
+  if (!canAccessCallSchedule) return null
 
   function open() {
     queueCalendarSuiteNavigation({ id: "call_schedule" })

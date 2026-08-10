@@ -907,6 +907,15 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       !managedByOfficeManager ||
       managedSelfPolicy.customer_map_access === true)
 
+  const canAccessCallSchedule =
+    Boolean(authUserId) &&
+    (sandboxTraining ||
+      isOfficeManagerOrAdmin ||
+      !managedByOfficeManager ||
+      managedSelfPolicy.allow_call_schedule === true)
+
+  const callScheduleProfileUserId = calendarOwnerUserId || userId
+
   const canAccessTeamMap =
     isOfficeManagerOrAdmin && (teamMapUserIds.length > 0 || (sandboxTraining && teamMapMembers.some((m) => m.isDemo)))
 
@@ -1049,6 +1058,11 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
       setCalendarSuite({ id: "calendar" })
     }
   }, [calendarSuite, managedByOfficeManager, managedSelfPolicy, isOfficeManagerOrAdmin, sandboxTraining])
+
+  useEffect(() => {
+    if (calendarSuite.id !== "call_schedule" || canAccessCallSchedule || sandboxTraining) return
+    setCalendarSuite({ id: "calendar" })
+  }, [calendarSuite, canAccessCallSchedule, sandboxTraining])
 
   useEffect(() => {
     if (!managedByOfficeManager || !supabase || !userId) return
@@ -3993,14 +4007,16 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                   Map
                 </button>
               ) : null}
-              <button
-                type="button"
-                onClick={() => setCalendarSuite({ id: "call_schedule" })}
-                style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "#f0fdf4", cursor: "pointer", color: theme.text, fontWeight: 700 }}
-                title="Ring groups, forwarding, and voicemail by day"
-              >
-                Call Schedule
-              </button>
+              {canAccessCallSchedule ? (
+                <button
+                  type="button"
+                  onClick={() => setCalendarSuite({ id: "call_schedule" })}
+                  style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "#f0fdf4", cursor: "pointer", color: theme.text, fontWeight: 700 }}
+                  title="Ring groups, forwarding, and voicemail by day"
+                >
+                  Call Schedule
+                </button>
+              ) : null}
             </div>
             {showCalAutoResponse ? (
               <button
@@ -4709,8 +4725,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             boxSizing: "border-box",
           }}
         >
-          {calendarSuite.id === "call_schedule" && userId ? (
-            <CallSchedulePanel profileUserId={userId} onOpenMyT={setPage ? () => setPage("account") : undefined} />
+          {calendarSuite.id === "call_schedule" && callScheduleProfileUserId && canAccessCallSchedule ? (
+            <CallSchedulePanel profileUserId={callScheduleProfileUserId} onOpenMyT={setPage ? () => setPage("account") : undefined} />
           ) : null}
           {calendarSuite.id === "time_clock" && authUserId ? (
             <>

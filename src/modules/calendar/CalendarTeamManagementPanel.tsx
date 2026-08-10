@@ -554,6 +554,15 @@ function TeamUserCard({
                   <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
                     <input
                       type="checkbox"
+                      checked={policy.allow_call_schedule === true}
+                      disabled={savingUserId === member.userId}
+                      onChange={(e) => updatePermissionDraft(member.userId, { allow_call_schedule: e.target.checked })}
+                    />
+                    Allow Call Schedule access
+                  </label>
+                  <label style={{ fontSize: 12, color: theme.text, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
                       checked={policy.customer_map_access === true}
                       disabled={savingUserId === member.userId}
                       onChange={(e) => updatePermissionDraft(member.userId, { customer_map_access: e.target.checked })}

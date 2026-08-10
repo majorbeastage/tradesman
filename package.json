@@ -35,7 +35,8 @@
     "supabase:deploy:notify-calendar-invite": "npx --yes supabase@2.92.1 functions deploy notify-calendar-invite --project-ref othemzceycphhuwojxge --use-api",
     "supabase:sql:calendar-assignee-rls": "npx --yes supabase@2.92.1 db query -f supabase/RUN-FIRST-calendar-assignee-rls.sql --linked",
     "supabase:sql:calendar-view-as-rls": "npx --yes supabase@2.92.1 db query -f supabase/calendar-events-view-as-and-team-write-rls.sql --linked",
-    "supabase:sql:org-customer-sharing-rls": "npx --yes supabase@2.92.1 db query -f supabase/org-customer-sharing-read-rls.sql --linked"
+    "supabase:sql:org-customer-sharing-rls": "npx --yes supabase@2.92.1 db query -f supabase/org-customer-sharing-read-rls.sql --linked",
+    "supabase:sql:quotes-view-as-rls": "npx --yes supabase@2.92.1 db query -f supabase/quotes-view-as-and-team-write-rls.sql --linked"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.0",

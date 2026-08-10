@@ -44,6 +44,8 @@ export type OmCalendarPolicyV1 = {
   job_qualifications?: Record<string, "not_qualified" | "qualified" | "preferred" | "required">
   /** When true, user may access the Email Client and granted org inboxes. */
   allow_email_client?: boolean
+  /** When true, internal/external users may open Call Schedule under Scheduling. */
+  allow_call_schedule?: boolean
   /** Org email route ids this user may read/send from (subset configured by leadership). */
   email_inbox_route_ids?: string[]
   /** When true, late punch alerts fire for this user per workforce schedule. */
@@ -125,6 +127,7 @@ export function parseOmCalendarPolicy(metadata: unknown): OmCalendarPolicyV1 {
     teammate_user_id: teammateUserId,
     job_qualifications: quals,
     allow_email_client: o.allow_email_client === true,
+    allow_call_schedule: o.allow_call_schedule === true,
     email_inbox_route_ids: Array.isArray(o.email_inbox_route_ids)
       ? o.email_inbox_route_ids.filter((x): x is string => typeof x === "string")
       : [],
