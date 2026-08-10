@@ -31,7 +31,8 @@
     "supabase:deploy:send-team-invite": "npx --yes supabase@2.92.1 functions deploy send-team-invite --project-ref othemzceycphhuwojxge --use-api",
     "supabase:deploy:accept-team-invite": "npx --yes supabase@2.92.1 functions deploy accept-team-invite --project-ref othemzceycphhuwojxge --use-api",
     "supabase:deploy:notify-internal-message": "npx --yes supabase@2.92.1 functions deploy notify-internal-message --project-ref othemzceycphhuwojxge --use-api",
-    "supabase:deploy:notify-missed-call": "npx --yes supabase@2.92.1 functions deploy notify-missed-call --project-ref othemzceycphhuwojxge --use-api"
+    "supabase:deploy:notify-missed-call": "npx --yes supabase@2.92.1 functions deploy notify-missed-call --project-ref othemzceycphhuwojxge --use-api",
+    "supabase:deploy:notify-calendar-invite": "npx --yes supabase@2.92.1 functions deploy notify-calendar-invite --project-ref othemzceycphhuwojxge --use-api"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.0",
