@@ -14,13 +14,18 @@ let pendingHandoff: {
 } | null = null
 
 function readPushData(action: {
-  notification?: { data?: Record<string, unknown>; extra?: Record<string, unknown> }
+  notification?: { title?: string; body?: string; data?: Record<string, unknown>; extra?: Record<string, unknown> }
+  data?: Record<string, unknown>
 }): Record<string, unknown> {
   const n = action?.notification
-  return {
+  const merged: Record<string, unknown> = {
+    ...(action?.data && typeof action.data === "object" ? action.data : {}),
     ...(n?.extra && typeof n.extra === "object" ? n.extra : {}),
     ...(n?.data && typeof n.data === "object" ? n.data : {}),
   }
+  if (n?.title && !merged.title) merged.title = n.title
+  if (n?.body && !merged.body) merged.body = n.body
+  return merged
 }
 
 function parseHandoff(data: Record<string, unknown>): {
@@ -30,7 +35,11 @@ function parseHandoff(data: Record<string, unknown>): {
   openPlayStore?: boolean
 } | null {
   const type = String(data.type ?? data.Type ?? "").trim()
-  if (type === "app_update") {
+  const title = String(data.title ?? "").trim()
+  if (type === "app_update" || title === "Update Tradesman") {
+    return { openPlayStore: true }
+  }
+  if (typeof data.storeUrl === "string" && data.storeUrl.includes("play.google.com")) {
     return { openPlayStore: true }
   }
   const threadId = String(data.threadId ?? data.thread_id ?? data.thread ?? "").trim()

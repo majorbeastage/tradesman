@@ -12,10 +12,11 @@ const corsHeaders = {
 
 const MAIN_APP_ID = "com.tradesmanus.com"
 const PLAY_STORE_URL = `https://play.google.com/store/apps/details?id=${MAIN_APP_ID}`
+const PLAY_STORE_MARKET_URL = `market://details?id=${MAIN_APP_ID}`
 
 const DEFAULT_TITLE = "Update Tradesman"
 const DEFAULT_BODY =
-  "A new version is on Google Play. Open the Play Store app and tap Update for the latest fixes."
+  "Tap to open Google Play and install the latest Tradesman update."
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders })
@@ -127,6 +128,7 @@ Deno.serve(async (req) => {
         androidChannelId: "tradesman_alerts",
         androidTag: "app_update_nudge",
         collapseKey: "app_update_nudge",
+        clickLink: d.platform === "android" ? PLAY_STORE_MARKET_URL : PLAY_STORE_URL,
         data: {
           type: "app_update",
           storeUrl: PLAY_STORE_URL,

@@ -88,15 +88,28 @@ export function openMessagingPlayStore(): void {
 
 export function openMainAppPlayStore(): void {
   if (typeof window === "undefined") return
-  try {
-    if (isAndroidUa() || (Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android")) {
-      window.location.href = `market://details?id=${MAIN_ANDROID_PACKAGE}`
-      return
+  void (async () => {
+    try {
+      if (Capacitor.isNativePlatform()) {
+        const { TradesmanNative } = await import("../plugins/tradesman-native")
+        const market =
+          Capacitor.getPlatform() === "android" ? MAIN_PLAY_STORE_MARKET_URL : MAIN_PLAY_STORE_URL
+        await TradesmanNative.openExternalUrl({ url: market })
+        return
+      }
+    } catch {
+      /* fall through */
     }
-  } catch {
-    /* fall through */
-  }
-  window.open(MAIN_PLAY_STORE_URL, "_blank", "noopener,noreferrer")
+    try {
+      if (isAndroidUa() || (Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android")) {
+        window.location.href = MAIN_PLAY_STORE_MARKET_URL
+        return
+      }
+    } catch {
+      /* fall through */
+    }
+    window.open(MAIN_PLAY_STORE_URL, "_blank", "noopener,noreferrer")
+  })()
 }
 
 /**

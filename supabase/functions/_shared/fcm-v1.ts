@@ -68,6 +68,8 @@ export type SendFcmNotificationParams = {
    * iOS still gets an APS alert via `apns`.
    */
   androidDataOnly?: boolean
+  /** When set, FCM opens this URL on notification tap (Play Store / https) on many Android builds without in-app code. */
+  clickLink?: string
 }
 
 export async function sendFcmNotification(
@@ -137,6 +139,11 @@ export async function sendFcmNotification(
   }
 
   const payload = { message }
+  const clickLink = params.clickLink?.trim()
+  if (clickLink) {
+    message.fcm_options = { link: clickLink }
+  }
+
   const res = await fetch(url, {
     method: "POST",
     headers: {
