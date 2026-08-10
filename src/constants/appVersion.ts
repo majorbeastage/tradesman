@@ -39,6 +39,7 @@
  * **2.3.6** — Android versionCode 27 for Play upload of softphone / messenger enhancements build.
  * **2.3.7** — Softphone Phone/Speaker labels + louder native call audio; Messaging deep-link opens installed app (no false Play Store); homepage About slide Play Store links; login-via-Tradesman handoff cold-start fix. Android versionCode 28.
  * **2.3.8** — Common login: main app single-device soft takeover (call-safe); Messaging up to 3 devices + stay-signed-in preference. Requires user-app-sessions.sql. Android versionCode 29.
+ * **2.3.15** — Today's to-do: assigned users see scheduled jobs; calendar rows open the event. Native app update gate (MIN_ANDROID_APP_VERSION / MIN_IOS_APP_VERSION → Play/App Store). Android versionCode 37.
  *
  * @see CopyrightVersionFooter
  */

@@ -3,11 +3,12 @@ import { theme } from "../styles/theme"
 import { supabase } from "../lib/supabase"
 import { loadTodayWorkSnapshot, type TodayWorkSnapshot } from "../lib/todayWorkReport"
 import { loadPressingWorkQueue, type PressingWorkItem } from "../lib/pressingWorkQueue"
-import { requestOpenDashboardTodoModal } from "../lib/dashboardTodoUi"
+import { requestOpenDashboardTodoModal, openDashboardCalendarEvent } from "../lib/dashboardTodoUi"
 
 type Props = {
   dataUserId: string | null
   viewerUserId: string | null
+  setPage?: (page: string) => void
   isMobile: boolean
   reportingAllowed: boolean
   onOpenReporting?: () => void
@@ -51,6 +52,7 @@ function statChipStyle(): CSSProperties {
 export default function DashboardTodayWorkPreview({
   dataUserId,
   viewerUserId,
+  setPage,
   isMobile,
   reportingAllowed,
   onOpenReporting,
@@ -78,7 +80,7 @@ export default function DashboardTodayWorkPreview({
     setLoading(true)
     setErr("")
     void Promise.all([
-      loadTodayWorkSnapshot(supabase, dataUserId),
+      loadTodayWorkSnapshot(supabase, dataUserId, { viewerUserId: actorId }),
       loadPressingWorkQueue(supabase, dataUserId, actorId, { includeTeamTodos: false }),
       supabase
         .from("ad_campaigns")
@@ -108,6 +110,11 @@ export default function DashboardTodayWorkPreview({
   }, [dataUserId, viewerUserId])
 
   const gridCols = isMobile ? "1fr" : "1fr 1fr"
+
+  function openEvent(eventId: string) {
+    if (!setPage) return
+    openDashboardCalendarEvent(eventId, setPage)
+  }
 
   return (
     <section
@@ -208,6 +215,7 @@ export default function DashboardTodayWorkPreview({
                 primary: item.title,
                 secondary: item.subtitle,
                 accent: item.urgencyScore >= 90 ? "#dc2626" : item.urgencyScore >= 70 ? "#d97706" : undefined,
+                onClick: item.eventId && setPage ? () => openEvent(item.eventId!) : undefined,
               })),
             ].slice(0, 5)}
           />
@@ -224,6 +232,7 @@ export default function DashboardTodayWorkPreview({
                 secondary: ev.start_at
                   ? new Date(ev.start_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
                   : undefined,
+                onClick: setPage ? () => openEvent(ev.id) : undefined,
               }))}
             />
             <PreviewList
@@ -281,7 +290,7 @@ function PreviewList({
 }: {
   title: string
   empty: string
-  items: { key: string; primary: string; secondary?: string; accent?: string }[]
+  items: { key: string; primary: string; secondary?: string; accent?: string; onClick?: () => void }[]
   actionLabel?: string
   onAction?: () => void
 }) {
@@ -322,10 +331,37 @@ function PreviewList({
         <ul style={{ margin: 0, padding: 0, listStyle: "none", fontSize: 11, lineHeight: 1.35 }}>
           {items.map((item) => (
             <li key={item.key} style={{ padding: "3px 0", borderTop: "1px solid #f1f5f9" }}>
-              <div style={{ fontWeight: 600, color: theme.text, fontSize: 11 }}>{item.primary}</div>
-              {item.secondary ? (
-                <div style={{ fontSize: 10, color: item.accent ?? "#64748b", fontWeight: item.accent ? 700 : 500 }}>{item.secondary}</div>
-              ) : null}
+              {item.onClick ? (
+                <button
+                  type="button"
+                  onClick={item.onClick}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    padding: 0,
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
+                    font: "inherit",
+                    color: "inherit",
+                  }}
+                >
+                  <div style={{ fontWeight: 600, color: theme.text, fontSize: 11 }}>{item.primary}</div>
+                  {item.secondary ? (
+                    <div style={{ fontSize: 10, color: item.accent ?? "#64748b", fontWeight: item.accent ? 700 : 500 }}>
+                      {item.secondary}
+                    </div>
+                  ) : null}
+                </button>
+              ) : (
+                <>
+                  <div style={{ fontWeight: 600, color: theme.text, fontSize: 11 }}>{item.primary}</div>
+                  {item.secondary ? (
+                    <div style={{ fontSize: 10, color: item.accent ?? "#64748b", fontWeight: item.accent ? 700 : 500 }}>{item.secondary}</div>
+                  ) : null}
+                </>
+              )}
             </li>
           ))}
         </ul>

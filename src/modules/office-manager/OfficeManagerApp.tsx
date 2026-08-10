@@ -625,6 +625,7 @@ function OfficeManagerAppContent() {
             isMobile={isMobile}
             dataUserId={scope?.selectedUserId ?? user?.id ?? null}
             viewerUserId={user?.id ?? null}
+            setPage={setPage}
             reportingAllowed
             onOpenReporting={() => setPage("reporting")}
             onOpenCustomers={() => setPage("customers")}

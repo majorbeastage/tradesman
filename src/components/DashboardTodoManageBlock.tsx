@@ -12,11 +12,14 @@ import {
   type TodoAssigneeOption,
 } from "../lib/dashboardTodos"
 import type { PressingWorkItem } from "../lib/pressingWorkQueue"
+import { openDashboardCalendarEvent } from "../lib/dashboardTodoUi"
 
 type Props = {
   accountOwnerId: string
   viewerUserId: string
   pressingItems: PressingWorkItem[]
+  setPage?: (page: string) => void
+  onClose?: () => void
   onRefresh: () => void
   compact?: boolean
 }
@@ -25,6 +28,8 @@ export default function DashboardTodoManageBlock({
   accountOwnerId,
   viewerUserId,
   pressingItems,
+  setPage,
+  onClose,
   onRefresh,
   compact,
 }: Props) {
@@ -96,6 +101,12 @@ export default function DashboardTodoManageBlock({
 
   const pressingSlice = pressingItems.slice(0, compact ? 5 : 10)
 
+  function openCalendarEvent(eventId: string) {
+    if (!setPage) return
+    onClose?.()
+    openDashboardCalendarEvent(eventId, setPage)
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <section>
@@ -105,12 +116,31 @@ export default function DashboardTodoManageBlock({
           <p style={emptyStyle}>Nothing urgent right now. Add a custom task below or check back after new activity.</p>
         ) : (
           <ul style={listStyle}>
-            {pressingSlice.map((item) => (
-              <li key={item.id} style={listItemStyle(item.kind === "critical_customer" || item.urgencyScore >= 90)}>
-                <div style={{ fontWeight: 700, fontSize: 13, color: theme.text }}>{item.title}</div>
-                {item.subtitle ? <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{item.subtitle}</div> : null}
-              </li>
-            ))}
+            {pressingSlice.map((item) => {
+              const clickable = Boolean(item.eventId && setPage)
+              const hot = item.kind === "critical_customer" || item.urgencyScore >= 90
+              const inner = (
+                <>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: theme.text }}>{item.title}</div>
+                  {item.subtitle ? <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{item.subtitle}</div> : null}
+                </>
+              )
+              return (
+                <li key={item.id} style={listItemStyle(hot)}>
+                  {clickable ? (
+                    <button
+                      type="button"
+                      onClick={() => openCalendarEvent(item.eventId!)}
+                      style={clickableRowBtnStyle}
+                    >
+                      {inner}
+                    </button>
+                  ) : (
+                    inner
+                  )}
+                </li>
+              )
+            })}
           </ul>
         )}
       </section>
@@ -262,4 +292,16 @@ const addBtnStyle = {
   fontWeight: 700,
   fontSize: 13,
   cursor: "pointer",
+} as const
+
+const clickableRowBtnStyle = {
+  display: "block",
+  width: "100%",
+  textAlign: "left" as const,
+  padding: 0,
+  border: "none",
+  background: "transparent",
+  cursor: "pointer",
+  font: "inherit",
+  color: "inherit",
 } as const

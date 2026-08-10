@@ -641,6 +641,7 @@ function MainAppInner() {
             isMobile={isMobile}
             dataUserId={effectiveUserId || null}
             viewerUserId={user?.id ?? null}
+            setPage={setPage}
             reportingAllowed={isOfficeManagerLikeRole(authRole)}
             onOpenReporting={() => setPage("reporting")}
             onOpenCustomers={() => setPage("customers")}

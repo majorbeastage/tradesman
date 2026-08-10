@@ -6,6 +6,8 @@ import { formatCoiExpiryLabel } from "../lib/coiExpiration"
 import { loadCoiTodoItems, type CoiTodoItem } from "../lib/insuranceAssistant"
 import { loadPressingWorkQueue, type PressingWorkItem } from "../lib/pressingWorkQueue"
 import { loadTodoAssigneeOptions } from "../lib/dashboardTodos"
+import { loadCalendarEventsForViewer } from "../lib/calendarEventsForViewer"
+import { openDashboardCalendarEvent } from "../lib/dashboardTodoUi"
 import DashboardTodoManageBlock from "./DashboardTodoManageBlock"
 
 type CalendarRow = { id: string; title: string | null; start_at: string | null; end_at: string | null }
@@ -13,6 +15,7 @@ type CalendarRow = { id: string; title: string | null; start_at: string | null; 
 type Props = {
   open: boolean
   onClose: () => void
+  setPage: (page: string) => void
   /** Workspace account (calendar + customers scope). */
   dataUserId: string | null
   /** Signed-in user — task assignment + "my tasks" filter. */
@@ -26,7 +29,7 @@ function localDayBounds(): { startIso: string; endIso: string } {
   return { startIso: start.toISOString(), endIso: end.toISOString() }
 }
 
-export default function DashboardTodayTodoModal({ open, onClose, dataUserId, viewerUserId }: Props) {
+export default function DashboardTodayTodoModal({ open, onClose, setPage, dataUserId, viewerUserId }: Props) {
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState("")
   const [events, setEvents] = useState<CalendarRow[]>([])
@@ -48,15 +51,8 @@ export default function DashboardTodayTodoModal({ open, onClose, dataUserId, vie
       const assigneeOpts = await loadTodoAssigneeOptions(supabase, accountOwnerId, actorId)
       const labelMap = new Map(assigneeOpts.map((o) => [o.id, o.label]))
 
-      const [evRes, custRes, coiItems, pressing] = await Promise.all([
-        supabase
-          .from("calendar_events")
-          .select("id, title, start_at, end_at")
-          .eq("user_id", accountOwnerId)
-          .is("removed_at", null)
-          .gte("start_at", startIso)
-          .lt("start_at", endIso)
-          .order("start_at", { ascending: true }),
+      const [todayEvents, custRes, coiItems, pressing] = await Promise.all([
+        loadCalendarEventsForViewer(supabase, actorId, { startIso, endIso }),
         supabase
           .from("customers")
           .select("id, display_name, communication_urgency")
@@ -68,9 +64,8 @@ export default function DashboardTodayTodoModal({ open, onClose, dataUserId, vie
           assigneeLabels: labelMap,
         }),
       ])
-      if (evRes.error) throw evRes.error
       if (custRes.error) throw custRes.error
-      setEvents((evRes.data ?? []) as CalendarRow[])
+      setEvents(todayEvents as CalendarRow[])
       const nearCritical = (custRes.data ?? []).filter((c: { communication_urgency?: string | null }) => {
         const u = normalizeCommunicationUrgency(c.communication_urgency)
         return u === "Needs Attention" || u === "Critical"
@@ -140,6 +135,8 @@ export default function DashboardTodayTodoModal({ open, onClose, dataUserId, vie
               accountOwnerId={accountOwnerId}
               viewerUserId={actorId}
               pressingItems={pressingItems}
+              setPage={setPage}
+              onClose={onClose}
               onRefresh={() => void reload()}
             />
 
@@ -174,13 +171,22 @@ export default function DashboardTodayTodoModal({ open, onClose, dataUserId, vie
                     <ul style={bulletListStyle}>
                       {events.map((ev) => (
                         <li key={ev.id}>
-                          <strong>{ev.title?.trim() || "Untitled"}</strong>
-                          {ev.start_at ? (
-                            <span style={{ color: "#64748b", fontWeight: 500 }}>
-                              {" "}
-                              · {new Date(ev.start_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
-                            </span>
-                          ) : null}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onClose()
+                              openDashboardCalendarEvent(ev.id, setPage)
+                            }}
+                            style={calendarEventBtnStyle}
+                          >
+                            <strong>{ev.title?.trim() || "Untitled"}</strong>
+                            {ev.start_at ? (
+                              <span style={{ color: "#64748b", fontWeight: 500 }}>
+                                {" "}
+                                · {new Date(ev.start_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+                              </span>
+                            ) : null}
+                          </button>
                         </li>
                       ))}
                     </ul>
@@ -241,3 +247,14 @@ const closeBtnStyle = {
 const sectionTitleStyle = { margin: "0 0 8px", fontSize: 13, fontWeight: 700, color: "#475569" } as const
 const emptyStyle = { margin: 0, fontSize: 13, color: "#94a3b8" } as const
 const bulletListStyle = { margin: 0, paddingLeft: 18, fontSize: 13, color: theme.text, lineHeight: 1.5 } as const
+const calendarEventBtnStyle = {
+  display: "block",
+  width: "100%",
+  textAlign: "left" as const,
+  padding: "4px 0",
+  border: "none",
+  background: "transparent",
+  cursor: "pointer",
+  font: "inherit",
+  color: "inherit",
+} as const

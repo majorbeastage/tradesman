@@ -9,6 +9,7 @@ import { ErrorBoundary } from './ErrorBoundary'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { LocaleProvider } from './i18n/LocaleContext'
 import NativeMobilePipeline from './components/NativeMobilePipeline'
+import AppUpdateRequiredGate from './components/AppUpdateRequiredGate'
 import MainAppSessionGuard from './components/MainAppSessionGuard'
 import { Capacitor } from '@capacitor/core'
 
@@ -27,6 +28,7 @@ createRoot(document.getElementById('root')!).render(
     <ErrorBoundary>
       <AuthProvider>
         <NativeMobilePipeline />
+        <AppUpdateRequiredGate />
         <SessionGuardHost />
         <LocaleProvider>
           <App />

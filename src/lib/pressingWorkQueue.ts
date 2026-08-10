@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { loadTodayWorkSnapshot, localDayBounds, type TodayWorkEvent } from "./todayWorkReport"
+import { loadCalendarEventsForViewer } from "./calendarEventsForViewer"
 import { loadCoiTodoItems, type CoiTodoItem } from "./insuranceAssistant"
 import {
   activeDashboardTodos,
@@ -80,23 +81,12 @@ export async function loadPressingWorkQueue(
   const { endIso } = localDayBounds(now)
   const weekEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7).toISOString()
 
-  const [snap, coiItems, todosDoc, upcomingRes] = await Promise.all([
-    loadTodayWorkSnapshot(client, accountOwnerId),
+  const [snap, coiItems, todosDoc, upcomingEvents] = await Promise.all([
+    loadTodayWorkSnapshot(client, accountOwnerId, { viewerUserId }),
     loadCoiTodoItems(client, accountOwnerId),
     loadDashboardTodosDoc(client, accountOwnerId),
-    client
-      .from("calendar_events")
-      .select("id, title, start_at, end_at")
-      .eq("user_id", accountOwnerId)
-      .is("removed_at", null)
-      .gte("start_at", now.toISOString())
-      .lt("start_at", weekEnd)
-      .order("start_at", { ascending: true })
-      .limit(40),
+    loadCalendarEventsForViewer(client, viewerUserId, { startIso: now.toISOString(), endIso: weekEnd }, { limit: 40 }),
   ])
-
-  if (upcomingRes.error) throw upcomingRes.error
-  const upcomingEvents = (upcomingRes.data ?? []) as TodayWorkEvent[]
 
   const items: PressingWorkItem[] = []
   const seenCalendar = new Set<string>()

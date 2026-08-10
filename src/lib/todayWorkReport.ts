@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { normalizeCommunicationUrgency, type CommunicationUrgency } from "./customerUrgency"
+import { loadCalendarEventsForViewer, countCalendarEventsForViewer } from "./calendarEventsForViewer"
 
 export type TodayWorkEvent = {
   id: string
@@ -63,31 +64,19 @@ function isNeglected(c: TodayWorkCustomer, nowMs: number): boolean {
 export async function loadTodayWorkSnapshot(
   supabase: SupabaseClient,
   userId: string,
-  opts?: { recentDays?: number },
+  opts?: { recentDays?: number; viewerUserId?: string },
 ): Promise<TodayWorkSnapshot> {
   const recentDays = opts?.recentDays ?? 7
+  const viewerUserId = opts?.viewerUserId?.trim() || userId
   const now = new Date()
   const nowMs = now.getTime()
   const { startIso, endIso } = localDayBounds(now)
   const week = weekBounds(now)
   const recentSinceMs = nowMs - recentDays * 86400000
 
-  const [evTodayRes, evWeekRes, custRes] = await Promise.all([
-    supabase
-      .from("calendar_events")
-      .select("id, title, start_at, end_at")
-      .eq("user_id", userId)
-      .is("removed_at", null)
-      .gte("start_at", startIso)
-      .lt("start_at", endIso)
-      .order("start_at", { ascending: true }),
-    supabase
-      .from("calendar_events")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", userId)
-      .is("removed_at", null)
-      .gte("start_at", week.startIso)
-      .lt("start_at", week.endIso),
+  const [todayEvents, weekEventCount, custRes] = await Promise.all([
+    loadCalendarEventsForViewer(supabase, viewerUserId, { startIso, endIso }),
+    countCalendarEventsForViewer(supabase, viewerUserId, week),
     supabase
       .from("customers")
       .select("id, display_name, communication_urgency, last_activity_at, updated_at")
@@ -95,12 +84,7 @@ export async function loadTodayWorkSnapshot(
       .limit(800),
   ])
 
-  if (evTodayRes.error) throw evTodayRes.error
-  if (evWeekRes.error) throw evWeekRes.error
   if (custRes.error) throw custRes.error
-
-  const todayEvents = (evTodayRes.data ?? []) as TodayWorkEvent[]
-  const weekEventCount = evWeekRes.count ?? 0
 
   const mapped: TodayWorkCustomer[] = (custRes.data ?? []).map((c) => {
     const row = c as {

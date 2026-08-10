@@ -1514,6 +1514,7 @@ export default function DashboardQuickActions(props: Props) {
       <DashboardTodayTodoModal
         open={todayOpen}
         onClose={() => setTodayOpen(false)}
+        setPage={setPage}
         dataUserId={dashboardDataUserId ?? null}
         viewerUserId={user?.id ?? null}
       />
