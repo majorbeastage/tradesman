@@ -4,7 +4,7 @@ Tradesman — Google Play (Android) release checklist
 CODEBASE (this repo) — locked in for first Play upload
 - Run `npm run mobile:sync` after each web release so `dist` copies into `android/` (set production `VITE_*` in `.env` / CI before this so the bundle talks to prod Supabase, Helcim, etc.).
 - Open Android Studio: `npm run mobile:open:android` (or `npx cap open android`).
-- Package / app id: `com.tradesman.app` (`applicationId`, `capacitor.config.ts` appId, Play Console must match).
+- Package / app id: `com.tradesmanus.com` (`applicationId`, `capacitor.config.ts` appId, Play Console must match).
 - WebView content: bundled `dist` only (no `server.url`); cleartext HTTP disabled on `<application android:usesCleartextTraffic="false">`.
 - `android/app/build.gradle`: `versionName` is read from repo root `package.json`; bump `versionCode` for every Play upload.
 - Release type: `debuggable false`, signing via `android/keystore.properties` + `.jks` (see `keystore.properties.example`); `npm run mobile:build:android` produces `app-release.aab` when the keystore exists.

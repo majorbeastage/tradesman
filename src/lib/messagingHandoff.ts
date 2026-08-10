@@ -18,6 +18,7 @@ export const MESSAGING_PLAY_STORE_MARKET_URL = `market://details?id=${MESSAGING_
 
 export const MAIN_ANDROID_PACKAGE = "com.tradesmanus.com"
 export const MAIN_PLAY_STORE_URL = `https://play.google.com/store/apps/details?id=${MAIN_ANDROID_PACKAGE}`
+export const MAIN_PLAY_STORE_MARKET_URL = `market://details?id=${MAIN_ANDROID_PACKAGE}`
 
 /** Set when the iOS Messaging app is live on the App Store. */
 export const MESSAGING_IOS_APP_STORE_URL =

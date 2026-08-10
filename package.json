@@ -33,6 +33,7 @@
     "supabase:deploy:notify-internal-message": "npx --yes supabase@2.92.1 functions deploy notify-internal-message --project-ref othemzceycphhuwojxge --use-api",
     "supabase:deploy:notify-missed-call": "npx --yes supabase@2.92.1 functions deploy notify-missed-call --project-ref othemzceycphhuwojxge --use-api",
     "supabase:deploy:notify-calendar-invite": "npx --yes supabase@2.92.1 functions deploy notify-calendar-invite --project-ref othemzceycphhuwojxge --use-api",
+    "supabase:deploy:notify-app-update-nudge": "npx --yes supabase@2.92.1 functions deploy notify-app-update-nudge --project-ref othemzceycphhuwojxge --use-api",
     "supabase:sql:calendar-assignee-rls": "npx --yes supabase@2.92.1 db query -f supabase/RUN-FIRST-calendar-assignee-rls.sql --linked",
     "supabase:sql:calendar-view-as-rls": "npx --yes supabase@2.92.1 db query -f supabase/calendar-events-view-as-and-team-write-rls.sql --linked",
     "supabase:sql:org-customer-sharing-rls": "npx --yes supabase@2.92.1 db query -f supabase/org-customer-sharing-read-rls.sql --linked",

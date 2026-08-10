@@ -3,7 +3,7 @@ import { useAuth, type UserRole } from "../../contexts/AuthContext"
 import { usePortalViewOptional } from "../../contexts/PortalViewContext"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
-import { createUserViaAdminUsersEdge, graduateSandboxToLiveViaAdminUsersEdge, patchAccountDisabledViaAdminUsersEdge, assignOfficeManagerViaAdminUsersEdge, purgeSandboxSampleDataViaAdminUsersEdge } from "../../lib/adminCreateUserViaEdge"
+import { createUserViaAdminUsersEdge, graduateSandboxToLiveViaAdminUsersEdge, patchAccountDisabledViaAdminUsersEdge, assignOfficeManagerViaAdminUsersEdge, purgeSandboxSampleDataViaAdminUsersEdge, sendAppUpdateNudgeViaEdge } from "../../lib/adminCreateUserViaEdge"
 import { AdminSettingBlock } from "../../components/admin/AdminSettingChrome"
 import { getDefaultPortalConfigForNewUser, upgradePortalConfigFromNewUserToUser, type PortalConfig } from "../../types/portal-builder"
 import { buildGraduateSandboxProfileUpdates, isGraduateSandboxCandidate } from "../../lib/graduateSandboxToLive"
@@ -72,6 +72,7 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
   const [userTableSearch, setUserTableSearch] = useState("")
   const [graduatingUserId, setGraduatingUserId] = useState<string | null>(null)
   const [purgingSampleUserId, setPurgingSampleUserId] = useState<string | null>(null)
+  const [updatePushUserId, setUpdatePushUserId] = useState<string | null>(null)
 
   async function loadUsers() {
     if (!session?.access_token) {
@@ -431,6 +432,35 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
     if (!q) return users
     return users.filter((u) => userRowSearchText(u).includes(q))
   }, [users, userTableSearch])
+
+  async function handleSendUpdatePush(targetUserId: string, targetEmail: string | null) {
+    if (!session?.access_token || !supabaseUrl) {
+      setError("Sign in required to send update push.")
+      return
+    }
+    const label = targetEmail?.trim() || targetUserId.slice(0, 8)
+    if (
+      !window.confirm(
+        `Send a Play Store update reminder push to ${label}?\n\nThis is a gentle notification only — it will not block app access.`,
+      )
+    ) {
+      return
+    }
+    setUpdatePushUserId(targetUserId)
+    setError("")
+    try {
+      const result = await sendAppUpdateNudgeViaEdge(supabaseUrl, session.access_token, targetUserId)
+      if (!result.ok) {
+        setError(result.hint ? `${result.error} ${result.hint}` : result.error)
+        return
+      }
+      setMessage(
+        `Update reminder sent to ${label} (${result.sent} device${result.sent === 1 ? "" : "s"}${result.failed ? `, ${result.failed} failed` : ""}).`,
+      )
+    } finally {
+      setUpdatePushUserId(null)
+    }
+  }
 
   async function handleSetOfficeManager(managedUserId: string, officeManagerId: string | null) {
     if (!session?.access_token || !supabaseUrl) {
@@ -841,7 +871,7 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
               <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Mode</th>
               <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Access</th>
               <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Office manager</th>
-              <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Customer</th>
+              <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Mobile</th>
               <th style={{ padding: "12px", textAlign: "left", fontSize: 12 }}>Created</th>
             </tr>
           </thead>
@@ -1036,7 +1066,27 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
                     <span style={{ marginLeft: 6, fontSize: 11, opacity: 0.8 }}>Saving…</span>
                   )}
                 </td>
-                <td style={{ padding: "12px", color: theme.text, fontSize: 13 }}>—</td>
+                <td style={{ padding: "12px", color: theme.text, fontSize: 13 }}>
+                  <button
+                    type="button"
+                    disabled={updatePushUserId === u.id}
+                    onClick={() => void handleSendUpdatePush(u.id, u.email)}
+                    title="Send a push notification asking this user to update Tradesman from Google Play (does not block access)."
+                    style={{
+                      padding: "5px 10px",
+                      borderRadius: 6,
+                      border: `1px solid ${theme.border}`,
+                      background: "white",
+                      color: theme.text,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: updatePushUserId === u.id ? "wait" : "pointer",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {updatePushUserId === u.id ? "Sending…" : "Update push"}
+                  </button>
+                </td>
                 <td style={{ padding: "12px", color: theme.text, fontSize: 12 }}>
                   {u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}
                 </td>

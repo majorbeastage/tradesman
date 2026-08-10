@@ -203,3 +203,55 @@ export async function patchAccountDisabledViaAdminUsersEdge(
     return { ok: false, error: "Network error", tryDirectDb: true }
   }
 }
+
+export type AppUpdateNudgeResult =
+  | { ok: true; sent: number; failed: number; results?: Array<{ platform: string; ok: boolean; detail: string }> }
+  | { ok: false; error: string; hint?: string }
+
+/** Admin: send a soft Play Store update reminder push to a user's main-app devices. */
+export async function sendAppUpdateNudgeViaEdge(
+  supabaseUrl: string,
+  accessToken: string,
+  targetUserId: string,
+  opts?: { title?: string; body?: string },
+): Promise<AppUpdateNudgeResult> {
+  const base = supabaseUrl.replace(/\/$/, "")
+  if (!base) return { ok: false, error: "Missing Supabase URL" }
+  try {
+    const res = await fetch(`${base}/functions/v1/notify-app-update-nudge`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        targetUserId,
+        title: opts?.title,
+        body: opts?.body,
+      }),
+    })
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean
+      error?: string
+      hint?: string
+      sent?: number
+      failed?: number
+      results?: Array<{ platform: string; ok: boolean; detail: string }>
+    }
+    if (res.ok && data.ok === true) {
+      return {
+        ok: true,
+        sent: typeof data.sent === "number" ? data.sent : 0,
+        failed: typeof data.failed === "number" ? data.failed : 0,
+        results: data.results,
+      }
+    }
+    return {
+      ok: false,
+      error: typeof data.error === "string" ? data.error : `HTTP ${res.status}`,
+      hint: typeof data.hint === "string" ? data.hint : undefined,
+    }
+  } catch {
+    return { ok: false, error: "Network error" }
+  }
+}

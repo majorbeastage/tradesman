@@ -3,10 +3,15 @@
  * Attach as early as possible so cold-start taps are not missed.
  */
 import { Capacitor } from "@capacitor/core"
-import { openMessagingAppWithSession } from "./messagingHandoff"
+import { openMessagingAppWithSession, openMainAppPlayStore } from "./messagingHandoff"
 
 let attached = false
-let pendingHandoff: { threadId?: string; messageId?: string; openMissed?: boolean } | null = null
+let pendingHandoff: {
+  threadId?: string
+  messageId?: string
+  openMissed?: boolean
+  openPlayStore?: boolean
+} | null = null
 
 function readPushData(action: {
   notification?: { data?: Record<string, unknown>; extra?: Record<string, unknown> }
@@ -22,8 +27,12 @@ function parseHandoff(data: Record<string, unknown>): {
   threadId?: string
   messageId?: string
   openMissed?: boolean
+  openPlayStore?: boolean
 } | null {
   const type = String(data.type ?? data.Type ?? "").trim()
+  if (type === "app_update") {
+    return { openPlayStore: true }
+  }
   const threadId = String(data.threadId ?? data.thread_id ?? data.thread ?? "").trim()
   const messageId = String(data.messageId ?? data.message_id ?? "").trim() || undefined
   if (type === "internal_missed_call" || data.missedCallId) {
@@ -37,7 +46,16 @@ function parseHandoff(data: Record<string, unknown>): {
   return null
 }
 
-async function runHandoff(target: { threadId?: string; messageId?: string; openMissed?: boolean }) {
+async function runHandoff(target: {
+  threadId?: string
+  messageId?: string
+  openMissed?: boolean
+  openPlayStore?: boolean
+}) {
+  if (target.openPlayStore) {
+    openMainAppPlayStore()
+    return
+  }
   const r = await openMessagingAppWithSession({
     threadId: target.threadId ?? null,
     messageId: target.messageId ?? null,
