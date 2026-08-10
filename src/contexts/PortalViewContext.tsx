@@ -15,9 +15,11 @@ import {
   canUsePortalViewBar,
   defaultPortalConfigForViewRole,
   defaultViewRoleForAuthRole,
+  filterAdminPlatformUsersForViewRole,
   filterUsersForViewRole,
   filterUsersForViewRoleInOrg,
   isPortalViewDefaultTarget,
+  resolveOrgOwnerFromRoster,
   portalShellForViewRole,
   PORTAL_VIEW_DEFAULT_USER,
   roleFromProfileRow,
@@ -28,7 +30,6 @@ import {
 import { resolveInternalMemberLabel } from "../lib/profileContactMeta"
 import { resolveOrgRosterOwnerId } from "../lib/accountStructureOwner"
 import { loadOrgManageableUserRows, loadOrgManageableUserRowsForViewAs } from "../lib/orgRoster"
-import { isOfficeManagerAssignmentRole } from "../lib/profileRoles"
 import {
   isSandboxDemoUserId,
   parseSandboxDemoTeam,
@@ -232,20 +233,17 @@ async function loadEndUserManageableRows(
   return [selfRow]
 }
 
-/** Admin view-as: account owners to switch business; org roster merged separately (no full reload loop). */
+/** Admin view-as: full platform directory + optional org roster (kept separate — never merge into dropdown). */
 async function loadAdminOrgScopedUsers(
   authUserId: string,
   targetUserId: string | null,
   accessToken: string,
   selfRow?: ManageableUserRow | null,
   preResolvedOrgOwnerId?: string | null,
-): Promise<{ rows: ManageableUserRow[]; orgRows: ManageableUserRow[] }> {
-  const all = await loadAdminAccountOwners(accessToken, authUserId)
-  const accountOwners = all.filter(
-    (u) => isOfficeManagerAssignmentRole(u.role) || u.role === "corporate_management",
-  )
+): Promise<{ directory: ManageableUserRow[]; orgRows: ManageableUserRow[] }> {
+  const directory = await loadAdminAccountOwners(accessToken, authUserId)
 
-  const withSelf = (rows: ManageableUserRow[]): ManageableUserRow[] => {
+  const withSelfInDirectory = (rows: ManageableUserRow[]): ManageableUserRow[] => {
     const ids = new Set(rows.map((r) => r.userId))
     const out = rows.map((r) => ({ ...r, isSelf: r.userId === authUserId }))
     if (selfRow && !ids.has(selfRow.userId)) {
@@ -276,15 +274,13 @@ async function loadAdminOrgScopedUsers(
       markSelfUserId: authUserId,
       accessToken,
     })
-    const orgIds = new Set(orgRows.map((r) => r.userId))
-    const switchTargets = accountOwners.filter((o) => !orgIds.has(o.userId))
-    return { rows: withSelf([
-      ...orgRows.map((r) => ({ ...r, isSelf: r.userId === authUserId })),
-      ...switchTargets.map((r) => ({ ...r, isSelf: r.userId === authUserId })),
-    ]), orgRows }
+    return {
+      directory: withSelfInDirectory(directory),
+      orgRows: orgRows.map((r) => ({ ...r, isSelf: r.userId === authUserId })),
+    }
   }
 
-  return { rows: withSelf(accountOwners), orgRows: [] as ManageableUserRow[] }
+  return { directory: withSelfInDirectory(directory), orgRows: [] as ManageableUserRow[] }
 }
 
 type Props = {
@@ -314,7 +310,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
   const targetValidatedRef = useRef<string | null>(null)
   const adminSelfRowRef = useRef<ManageableUserRow | null>(null)
   const lastOrgOwnerRef = useRef<string | null>(null)
-  const [adminOrgOwnerId, setAdminOrgOwnerId] = useState<string | null>(null)
+  const [adminTeamMemberIds, setAdminTeamMemberIds] = useState<Set<string>>(() => new Set())
   const adminTargetHydratedRef = useRef(false)
   const accessTokenRef = useRef<string | null>(null)
   const usersLoadSeqRef = useRef(0)
@@ -324,6 +320,32 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
   useEffect(() => {
     accessTokenRef.current = session?.access_token ?? null
   }, [session?.access_token])
+
+  // Platform admin: team member ids for Internal User / field-user view-as (role is often `user` in profiles).
+  useEffect(() => {
+    if (authRole !== "admin" || !supabase) {
+      setAdminTeamMemberIds(new Set())
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const { data, error } = await supabase.from("office_manager_clients").select("user_id")
+        if (cancelled || error) return
+        const ids = new Set(
+          (data ?? [])
+            .map((r) => (typeof r.user_id === "string" ? r.user_id.trim() : ""))
+            .filter(Boolean),
+        )
+        setAdminTeamMemberIds(ids)
+      } catch {
+        if (!cancelled) setAdminTeamMemberIds(new Set())
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [authRole])
 
   /** Boolean only — avoids reloading the whole roster on every JWT refresh. */
   const hasAccessToken = Boolean(session?.access_token)
@@ -429,7 +451,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
         let orgRows: ManageableUserRow[] = []
         if (authRole === "admin" && token) {
           const loaded = await loadAdminOrgScopedUsers(authUserId, targetUserId, token, selfRow)
-          rows = loaded.rows
+          rows = loaded.directory
           orgRows = loaded.orgRows
         } else if (authRole === "corporate_management" || authRole === "office_manager") {
           rows = await loadManagedOrgUsers(authUserId)
@@ -463,12 +485,10 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
     if (authRole !== "admin" || !authUserId || !hasAccessToken) return
     if (!targetUserId || isPortalViewDefaultTarget(targetUserId) || isSandboxDemoUserId(targetUserId)) {
       lastOrgOwnerRef.current = null
-      setAdminOrgOwnerId(null)
       return
     }
     if (targetUserId === authUserId) {
       lastOrgOwnerRef.current = null
-      setAdminOrgOwnerId(null)
       return
     }
     let cancelled = false
@@ -479,7 +499,6 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
           orgOwnerId = await resolveOrgRosterOwnerId(supabase, targetUserId)
         }
         if (cancelled) return
-        if (orgOwnerId) setAdminOrgOwnerId(orgOwnerId)
         if (orgOwnerId === lastOrgOwnerRef.current) return
         lastOrgOwnerRef.current = orgOwnerId
         const loaded = await loadAdminOrgScopedUsers(
@@ -493,7 +512,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
         const team = await loadSandboxDemoTeamForProfile(demoSourceId)
         if (!cancelled) {
           setSandboxDemoTeam(team)
-          setManageableUsers(appendSandboxDemoRows(loaded.rows, team))
+          setManageableUsers(appendSandboxDemoRows(loaded.directory, team))
           setOrgScopedUsers(appendSandboxDemoRows(loaded.orgRows, team))
         }
       } catch {
@@ -520,7 +539,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
       let orgRows: ManageableUserRow[] = []
       if (authRole === "admin" && token) {
         const loaded = await loadAdminOrgScopedUsers(authUserId, targetUserId, token, adminSelfRowRef.current)
-        rows = loaded.rows
+        rows = loaded.directory
         orgRows = loaded.orgRows
       } else if (authRole === "corporate_management" || authRole === "office_manager") {
         rows = await loadManagedOrgUsers(authUserId)
@@ -586,44 +605,17 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
 
   const usersForCurrentViewRole = useMemo(() => {
     if (authRole !== "admin") {
+      const ownerId = resolveOrgOwnerFromRoster(manageableUsers)
+      return filterUsersForViewRoleInOrg(manageableUsers, viewRole, ownerId)
+    }
+
+    const platformManagementRoles: UserRole[] = ["admin", "office_manager", "corporate_management"]
+    if (platformManagementRoles.includes(viewRole)) {
       return filterUsersForViewRole(manageableUsers, viewRole)
     }
 
-    const switchOwners = manageableUsers.filter(
-      (u) =>
-        (isOfficeManagerAssignmentRole(u.role) || u.role === "corporate_management") &&
-        !orgScopedUsers.some((o) => o.userId === u.userId),
-    )
-
-    if (orgScopedUsers.length > 0) {
-      const filtered = filterUsersForViewRoleInOrg(orgScopedUsers, viewRole, adminOrgOwnerId)
-      const ownerRow = adminOrgOwnerId
-        ? orgScopedUsers.find((u) => u.userId === adminOrgOwnerId)
-        : null
-      const includeOwner =
-        ownerRow &&
-        (viewRole === "office_manager" ||
-          viewRole === "corporate_management" ||
-          viewRole === "user" ||
-          filterUsersForViewRole([ownerRow], viewRole).length > 0)
-      const core = includeOwner && ownerRow ? [ownerRow, ...filtered.filter((u) => u.userId !== ownerRow.userId)] : filtered
-      return [...core, ...switchOwners]
-    }
-
-    // Org not loaded yet — show account owners for this role so admin can pick the business first.
-    const accountOwners = manageableUsers.filter(
-      (u) =>
-        u.role === "user" ||
-        u.role === "office_manager" ||
-        u.role === "corporate_management" ||
-        isOfficeManagerAssignmentRole(u.role),
-    )
-    if (viewRole === "corporate_internal" || viewRole === "corporate_external" || viewRole === "user") {
-      return accountOwners.length > 0 ? accountOwners : filterUsersForViewRole(manageableUsers, viewRole)
-    }
-
-    return filterUsersForViewRole(manageableUsers, viewRole)
-  }, [authRole, orgScopedUsers, manageableUsers, viewRole, adminOrgOwnerId])
+    return filterAdminPlatformUsersForViewRole(manageableUsers, viewRole, adminTeamMemberIds)
+  }, [authRole, manageableUsers, viewRole, adminTeamMemberIds])
 
   useEffect(() => {
     if (loadingUsers) return
@@ -650,14 +642,13 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
 
     targetValidatedRef.current = validationKey
     if (authRole === "admin") {
-      const orgFiltered =
-        orgScopedUsers.length > 0
-          ? filterUsersForViewRoleInOrg(orgScopedUsers, viewRole, adminOrgOwnerId)
-          : []
-      const orgPick = orgFiltered[0] ?? usersForCurrentViewRole[0]
-      if (orgPick?.userId) {
-        setTargetUserIdState(orgPick.userId)
-        writeStoredTargetUser(orgPick.userId)
+      const pick = usersForCurrentViewRole[0]
+      if (pick?.userId) {
+        setTargetUserIdState(pick.userId)
+        writeStoredTargetUser(pick.userId)
+      } else if (viewRole === authRole && authUserId) {
+        setTargetUserIdState(authUserId)
+        writeStoredTargetUser(authUserId)
       } else {
         setTargetUserIdState(PORTAL_VIEW_DEFAULT_USER)
         writeStoredTargetUser(PORTAL_VIEW_DEFAULT_USER)

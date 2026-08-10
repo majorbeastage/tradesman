@@ -483,7 +483,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const [hasCompletedAtColumn, setHasCompletedAtColumn] = useState(true)
   const [userPref, setUserPref] = useState<UserCalendarPreference | null>(null)
   const [addTargetUserId, setAddTargetUserId] = useState("")
-  const [addAssignToSelectedUser, setAddAssignToSelectedUser] = useState(true)
   const [eventAssigneePick, setEventAssigneePick] = useState("")
   const [assigneeSaveNote, setAssigneeSaveNote] = useState("")
   const [eventAssigneeSaving, setEventAssigneeSaving] = useState(false)
@@ -1386,15 +1385,22 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
         .gte("end_at", start.toISOString())
     const scopedQuery = (selectStr: string) => {
       const viewerId = (userId || calendarDbUserId || authUserId || "").trim()
+      const isTeamMemberCalendarView =
+        Boolean(
+          calendarOwnerUserId &&
+            calendarDbUserId &&
+            calendarOwnerUserId !== calendarDbUserId &&
+            calendarOwnerUserId !== viewerId,
+        )
       const isManagedAssigneeView =
-        managedByOfficeManager &&
+        (managedByOfficeManager || isTeamMemberCalendarView) &&
         !isOfficeManagerOrAdmin &&
         !managedSchedulingToolsEnabled &&
         Boolean(calendarOwnerUserId && calendarOwnerUserId !== viewerId)
       if (canViewOrgEvents) {
         return baseQuery(selectStr).in("user_id", scopedCalendarUserIds)
       }
-      if (isManagedAssigneeView && calendarOwnerUserId) {
+      if ((isManagedAssigneeView || isTeamMemberCalendarView) && calendarOwnerUserId) {
         return baseQuery(selectStr)
           .eq("user_id", calendarOwnerUserId)
           .eq("metadata->>assigned_user_id", viewerId)
@@ -2867,14 +2873,8 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
 
   useEffect(() => {
     if (!showAddItem || !addTargetUserId) return
-    void loadUserPreference(addTargetUserId).then((row) => {
-      if (authUserId && addTargetUserId !== authUserId) {
-        setAddAssignToSelectedUser(true)
-      } else {
-        setAddAssignToSelectedUser(row?.auto_assign_enabled !== false)
-      }
-    })
-  }, [showAddItem, addTargetUserId, authUserId])
+    void loadUserPreference(addTargetUserId)
+  }, [showAddItem, addTargetUserId])
 
   useEffect(() => {
     const ids = filterRealUserIds(
@@ -3019,7 +3019,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   async function saveEvent() {
     if (!supabase || !userId || !addTitle.trim()) return
     const eventOwnerUserId = resolveCalendarEventOwnerUserId(userId, authUserId || userId, teamStructureOwnerId)
-    const assigneePick = addAssignToSelectedUser ? addTargetUserId || userId : eventOwnerUserId
+    const assigneePick = addTargetUserId.trim() || userId
     const assignee = resolveCalendarAssigneeForSave(assigneePick, authUserId || userId, eventOwnerUserId)
     setAddError("")
     const start = parseLocalDateTime(addStartDate, addStartTime)
@@ -3119,7 +3119,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           end_at: e.toISOString(),
         }
         let meta: Record<string, unknown> = {}
-        if (addAssignToSelectedUser && (assignee.assignedDemoUserId || assignee.assignedUserId)) {
+        if (assignee.assignedDemoUserId || assignee.assignedUserId) {
           meta = mergeCalendarAssigneeMetadata(null, assignee) as Record<string, unknown>
         }
         if (addNotifyEmail || addNotifySms) {
@@ -3169,7 +3169,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     if (insertedEventIds.length > 0 && supabase) {
       const notifyIds = [
         ...new Set([
-          ...(addAssignToSelectedUser && assignee.assignedUserId ? [assignee.assignedUserId] : []),
+          ...(assignee.assignedUserId ? [assignee.assignedUserId] : []),
           ...(addVideoCall || addConferenceCall ? addVideoCallInvitees : []),
         ]),
       ]
@@ -4841,7 +4841,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             </div>
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, alignItems: "start" }}>
               <div>
-                <label style={{ fontSize: "12px", color: theme.text }}>Customer (optional)</label>
+                <label style={{ fontSize: "12px", color: theme.text }}>Customer</label>
                 <input
                   type="search"
                   autoComplete="off"
@@ -5233,10 +5233,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 10, ...(isMobile ? {} : { gridColumn: "1 / -1" }) }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "13px", color: theme.text }}>
-                  <input type="checkbox" checked={addAssignToSelectedUser} onChange={(e) => setAddAssignToSelectedUser(e.target.checked)} />
-                  Assign to selected user calendar automatically
-                </label>
                 {addError && <p style={{ color: "#b91c1c", fontSize: "14px", margin: 0 }}>{addError}</p>}
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                   <button onClick={saveEvent} disabled={addSaving} style={{ padding: "10px 16px", background: theme.primary, color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: 600 }}>

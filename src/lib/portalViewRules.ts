@@ -1,6 +1,6 @@
 import type { UserRole } from "../contexts/AuthContext"
 import { getDefaultPortalConfigForViewRole, type PortalConfig } from "../types/portal-builder"
-import { labelForProfileRole, PROFILE_ROLE_LABELS } from "./profileRoles"
+import { isOfficeManagerAssignmentRole, labelForProfileRole, PROFILE_ROLE_LABELS } from "./profileRoles"
 
 /** Session value: preview the default portal layout for the selected role (no specific profile). */
 export const PORTAL_VIEW_DEFAULT_USER = "__role_default__"
@@ -170,4 +170,47 @@ export function roleFromProfileRow(raw: string | null | undefined): UserRole {
   const r = (raw ?? "user").trim()
   if (r in PROFILE_ROLE_LABELS) return r as UserRole
   return "user"
+}
+
+/** Account owner / OM at the top of an org roster (for org-scoped view-as filters). */
+export function resolveOrgOwnerFromRoster(users: ManageableUserRow[]): string | null {
+  const owner = users.find(
+    (u) => u.role === "office_manager" || u.role === "corporate_management" || u.role === "user",
+  )
+  return owner?.userId ?? users[0]?.userId ?? null
+}
+
+/**
+ * Platform admin: internal / field users are often role `user` but linked in office_manager_clients.
+ * teamMemberIds = all user_id values from that table (managed team members, not OMs).
+ */
+export function filterAdminPlatformUsersForViewRole(
+  users: ManageableUserRow[],
+  viewRole: UserRole,
+  teamMemberIds: ReadonlySet<string>,
+): ManageableUserRow[] {
+  const isTeamMember = (u: ManageableUserRow) =>
+    teamMemberIds.has(u.userId) && !isOfficeManagerAssignmentRole(u.role) && u.role !== "admin"
+
+  switch (viewRole) {
+    case "corporate_internal":
+      return users.filter((u) => u.role === "corporate_internal" || isTeamMember(u))
+    case "corporate_external":
+      return users.filter((u) => u.role === "corporate_external" || (isTeamMember(u) && u.role === "user"))
+    case "user":
+      return users.filter(
+        (u) =>
+          u.role === "user" ||
+          u.role === "corporate_external" ||
+          u.role === "corporate_internal" ||
+          u.role === "new_user" ||
+          isTeamMember(u),
+      )
+    case "new_user":
+      return users.filter((u) => u.role === "new_user")
+    case "demo_user":
+      return users.filter((u) => u.role === "demo_user")
+    default:
+      return filterUsersForViewRole(users, viewRole)
+  }
 }
