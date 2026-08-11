@@ -8,11 +8,7 @@ import { requestTradesmanAppHandoff } from "./lib/openMainApp"
 import { initMessagingPushTapListener } from "./lib/pushTapHandler"
 import { initAndroidBackListener } from "./lib/androidBack"
 import { initNativeAuthLifecycle } from "./lib/nativeAuthLifecycle"
-import {
-  heartbeatAppSession,
-  registerAppSession,
-  revokeLocalAppSession,
-} from "./lib/appSessions"
+import { heartbeatAppSession, registerAppSession } from "./lib/appSessions"
 import LoginScreen from "./screens/LoginScreen"
 import MessengerScreen from "./screens/MessengerScreen"
 import { ensureMessagingPush } from "./lib/messagingNotifications"
@@ -77,12 +73,9 @@ export default function App() {
           void registerAppSession(supabase, "messaging")
           return
         }
+        // Device-limit kick disabled while session RPCs are off (login outage).
         if (r.superseded) {
-          setKicked(true)
-          void (async () => {
-            await revokeLocalAppSession(supabase, "messaging")
-            await supabase.auth.signOut({ scope: "local" })
-          })()
+          console.warn("[sessions] messaging superseded ignored (RPC disabled)")
         }
       })
     }

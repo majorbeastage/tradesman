@@ -825,12 +825,8 @@ function App() {
         setView("login")
         return
       }
-      const currentView = viewRef.current
-      if (currentView === "login" || currentView === "admin-login") {
-        if (isAdminLoginPath()) return
-        loginIntentRef.current = null
-        setView("home")
-      }
+      // Do NOT bounce login → home when #/login is cleared. That race was sending
+      // successful sign-ins back to the marketing page. Back uses setAppHomeRoute + setView.
     }
     window.addEventListener("hashchange", syncViewFromHash)
     return () => window.removeEventListener("hashchange", syncViewFromHash)
@@ -971,24 +967,30 @@ function App() {
   const handleLoginSuccess = useCallback(async (r: UserRole) => {
     completingLoginRef.current = true
     setLoginError("")
-    const intent = resolveLoginIntent(view, loginIntentRef)
+    const intent = resolveLoginIntent(viewRef.current, loginIntentRef)
 
     const enterPortal = (next: View) => {
+      // Set portal view FIRST; clear login hash after without bouncing home.
+      loginIntentRef.current = null
       setView(next)
-      endLoginFlow(loginIntentRef)
+      try {
+        stripLoginRouteHash()
+      } catch {
+        /* ignore */
+      }
       window.setTimeout(() => {
         completingLoginRef.current = false
-      }, 500)
+      }, 1500)
     }
 
     if (intent === "admin") {
       if (!isAdminPortalRole(r)) {
-        completingLoginRef.current = false
         const { role: refetched, error: fetchErr } = await refetchProfile()
         if (isAdminPortalRole(refetched)) {
           enterPortal("admin")
           return
         }
+        completingLoginRef.current = false
         const roleLabel = refetched ?? "none"
         const errDetail = fetchErr ? ` Profile fetch error: ${fetchErr}` : ""
         setLoginError(
@@ -1008,7 +1010,7 @@ function App() {
     if (isAdminPortalRole(r)) enterPortal("admin")
     else if (shouldUseOfficeManagerPortal(r)) enterPortal("office")
     else enterPortal("app")
-  }, [view, refetchProfile])
+  }, [refetchProfile])
 
   if (view === "home") {
     return (

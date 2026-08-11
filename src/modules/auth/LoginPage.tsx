@@ -111,20 +111,24 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
         clearSandboxLoginEmail()
         setSandboxLoginHint(false)
         setMessage(t("login.msg.signingIn"))
-        // Trial-account repair is best-effort and must not hold the button hostage.
-        await settledWithin(repairSandboxProfile(), POST_SIGN_IN_STEP_TIMEOUT_MS)
-        // On timeout the AuthProvider profile effect still resolves the role and redirects.
-        const { role: freshRole } = await withTimeout(refetchProfile(), POST_SIGN_IN_STEP_TIMEOUT_MS, {
+        // Do not block portal entry on trial repair / profile RPC — Supabase may be slow.
+        void settledWithin(repairSandboxProfile(), POST_SIGN_IN_STEP_TIMEOUT_MS)
+        const { role: freshRole } = await withTimeout(refetchProfile(), 4000, {
           role: null,
         })
-        if (freshRole) {
-          didRedirect.current = true
-          onSuccess(freshRole)
-        } else if (!isAdminLogin) {
-          didRedirect.current = true
-          onSuccess("user")
+        didRedirect.current = true
+        if (isAdminLogin) {
+          if (freshRole && isAdminPortalRole(freshRole)) onSuccess(freshRole)
+          else if (freshRole) {
+            setError("Sign out of your contractor account first, or sign in with an admin account.")
+            didRedirect.current = false
+          } else {
+            // Role still loading — Auth effect will finish redirect when role arrives.
+            setMessage("Signing in… loading your admin profile.")
+            didRedirect.current = false
+          }
         } else {
-          setMessage("Signing in… loading your admin profile.")
+          onSuccess(freshRole ?? "user")
         }
       }
     } finally {

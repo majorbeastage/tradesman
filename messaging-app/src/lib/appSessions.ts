@@ -1,16 +1,13 @@
 /**
- * Common login — app-level session registry (see supabase/user-app-sessions.sql).
- * Main: one active device (soft supersede, never kill Messaging JWTs).
- * Messaging: up to 3 devices; optional 30-day stay-signed-in preference (local).
+ * Messaging common-login registry.
+ * TEMPORARILY DISABLED — same kill-switch as main app (prod RPC errors / login outage).
  */
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { Capacitor } from "@capacitor/core"
-import { withTimeout } from "./promiseTimeout"
 
 export type AppSessionKind = "main" | "messaging"
 
-/** Session bookkeeping is never worth stalling a screen for; give up and retry next tick. */
-const SESSION_RPC_TIMEOUT_MS = 8000
+const APP_SESSION_RPC_ENABLED = false
 
 const DEVICE_KEY = "tradesman_app_device_id"
 const STAY_SIGNED_IN_KEY = "tradesman_messaging_stay_signed_in"
@@ -73,99 +70,35 @@ export function defaultDeviceLabel(): string {
 }
 
 export async function registerAppSession(
-  supabase: SupabaseClient | null,
-  app: AppSessionKind,
-  opts?: { deviceLabel?: string; maxMessaging?: number; maxMain?: number },
+  _supabase: SupabaseClient | null,
+  _app: AppSessionKind,
+  _opts?: { deviceLabel?: string; maxMessaging?: number; maxMain?: number },
 ): Promise<{ ok: boolean; supersededOthers?: number; error?: string }> {
-  if (!supabase) return { ok: false, error: "No client" }
-  const deviceId = await getOrCreateDeviceId()
-  const res = await withTimeout(
-    (async () => {
-      const { data, error } = await supabase.rpc("register_app_session", {
-        p_app: app,
-        p_device_id: deviceId,
-        p_device_label: opts?.deviceLabel ?? defaultDeviceLabel(),
-        p_max_messaging: opts?.maxMessaging ?? 3,
-        p_max_main: opts?.maxMain ?? 4,
-      })
-      return {
-        row: (data as { superseded_others?: number } | null) ?? null,
-        error: error?.message ?? null,
-      }
-    })(),
-    SESSION_RPC_TIMEOUT_MS,
-    { row: null, error: "Session registry timed out" },
-  )
-  if (res.error) return { ok: false, error: res.error }
-  return { ok: true, supersededOthers: res.row?.superseded_others ?? 0 }
+  if (!APP_SESSION_RPC_ENABLED) return { ok: true, supersededOthers: 0 }
+  return { ok: true, supersededOthers: 0 }
 }
 
 export async function heartbeatAppSession(
-  supabase: SupabaseClient | null,
-  app: AppSessionKind,
+  _supabase: SupabaseClient | null,
+  _app: AppSessionKind,
 ): Promise<{ ok: boolean; superseded: boolean; missing?: boolean; error?: string }> {
-  if (!supabase) return { ok: false, superseded: false, error: "No client" }
-  const deviceId = await getOrCreateDeviceId()
-  const res = await withTimeout(
-    (async () => {
-      const { data, error } = await supabase.rpc("heartbeat_app_session", {
-        p_app: app,
-        p_device_id: deviceId,
-      })
-      return {
-        row: (data as { ok?: boolean; superseded?: boolean; missing?: boolean } | null) ?? null,
-        error: error?.message ?? null,
-      }
-    })(),
-    SESSION_RPC_TIMEOUT_MS,
-    { row: null, error: "Session heartbeat timed out" },
-  )
-  if (res.error) return { ok: false, superseded: false, error: res.error }
-  if (res.row?.missing) return { ok: false, superseded: false, missing: true }
-  return { ok: true, superseded: Boolean(res.row?.superseded) }
+  if (!APP_SESSION_RPC_ENABLED) return { ok: true, superseded: false }
+  return { ok: true, superseded: false }
 }
 
 export async function setAppSessionInCall(
-  supabase: SupabaseClient | null,
-  app: AppSessionKind,
-  inCall: boolean,
+  _supabase: SupabaseClient | null,
+  _app: AppSessionKind,
+  _inCall: boolean,
 ): Promise<void> {
-  if (!supabase) return
-  try {
-    const deviceId = await getOrCreateDeviceId()
-    await withTimeout(
-      Promise.resolve(
-        supabase.rpc("set_app_session_in_call", {
-          p_app: app,
-          p_device_id: deviceId,
-          p_in_call: inCall,
-        }),
-      ).then(() => undefined),
-      SESSION_RPC_TIMEOUT_MS,
-      undefined,
-    )
-  } catch {
-    /* best-effort */
-  }
+  /* disabled */
 }
 
 export async function revokeLocalAppSession(
-  supabase: SupabaseClient | null,
-  app: AppSessionKind,
+  _supabase: SupabaseClient | null,
+  _app: AppSessionKind,
 ): Promise<void> {
-  if (!supabase) return
-  try {
-    const deviceId = await getOrCreateDeviceId()
-    await withTimeout(
-      Promise.resolve(supabase.rpc("revoke_app_session", { p_app: app, p_device_id: deviceId })).then(
-        () => undefined,
-      ),
-      SESSION_RPC_TIMEOUT_MS,
-      undefined,
-    )
-  } catch {
-    /* best-effort */
-  }
+  /* disabled */
 }
 
 export async function getMessagingStaySignedIn(): Promise<boolean> {
@@ -177,5 +110,4 @@ export async function setMessagingStaySignedIn(on: boolean): Promise<void> {
   await prefsSet(STAY_SIGNED_IN_KEY, on ? "1" : "0")
 }
 
-/** Days we treat a messaging Preference session as intended to persist (product policy). */
 export const MESSAGING_STAY_SIGNED_IN_DAYS = 30

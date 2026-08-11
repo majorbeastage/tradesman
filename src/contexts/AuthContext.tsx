@@ -231,7 +231,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = useCallback(async () => {
     if (supabase) {
-      await revokeLocalAppSession(supabase, "main")
+      void revokeLocalAppSession(supabase, "main")
       await supabase.auth.signOut()
     }
   }, [])
