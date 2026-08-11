@@ -40,6 +40,7 @@
     "supabase:sql:quotes-view-as-rls": "npx --yes supabase@2.92.1 db query -f supabase/quotes-view-as-and-team-write-rls.sql --linked",
     "supabase:sql:org-peers-profile-rls": "npx --yes supabase@2.92.1 db query -f supabase/org-peers-profile-read-rls.sql --linked",
     "supabase:sql:fix-org-peers-profile-recursion": "npx --yes supabase@2.92.1 db query -f supabase/fix-org-peers-profile-rls-recursion.sql --linked",
+    "supabase:sql:fix-profiles-rls-login": "npx --yes supabase@2.92.1 db query -f supabase/RUN-NOW-fix-profiles-rls-login.sql --linked",
     "supabase:sql:payment-requests-add-clover": "npx --yes supabase@2.92.1 db query -f supabase/payment-requests-add-clover.sql --linked",
     "supabase:sql:payment-requests-add-stripe": "npx --yes supabase@2.92.1 db query -f supabase/payment-requests-add-stripe.sql --linked",
     "supabase:sql:website-admin-handoff": "npx --yes supabase@2.92.1 db query -f supabase/website-admin-handoff-codes.sql --linked"

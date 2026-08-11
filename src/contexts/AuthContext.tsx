@@ -118,8 +118,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(false)
       /** USER_UPDATED: e.g. admin confirmed email in Dashboard while session is open — still ping ops once. */
       if (event === "SIGNED_IN" || event === "INITIAL_SESSION" || event === "USER_UPDATED") {
-        postVerifiedSignupNotify(session)
-        if (session?.access_token) void activateDemoSession(session.access_token)
+        // Defer so login is not competing with the critical profiles role fetch.
+        window.setTimeout(() => {
+          postVerifiedSignupNotify(session)
+          if (session?.access_token) void activateDemoSession(session.access_token)
+        }, 2500)
       }
     })
     void supabase.auth.getSession().then(({ data: { session } }) => {
@@ -128,9 +131,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       authSessionUserIdRef.current = u?.id ?? null
       setUser(u)
       setLoading(false)
-      /** Same notify as onAuthStateChange — covers loads where INITIAL_SESSION does not fire before hydration. */
-      postVerifiedSignupNotify(session)
-      if (session?.access_token) void activateDemoSession(session.access_token)
+      window.setTimeout(() => {
+        postVerifiedSignupNotify(session)
+        if (session?.access_token) void activateDemoSession(session.access_token)
+      }, 2500)
     })
     return () => subscription.unsubscribe()
   }, [postVerifiedSignupNotify])
@@ -145,71 +149,74 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     const sb = supabase
     let cancelled = false
-    const timeoutMs = 8000
+    // Prefer a fast role path first (no large JSONB metadata) so login isn't stuck on slow RLS.
     const timeoutId = window.setTimeout(() => {
-      if (!cancelled) setRole("user")
-    }, timeoutMs)
-    sb
-      .from("profiles")
-      .select("role, client_id, portal_config, account_disabled, metadata")
-      .eq("id", user.id)
-      .single()
-      .then(({ data, error }) => {
-        if (!cancelled && data?.account_disabled === true) {
+      if (!cancelled) setRole((prev) => prev ?? "user")
+    }, 5000)
+
+    void (async () => {
+      try {
+        const light = await sb
+          .from("profiles")
+          .select("role, client_id, portal_config, account_disabled")
+          .eq("id", user.id)
+          .maybeSingle()
+        if (cancelled) return
+        if (light.data?.account_disabled === true) {
           clearTimeout(timeoutId)
           setAccessBlockedMessage(null)
           setAccountAccessBlocked(true)
           void sb.auth.signOut()
           return
         }
+        if (light.data?.role) {
+          setRole(light.data.role as UserRole)
+        } else if (!light.error) {
+          setRole("user")
+        }
+        if (light.data?.client_id) setClientId(light.data.client_id as string)
+        else setClientId(DEFAULT_CLIENT_ID)
+        const portalCfgRaw = (light.data?.portal_config as PortalConfig) ?? null
+        if (portalCfgRaw) setPortalConfig(portalCfgRaw)
+
+        // Metadata (photo, demo flags, sandbox) — secondary; may be slow under load.
+        const full = await sb.from("profiles").select("metadata, portal_config, role").eq("id", user.id).maybeSingle()
+        if (cancelled) return
+        clearTimeout(timeoutId)
+        const meta =
+          full.data?.metadata && typeof full.data.metadata === "object" && !Array.isArray(full.data.metadata)
+            ? (full.data.metadata as Record<string, unknown>)
+            : {}
+        const portalCfgMerged =
+          shouldMergeSandboxPortalConfig(meta, (full.data?.portal_config as PortalConfig) ?? portalCfgRaw)
+            ? mergeSandboxPortalConfig((full.data?.portal_config as PortalConfig) ?? portalCfgRaw)
+            : ((full.data?.portal_config as PortalConfig) ?? portalCfgRaw)
+        const demoBlock = demoAccessBlockReason(meta, portalCfgMerged, (full.data?.role as string) ?? light.data?.role)
+        if (demoBlock) {
+          setAccessBlockedMessage(demoBlock)
+          setAccountAccessBlocked(true)
+          void sb.auth.signOut()
+          return
+        }
+        if (full.data?.role) {
+          const roleRaw = full.data.role as UserRole
+          setRole(
+            shouldMergeSandboxPortalConfig(meta, portalCfgMerged) && roleRaw === "new_user"
+              ? "corporate_management"
+              : roleRaw,
+          )
+        }
+        setPortalConfig(portalCfgMerged)
+        const url = meta.profile_photo_url
+        setProfilePhotoUrl(typeof url === "string" && url.trim().startsWith("http") ? url.trim() : null)
+      } catch {
         if (!cancelled) {
           clearTimeout(timeoutId)
-          const meta =
-            data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
-              ? (data.metadata as Record<string, unknown>)
-              : {}
-          const portalCfgRaw = (data?.portal_config as PortalConfig) ?? null
-          const portalCfg =
-            shouldMergeSandboxPortalConfig(meta, portalCfgRaw)
-              ? mergeSandboxPortalConfig(portalCfgRaw)
-              : portalCfgRaw
-          const demoBlock = demoAccessBlockReason(meta, portalCfg, data?.role as string | undefined)
-          if (demoBlock) {
-            setAccessBlockedMessage(demoBlock)
-            setAccountAccessBlocked(true)
-            void sb.auth.signOut()
-            return
-          }
-          if (!error && data?.role) {
-            const roleRaw = data.role as UserRole
-            setRole(
-              shouldMergeSandboxPortalConfig(meta, portalCfg) && roleRaw === "new_user"
-                ? "corporate_management"
-                : roleRaw,
-            )
-          } else setRole("user")
+          setRole((prev) => prev ?? "user")
         }
-        if (!cancelled && data?.client_id) setClientId(data.client_id as string)
-        else if (!cancelled) setClientId(DEFAULT_CLIENT_ID)
-        if (!cancelled) {
-          const meta2 =
-            data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
-              ? (data.metadata as Record<string, unknown>)
-              : {}
-          const portalCfgRaw = (data?.portal_config as PortalConfig) ?? null
-          const portalCfg =
-            shouldMergeSandboxPortalConfig(meta2, portalCfgRaw)
-              ? mergeSandboxPortalConfig(portalCfgRaw)
-              : portalCfgRaw
-          setPortalConfig(portalCfg)
-        }
-        if (!cancelled) {
-          const meta = (data as { metadata?: unknown })?.metadata
-          const m = meta && typeof meta === "object" && !Array.isArray(meta) ? (meta as Record<string, unknown>) : {}
-          const url = m.profile_photo_url
-          setProfilePhotoUrl(typeof url === "string" && url.trim().startsWith("http") ? url.trim() : null)
-        }
-      })
+      }
+    })()
+
     return () => {
       cancelled = true
       clearTimeout(timeoutId)

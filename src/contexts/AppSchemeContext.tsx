@@ -46,25 +46,33 @@ export function AppSchemeProvider({
     }
     let cancelled = false
     setLoading(true)
+    const fallbackTimer = window.setTimeout(() => {
+      if (!cancelled) {
+        setScheme(defaultAppSchemeV1())
+        setLoading(false)
+      }
+    }, 4000)
     void Promise.resolve(
-      supabase
-        .from("profiles")
-        .select("metadata")
-        .eq("id", profileUserId)
-        .maybeSingle()
-        .then(({ data }) => {
-          if (cancelled) return
-          const meta =
-            data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
-              ? (data.metadata as Record<string, unknown>)
-              : {}
-          setScheme(parseAppSchemeV1(meta))
-        }),
-    ).finally(() => {
-      if (!cancelled) setLoading(false)
-    })
+      supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle(),
+    )
+      .then(({ data }) => {
+        if (cancelled) return
+        window.clearTimeout(fallbackTimer)
+        const meta =
+          data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+            ? (data.metadata as Record<string, unknown>)
+            : {}
+        setScheme(parseAppSchemeV1(meta))
+      })
+      .catch(() => {
+        if (!cancelled) setScheme(defaultAppSchemeV1())
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
     return () => {
       cancelled = true
+      window.clearTimeout(fallbackTimer)
     }
   }, [profileUserId])
 

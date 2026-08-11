@@ -101,35 +101,44 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
         SIGN_IN_TIMEOUT_MS,
         timedOut,
       )
+
+      // Auth can succeed after our client timeout when Postgres is slow — check session.
       if (signInResult === timedOut) {
-        setError(t("login.err.timeout"))
+        const sess = supabase
+          ? await withTimeout(supabase.auth.getSession(), 3000, {
+              data: { session: null },
+              error: null,
+            })
+          : { data: { session: null }, error: null }
+        if (!sess.data.session) {
+          setError(t("login.err.timeout"))
+          return
+        }
+      } else if (signInResult.error) {
+        setError(signInResult.error.message)
         return
       }
-      const { error: err } = signInResult
-      if (err) setError(err.message)
-      else {
-        clearSandboxLoginEmail()
-        setSandboxLoginHint(false)
-        setMessage(t("login.msg.signingIn"))
-        // Do not block portal entry on trial repair / profile RPC — Supabase may be slow.
-        void settledWithin(repairSandboxProfile(), POST_SIGN_IN_STEP_TIMEOUT_MS)
-        const { role: freshRole } = await withTimeout(refetchProfile(), 4000, {
-          role: null,
-        })
-        didRedirect.current = true
-        if (isAdminLogin) {
-          if (freshRole && isAdminPortalRole(freshRole)) onSuccess(freshRole)
-          else if (freshRole) {
-            setError("Sign out of your contractor account first, or sign in with an admin account.")
-            didRedirect.current = false
-          } else {
-            // Role still loading — Auth effect will finish redirect when role arrives.
-            setMessage("Signing in… loading your admin profile.")
-            didRedirect.current = false
-          }
+
+      clearSandboxLoginEmail()
+      setSandboxLoginHint(false)
+      setMessage(t("login.msg.signingIn"))
+      void settledWithin(repairSandboxProfile(), POST_SIGN_IN_STEP_TIMEOUT_MS)
+
+      if (isAdminLogin) {
+        // Admin needs role check — wait briefly, then let Auth effect finish if still null.
+        const { role: freshRole } = await withTimeout(refetchProfile(), 2500, { role: null })
+        if (freshRole && isAdminPortalRole(freshRole)) {
+          didRedirect.current = true
+          onSuccess(freshRole)
+        } else if (freshRole) {
+          setError("Sign out of your contractor account first, or sign in with an admin account.")
         } else {
-          onSuccess(freshRole ?? "user")
+          setMessage("Signing in… loading your admin profile.")
         }
+      } else {
+        // Contractor: enter portal immediately. Do not await profiles (slow under load).
+        didRedirect.current = true
+        onSuccess("user")
       }
     } finally {
       setSubmitting(false)
