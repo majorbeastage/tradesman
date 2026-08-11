@@ -10,6 +10,8 @@ import { getVoiceTrafficInCall, subscribeVoiceTrafficInCall } from "../lib/voice
 const HEARTBEAT_MS = 60_000
 /** Focus/visibility can fire in bursts; never let them heartbeat faster than this. */
 const MIN_HEARTBEAT_GAP_MS = 30_000
+/** Grace after mount — never sign out during initial register + reclaim. */
+const MOUNT_GRACE_MS = 8_000
 
 /**
  * Main app common-login guard: registers this device, heartbeats, soft-takes over
@@ -25,6 +27,7 @@ export default function MainAppSessionGuard({ userId }: { userId: string | null 
   const [message, setMessage] = useState<string | null>(null)
   const lastTickRef = useRef(0)
   const inFlightRef = useRef(false)
+  const mountedAtRef = useRef(0)
 
   useEffect(() => subscribeVoiceTrafficInCall(setInCall), [])
 
@@ -32,11 +35,16 @@ export default function MainAppSessionGuard({ userId }: { userId: string | null 
     const sb = supabase
     if (!sb || !userId) return
     let cancelled = false
+    mountedAtRef.current = Date.now()
+    let registered = false
 
     const applySuperseded = () => {
+      if (Date.now() - mountedAtRef.current < MOUNT_GRACE_MS) return
       if (getVoiceTrafficInCall()) {
         setTakeoverPending(true)
-        setMessage("This account reached its 4-device limit. This least-recently-used session will end when your call finishes.")
+        setMessage(
+          "This account reached its 4-device limit. This least-recently-used session will end when your call finishes.",
+        )
         return
       }
       setTakeoverPending(false)
@@ -47,30 +55,54 @@ export default function MainAppSessionGuard({ userId }: { userId: string | null 
       })()
     }
 
-    void registerAppSession(sb, "main").then((r) => {
-      if (cancelled) return
+    const ensureRegistered = async (): Promise<boolean> => {
+      const r = await registerAppSession(sb, "main")
+      if (cancelled) return false
+      registered = true
       if (!r.ok && r.error) console.warn("[sessions] register main:", r.error)
-    })
+      return r.ok
+    }
+
+    /** Fresh sign-in should reclaim an active slot before we sign this device out. */
+    const heartbeatOrReclaim = async () => {
+      let hb = await heartbeatAppSession(sb, "main")
+      if (cancelled) return
+      if (hb.missing || hb.error) {
+        await ensureRegistered()
+        return
+      }
+      if (!hb.superseded) {
+        setTakeoverPending(false)
+        setMessage(null)
+        return
+      }
+      await ensureRegistered()
+      if (cancelled) return
+      hb = await heartbeatAppSession(sb, "main")
+      if (cancelled) return
+      if (hb.superseded) applySuperseded()
+      else {
+        setTakeoverPending(false)
+        setMessage(null)
+      }
+    }
 
     const tick = (force = false) => {
-      if (inFlightRef.current) return
+      if (!registered || inFlightRef.current) return
       const now = Date.now()
       if (!force && now - lastTickRef.current < MIN_HEARTBEAT_GAP_MS) return
       lastTickRef.current = now
       inFlightRef.current = true
-      void heartbeatAppSession(sb, "main")
-        .then((r) => {
-          if (cancelled) return
-          if (r.missing) {
-            void registerAppSession(sb, "main")
-            return
-          }
-          if (r.superseded) applySuperseded()
-        })
-        .finally(() => {
-          inFlightRef.current = false
-        })
+      void heartbeatOrReclaim().finally(() => {
+        inFlightRef.current = false
+      })
     }
+
+    void (async () => {
+      await ensureRegistered()
+      if (cancelled) return
+      tick(true)
+    })()
 
     const interval = window.setInterval(() => tick(true), HEARTBEAT_MS)
     const onFocus = () => tick()
@@ -79,8 +111,6 @@ export default function MainAppSessionGuard({ userId }: { userId: string | null 
       if (document.visibilityState === "visible") tick()
     }
     document.addEventListener("visibilitychange", onVis)
-
-    tick(true)
 
     return () => {
       cancelled = true
@@ -94,6 +124,7 @@ export default function MainAppSessionGuard({ userId }: { userId: string | null 
     const sb = supabase
     if (inCall) return
     if (!takeoverPending || !sb) return
+    if (Date.now() - mountedAtRef.current < MOUNT_GRACE_MS) return
     setTakeoverPending(false)
     setMessage("This account reached its 4-device limit. Signing out the least-recently-used session here…")
     void (async () => {

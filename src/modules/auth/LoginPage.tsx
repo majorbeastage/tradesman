@@ -117,6 +117,10 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
         if (freshRole) {
           didRedirect.current = true
           onSuccess(freshRole)
+        } else {
+          // Profile fetch slow — open portal; AuthContext resolves role in background.
+          didRedirect.current = true
+          onSuccess("user")
         }
       }
     } finally {
