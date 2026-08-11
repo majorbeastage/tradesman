@@ -6,7 +6,7 @@ import { CopyrightVersionFooter } from "../../components/CopyrightVersionFooter"
 import { theme } from "../../styles/theme"
 import { HELP_DESK_PHONE_DISPLAY, HELP_DESK_PHONE_E164 } from "../../constants/helpDesk"
 import { techSupportMailtoDeactivatedAccount, TRADESMAN_TECH_SUPPORT_EMAIL } from "../../constants/supportLinks"
-import { supabase } from "../../lib/supabase"
+import { supabase, supabaseUrl, supabaseAnonKey } from "../../lib/supabase"
 import { getPasswordRecoveryRedirectTo } from "../../lib/authRedirectBase"
 import { readSandboxLoginEmail, clearSandboxLoginEmail } from "../../lib/sandboxLogin"
 import { useLocale } from "../../i18n/LocaleContext"
@@ -14,13 +14,31 @@ import { PasswordFieldWithReveal } from "../../components/PasswordFieldWithRevea
 import { PublicLegalNav } from "../public/PublicLegalNav"
 import { withTimeout } from "../../lib/promiseTimeout"
 
-const SIGN_IN_TIMEOUT_MS = 25_000
+const SIGN_IN_TIMEOUT_MS = 18_000
+const OUTAGE_MSG =
+  "Tradesman cannot reach the database right now (Supabase Auth timed out). This is not your password. In Supabase Dashboard → Project Settings → General, restart the project, then try again in 2 minutes."
 
 type LoginPageProps = {
   isAdminLogin?: boolean
   onSuccess: (role: UserRole) => void
   onBack: () => void
   onGoToSignup: () => void
+}
+
+async function authReachable(): Promise<boolean> {
+  if (!supabaseUrl || !supabaseAnonKey) return false
+  try {
+    const ctrl = new AbortController()
+    const t = window.setTimeout(() => ctrl.abort(), 5000)
+    const res = await fetch(`${supabaseUrl.replace(/\/$/, "")}/auth/v1/health`, {
+      headers: { apikey: supabaseAnonKey },
+      signal: ctrl.signal,
+    })
+    window.clearTimeout(t)
+    return res.ok
+  } catch {
+    return false
+  }
 }
 
 export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onGoToSignup }: LoginPageProps) {
@@ -55,7 +73,6 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
       onSuccess(role)
       return
     }
-    // Contractor: enter as soon as auth user exists (role can finish loading in background).
     didRedirect.current = true
     onSuccess(role ?? "user")
   }, [user, role, onSuccess, sandboxLoginHint, isAdminLogin])
@@ -75,16 +92,20 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
       }
       setSubmitting(true)
       try {
+        if (!(await authReachable())) {
+          setError(OUTAGE_MSG)
+          return
+        }
         const redirectTo = getPasswordRecoveryRedirectTo() || undefined
         const outcome = await withTimeout<{ ok: boolean; message?: string }>(
           supabase.auth
             .resetPasswordForEmail(email.trim(), redirectTo ? { redirectTo } : undefined)
             .then(({ error: err }) => (err ? { ok: false, message: err.message } : { ok: true })),
           SIGN_IN_TIMEOUT_MS,
-          { ok: false, message: t("login.err.timeout") },
+          { ok: false, message: OUTAGE_MSG },
         )
         if (outcome.ok) setMessage(t("login.msg.resetSent"))
-        else setError(outcome.message ?? t("login.err.timeout"))
+        else setError(outcome.message ?? OUTAGE_MSG)
       } finally {
         setSubmitting(false)
       }
@@ -96,6 +117,11 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
     }
     setSubmitting(true)
     try {
+      if (!(await authReachable())) {
+        setError(OUTAGE_MSG)
+        return
+      }
+
       const timedOut = Symbol("timeout")
       const signInResult = await withTimeout<{ error: Error | null } | typeof timedOut>(
         signIn(email.trim(), password),
@@ -105,16 +131,23 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
 
       if (signInResult === timedOut) {
         const sess = supabase
-          ? await withTimeout(supabase.auth.getSession(), 4000, {
+          ? await withTimeout(supabase.auth.getSession(), 3000, {
               data: { session: null },
               error: null,
             })
           : { data: { session: null }, error: null }
-        if (!sess.data.session) {
-          setError(t("login.err.timeout"))
+        if (sess.data.session) {
+          clearSandboxLoginEmail()
+          setSandboxLoginHint(false)
+          didRedirect.current = true
+          if (!isAdminLogin) onSuccess("user")
+          else setMessage("Signing in…")
           return
         }
-      } else if (signInResult.error) {
+        setError(OUTAGE_MSG)
+        return
+      }
+      if (signInResult.error) {
         setError(signInResult.error.message)
         return
       }
@@ -122,7 +155,6 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
       clearSandboxLoginEmail()
       setSandboxLoginHint(false)
       setMessage(t("login.msg.signingIn"))
-      // Enter immediately — Auth effect + onSuccess effect finish routing. No profile wait.
       if (!isAdminLogin) {
         didRedirect.current = true
         onSuccess("user")
@@ -242,7 +274,7 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
                 lineHeight: 1.5,
               }}
             >
-              <strong>Trial mode login.</strong> Enter the temporary password from the trial screen (or your email).
+              <strong>Trial mode login.</strong> Enter the temporary password from the trial screen.
             </div>
           ) : null}
 
@@ -274,7 +306,7 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
               name="password"
             />
           )}
-          {error && <p style={{ color: "#b91c1c", fontSize: 14, margin: "0 0 12px" }}>{error}</p>}
+          {error && <p style={{ color: "#b91c1c", fontSize: 14, margin: "0 0 12px", lineHeight: 1.45 }}>{error}</p>}
           {message && <p style={{ color: "#059669", fontSize: 14, margin: "0 0 12px" }}>{message}</p>}
           <button
             type="submit"
