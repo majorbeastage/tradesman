@@ -9,17 +9,14 @@ import { techSupportMailtoDeactivatedAccount, TRADESMAN_TECH_SUPPORT_EMAIL } fro
 import { supabase } from "../../lib/supabase"
 import { getPasswordRecoveryRedirectTo } from "../../lib/authRedirectBase"
 import { readSandboxLoginEmail, clearSandboxLoginEmail } from "../../lib/sandboxLogin"
-import { repairSandboxProfile } from "../../lib/sandboxApi"
 import { useLocale } from "../../i18n/LocaleContext"
 import { PasswordFieldWithReveal } from "../../components/PasswordFieldWithReveal"
 import { PublicLegalNav } from "../public/PublicLegalNav"
-import { settledWithin, withTimeout } from "../../lib/promiseTimeout"
+import { withTimeout } from "../../lib/promiseTimeout"
 
-const SIGN_IN_TIMEOUT_MS = 20_000
-const POST_SIGN_IN_STEP_TIMEOUT_MS = 8000
+const SIGN_IN_TIMEOUT_MS = 25_000
 
 type LoginPageProps = {
-  /** When true, admin portal sign-in (separate from contractor login). */
   isAdminLogin?: boolean
   onSuccess: (role: UserRole) => void
   onBack: () => void
@@ -28,7 +25,7 @@ type LoginPageProps = {
 
 export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onGoToSignup }: LoginPageProps) {
   const { t } = useLocale()
-  const { signIn, user, role, refetchProfile, accountAccessBlocked, accessBlockedMessage, clearAccessBlockedReason } = useAuth()
+  const { signIn, user, role, accountAccessBlocked, accessBlockedMessage, clearAccessBlockedReason } = useAuth()
   const [mode, setMode] = useState<"signin" | "forgot">("signin")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -54,7 +51,11 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
         setError("Sign out of your contractor account first, or sign in with an admin account.")
         return
       }
+      didRedirect.current = true
+      onSuccess(role)
+      return
     }
+    // Contractor: enter as soon as auth user exists (role can finish loading in background).
     didRedirect.current = true
     onSuccess(role ?? "user")
   }, [user, role, onSuccess, sandboxLoginHint, isAdminLogin])
@@ -102,10 +103,9 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
         timedOut,
       )
 
-      // Auth can succeed after our client timeout when Postgres is slow — check session.
       if (signInResult === timedOut) {
         const sess = supabase
-          ? await withTimeout(supabase.auth.getSession(), 3000, {
+          ? await withTimeout(supabase.auth.getSession(), 4000, {
               data: { session: null },
               error: null,
             })
@@ -122,21 +122,8 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
       clearSandboxLoginEmail()
       setSandboxLoginHint(false)
       setMessage(t("login.msg.signingIn"))
-      void settledWithin(repairSandboxProfile(), POST_SIGN_IN_STEP_TIMEOUT_MS)
-
-      if (isAdminLogin) {
-        // Admin needs role check — wait briefly, then let Auth effect finish if still null.
-        const { role: freshRole } = await withTimeout(refetchProfile(), 2500, { role: null })
-        if (freshRole && isAdminPortalRole(freshRole)) {
-          didRedirect.current = true
-          onSuccess(freshRole)
-        } else if (freshRole) {
-          setError("Sign out of your contractor account first, or sign in with an admin account.")
-        } else {
-          setMessage("Signing in… loading your admin profile.")
-        }
-      } else {
-        // Contractor: enter portal immediately. Do not await profiles (slow under load).
+      // Enter immediately — Auth effect + onSuccess effect finish routing. No profile wait.
+      if (!isAdminLogin) {
         didRedirect.current = true
         onSuccess("user")
       }
@@ -164,182 +151,196 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
     boxSizing: "border-box",
   }
   const labelStyle: React.CSSProperties = { fontWeight: 600, fontSize: 14, color: theme.text }
-
   const isAdminPortalLogin = isAdminLogin
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: theme.background }}>
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <form onSubmit={handleSubmit} style={formStyle}>
-        <button
-          type="button"
-          onClick={onBack}
-          style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, color: theme.primary, marginBottom: 16 }}
-        >
-          {t("login.backHome")}
-        </button>
-        {!isAdminPortalLogin && (
-          <div
-            style={{
-              textAlign: "center",
-              marginBottom: 14,
-              fontSize: 20,
-              fontWeight: 800,
-              letterSpacing: "0.07em",
-              color: theme.charcoal,
-            }}
+        <form onSubmit={handleSubmit} style={formStyle}>
+          <button
+            type="button"
+            onClick={onBack}
+            style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, color: theme.primary, marginBottom: 16 }}
           >
-            TRADESMAN
-          </div>
-        )}
-        <h1 style={{ margin: "0 0 8px", color: theme.text, fontSize: 22 }}>
-          {isAdminPortalLogin
-            ? t("login.title.admin")
-            : mode === "forgot"
-              ? t("login.title.forgot")
-              : t("login.title.signin")}
-        </h1>
-        <p style={{ margin: "0 0 20px", color: theme.text, fontSize: 14, opacity: 0.8 }}>
-          {isAdminPortalLogin
-            ? t("login.sub.admin")
-            : mode === "forgot"
-              ? t("login.sub.forgot")
-              : t("login.sub.signin")}
-        </p>
-
-        {accountAccessBlocked && (
-          <div
-            role="alert"
-            style={{
-              margin: "0 0 16px",
-              padding: "14px 16px",
-              borderRadius: 8,
-              fontSize: 14,
-              lineHeight: 1.55,
-              color: "#991b1b",
-              background: "rgba(185, 28, 28, 0.08)",
-              border: "1px solid rgba(185, 28, 28, 0.25)",
-            }}
-          >
-            {accessBlockedMessage ? (
-              <p style={{ margin: 0, fontWeight: 600 }}>{accessBlockedMessage}</p>
-            ) : (
-              <>
-                <p style={{ margin: "0 0 10px", fontWeight: 600 }}>{t("login.deactivatedTitle")}</p>
-                <p style={{ margin: "0 0 8px", color: "#7f1d1d" }}>
-                  <a href={techSupportMailtoDeactivatedAccount()} style={{ color: theme.primary, fontWeight: 600 }}>
-                    {t("login.emailTech")}
-                  </a>
-                  <span style={{ opacity: 0.85 }}> ({TRADESMAN_TECH_SUPPORT_EMAIL})</span>
-                </p>
-                <p style={{ margin: 0, color: "#7f1d1d" }}>
-                  {t("login.helpDeskLabel")}{" "}
-                  <a href={`tel:${HELP_DESK_PHONE_E164}`} style={{ color: theme.primary, fontWeight: 600 }}>
-                    {HELP_DESK_PHONE_DISPLAY}
-                  </a>
-                </p>
-              </>
-            )}
-          </div>
-        )}
-
-        {sandboxLoginHint && mode === "signin" ? (
-          <div
-            style={{
-              margin: "0 0 16px",
-              padding: "12px 14px",
-              borderRadius: 8,
-              background: "#e0f2fe",
-              border: "1px solid #7dd3fc",
-              color: "#0c4a6e",
-              fontSize: 13,
-              lineHeight: 1.5,
-            }}
-          >
-            <strong>Trial mode login.</strong> Enter the temporary password from the trial screen (or your email).
-            This is a separate practice account — not your regular Tradesman login.
-          </div>
-        ) : null}
-
-        <label style={labelStyle}>
-          {t("login.email")}
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => {
-              setEmail(e.target.value)
-              clearAccessBlockedReason()
-            }}
-            autoComplete="email"
-            style={inputStyle}
-            placeholder={t("login.emailPlaceholder")}
-          />
-        </label>
-        {mode !== "forgot" && (
-          <PasswordFieldWithReveal
-            label={t("login.password")}
-            value={password}
-            onChange={setPassword}
-            autoComplete="current-password"
-            placeholder="••••••••"
-            revealLabelShow={t("login.showPassword")}
-            revealLabelHide={t("login.hidePassword")}
-            labelStyle={labelStyle}
-            inputStyle={inputStyle}
-            name="password"
-          />
-        )}
-        {error && <p style={{ color: "#b91c1c", fontSize: 14, margin: "0 0 12px" }}>{error}</p>}
-        {message && <p style={{ color: "#059669", fontSize: 14, margin: "0 0 12px" }}>{message}</p>}
-        <button
-          type="submit"
-          disabled={submitting}
-          style={{
-            width: "100%",
-            padding: "12px",
-            background: theme.primary,
-            color: "white",
-            border: "none",
-            borderRadius: 6,
-            fontWeight: 600,
-            fontSize: 14,
-            cursor: submitting ? "wait" : "pointer",
-          }}
-        >
-          {submitting
-            ? t("login.submit.wait")
-            : mode === "forgot"
-              ? t("login.submit.reset")
-              : t("login.submit.signin")}
-        </button>
-        {!isAdminPortalLogin && mode === "signin" && (
-          <p style={{ marginTop: 12, fontSize: 14, color: theme.text }}>
-            <button
-              type="button"
-              onClick={() => { setMode("forgot"); setError(""); setMessage("") }}
-              style={{ background: "none", border: "none", color: theme.primary, cursor: "pointer", fontWeight: 600, padding: 0 }}
+            {t("login.backHome")}
+          </button>
+          {!isAdminPortalLogin && (
+            <div
+              style={{
+                textAlign: "center",
+                marginBottom: 14,
+                fontSize: 20,
+                fontWeight: 800,
+                letterSpacing: "0.07em",
+                color: theme.charcoal,
+              }}
             >
-              {t("login.forgotLink")}
-            </button>
+              TRADESMAN
+            </div>
+          )}
+          <h1 style={{ margin: "0 0 8px", color: theme.text, fontSize: 22 }}>
+            {isAdminPortalLogin
+              ? t("login.title.admin")
+              : mode === "forgot"
+                ? t("login.title.forgot")
+                : t("login.title.signin")}
+          </h1>
+          <p style={{ margin: "0 0 20px", color: theme.text, fontSize: 14, opacity: 0.8 }}>
+            {isAdminPortalLogin
+              ? t("login.sub.admin")
+              : mode === "forgot"
+                ? t("login.sub.forgot")
+                : t("login.sub.signin")}
           </p>
-        )}
-        {!isAdminPortalLogin && (
-          <p style={{ marginTop: 16, fontSize: 14, color: theme.text }}>
-            {mode === "forgot" ? (
-              <button type="button" onClick={() => { setMode("signin"); setError(""); setMessage("") }} style={{ background: "none", border: "none", color: theme.primary, cursor: "pointer", fontWeight: 600 }}>
-                {t("login.backSignIn")}
+
+          {accountAccessBlocked && (
+            <div
+              role="alert"
+              style={{
+                margin: "0 0 16px",
+                padding: "14px 16px",
+                borderRadius: 8,
+                fontSize: 14,
+                lineHeight: 1.55,
+                color: "#991b1b",
+                background: "rgba(185, 28, 28, 0.08)",
+                border: "1px solid rgba(185, 28, 28, 0.25)",
+              }}
+            >
+              {accessBlockedMessage ? (
+                <p style={{ margin: 0, fontWeight: 600 }}>{accessBlockedMessage}</p>
+              ) : (
+                <>
+                  <p style={{ margin: "0 0 10px", fontWeight: 600 }}>{t("login.deactivatedTitle")}</p>
+                  <p style={{ margin: "0 0 8px", color: "#7f1d1d" }}>
+                    <a href={techSupportMailtoDeactivatedAccount()} style={{ color: theme.primary, fontWeight: 600 }}>
+                      {t("login.emailTech")}
+                    </a>
+                    <span style={{ opacity: 0.85 }}> ({TRADESMAN_TECH_SUPPORT_EMAIL})</span>
+                  </p>
+                  <p style={{ margin: 0, color: "#7f1d1d" }}>
+                    {t("login.helpDeskLabel")}{" "}
+                    <a href={`tel:${HELP_DESK_PHONE_E164}`} style={{ color: theme.primary, fontWeight: 600 }}>
+                      {HELP_DESK_PHONE_DISPLAY}
+                    </a>
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+
+          {sandboxLoginHint && mode === "signin" ? (
+            <div
+              style={{
+                margin: "0 0 16px",
+                padding: "12px 14px",
+                borderRadius: 8,
+                background: "#e0f2fe",
+                border: "1px solid #7dd3fc",
+                color: "#0c4a6e",
+                fontSize: 13,
+                lineHeight: 1.5,
+              }}
+            >
+              <strong>Trial mode login.</strong> Enter the temporary password from the trial screen (or your email).
+            </div>
+          ) : null}
+
+          <label style={labelStyle}>
+            {t("login.email")}
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => {
+                setEmail(e.target.value)
+                clearAccessBlockedReason()
+              }}
+              autoComplete="email"
+              style={inputStyle}
+              placeholder={t("login.emailPlaceholder")}
+            />
+          </label>
+          {mode !== "forgot" && (
+            <PasswordFieldWithReveal
+              label={t("login.password")}
+              value={password}
+              onChange={setPassword}
+              autoComplete="current-password"
+              placeholder="••••••••"
+              revealLabelShow={t("login.showPassword")}
+              revealLabelHide={t("login.hidePassword")}
+              labelStyle={labelStyle}
+              inputStyle={inputStyle}
+              name="password"
+            />
+          )}
+          {error && <p style={{ color: "#b91c1c", fontSize: 14, margin: "0 0 12px" }}>{error}</p>}
+          {message && <p style={{ color: "#059669", fontSize: 14, margin: "0 0 12px" }}>{message}</p>}
+          <button
+            type="submit"
+            disabled={submitting}
+            style={{
+              width: "100%",
+              padding: "12px",
+              background: theme.primary,
+              color: "white",
+              border: "none",
+              borderRadius: 6,
+              fontWeight: 600,
+              fontSize: 14,
+              cursor: submitting ? "wait" : "pointer",
+            }}
+          >
+            {submitting
+              ? t("login.submit.wait")
+              : mode === "forgot"
+                ? t("login.submit.reset")
+                : t("login.submit.signin")}
+          </button>
+          {!isAdminPortalLogin && mode === "signin" && (
+            <p style={{ marginTop: 12, fontSize: 14, color: theme.text }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("forgot")
+                  setError("")
+                  setMessage("")
+                }}
+                style={{ background: "none", border: "none", color: theme.primary, cursor: "pointer", fontWeight: 600, padding: 0 }}
+              >
+                {t("login.forgotLink")}
               </button>
-            ) : (
-              <>
-                {t("login.noAccount")}{" "}
-                <button type="button" onClick={onGoToSignup} style={{ background: "none", border: "none", color: theme.primary, cursor: "pointer", fontWeight: 600 }}>
-                  {t("login.signUpCta")}
+            </p>
+          )}
+          {!isAdminPortalLogin && (
+            <p style={{ marginTop: 16, fontSize: 14, color: theme.text }}>
+              {mode === "forgot" ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("signin")
+                    setError("")
+                    setMessage("")
+                  }}
+                  style={{ background: "none", border: "none", color: theme.primary, cursor: "pointer", fontWeight: 600 }}
+                >
+                  {t("login.backSignIn")}
                 </button>
-              </>
-            )}
-          </p>
-        )}
-      </form>
+              ) : (
+                <>
+                  {t("login.noAccount")}{" "}
+                  <button
+                    type="button"
+                    onClick={onGoToSignup}
+                    style={{ background: "none", border: "none", color: theme.primary, cursor: "pointer", fontWeight: 600 }}
+                  >
+                    {t("login.signUpCta")}
+                  </button>
+                </>
+              )}
+            </p>
+          )}
+        </form>
       </div>
       <div style={{ maxWidth: 420, margin: "0 auto", width: "100%", padding: "0 20px 8px", boxSizing: "border-box" }}>
         <PublicLegalNav borderTop={false} />

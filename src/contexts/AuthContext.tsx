@@ -1,8 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback, useRef } from "react"
 import type { User, Session } from "@supabase/supabase-js"
 import { supabase } from "../lib/supabase"
-import { activateDemoSession, demoAccessBlockReason } from "../lib/demoAccountLifecycle"
-import { revokeLocalAppSession } from "../lib/appSessions"
+import { demoAccessBlockReason } from "../lib/demoAccountLifecycle"
 import { DEV_USER_ID } from "../core/dev"
 import type { PortalConfig } from "../types/portal-builder"
 import { mergeSandboxPortalConfig } from "../lib/sandboxPortalConfig"
@@ -33,27 +32,19 @@ const DEFAULT_CLIENT_ID = "00000000-0000-0000-0000-000000000001"
 
 type AuthState = {
   user: User | null
-  /** When not signed in, falls back to DEV_USER_ID so the app works without login. */
   userId: string
-  /** From profiles table; null until loaded or no profile. */
   role: UserRole | null
-  /** From profiles.client_id; used for portal config. Defaults to DEFAULT_CLIENT_ID if null. */
   clientId: string
-  /** From profiles.portal_config; per-user tabs/settings/dropdowns visibility. {} = all visible. */
   portalConfig: PortalConfig | null
   session: Session | null
   loading: boolean
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>
   signUp: (email: string, password: string) => Promise<{ error: Error | null }>
   signOut: () => Promise<void>
-  /** Refetch profile from DB and return role (e.g. to retry after login). */
   refetchProfile: () => Promise<ProfileFetchResult>
-  /** True after sign-in when profiles.account_disabled is true or demo expired; user is signed out. */
   accountAccessBlocked: boolean
-  /** Specific message when accountAccessBlocked (deactivated vs demo expired). */
   accessBlockedMessage: string | null
   clearAccessBlockedReason: () => void
-  /** Public URL from profiles.metadata.profile_photo_url when set. */
   profilePhotoUrl: string | null
 }
 
@@ -69,30 +60,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [accountAccessBlocked, setAccountAccessBlocked] = useState(false)
   const [accessBlockedMessage, setAccessBlockedMessage] = useState<string | null>(null)
   const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null)
-  /** Last user id from auth session; used to avoid clearing `role` on TOKEN_REFRESHED (same user). */
   const authSessionUserIdRef = useRef<string | null>(null)
-  /** Dedupe notify POST when both INITIAL_SESSION and getSession() run back-to-back. */
-  const verifiedNotifyDedupeRef = useRef<{ userId: string; at: number } | null>(null)
 
   const clearAccessBlockedReason = useCallback(() => {
     setAccountAccessBlocked(false)
     setAccessBlockedMessage(null)
-  }, [])
-
-  const postVerifiedSignupNotify = useCallback((session: Session | null) => {
-    if (!session?.user?.email_confirmed_at || !session.access_token) return
-    const uid = session.user.id
-    const now = Date.now()
-    const prev = verifiedNotifyDedupeRef.current
-    if (prev && prev.userId === uid && now - prev.at < 4000) return
-    verifiedNotifyDedupeRef.current = { userId: uid, at: now }
-    const authHeaders = { Authorization: `Bearer ${session.access_token}` }
-    void fetch("/api/notify-admin-verified-signup", { method: "POST", headers: authHeaders }).catch(() => {
-      /* best-effort; server is idempotent */
-    })
-    void fetch("/api/notify-client-sms-disclosure", { method: "POST", headers: authHeaders }).catch(() => {
-      /* best-effort; server is idempotent */
-    })
   }, [])
 
   useEffect(() => {
@@ -100,9 +72,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(false)
       return
     }
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      setSession(session)
-      const nextUser = session?.user ?? null
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession)
+      const nextUser = nextSession?.user ?? null
       const nextId = nextUser?.id ?? null
       const prevId = authSessionUserIdRef.current
       if (nextId == null) {
@@ -116,28 +90,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       setUser(nextUser)
       setLoading(false)
-      /** USER_UPDATED: e.g. admin confirmed email in Dashboard while session is open — still ping ops once. */
-      if (event === "SIGNED_IN" || event === "INITIAL_SESSION" || event === "USER_UPDATED") {
-        // Defer so login is not competing with the critical profiles role fetch.
-        window.setTimeout(() => {
-          postVerifiedSignupNotify(session)
-          if (session?.access_token) void activateDemoSession(session.access_token)
-        }, 2500)
-      }
+      // Crisis mode: do NOT call notify/activate-demo on login — those hit Vercel → Supabase and worsen outages.
     })
-    void supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session)
-      const u = session?.user ?? null
+    void supabase.auth.getSession().then(({ data: { session: s } }) => {
+      setSession(s)
+      const u = s?.user ?? null
       authSessionUserIdRef.current = u?.id ?? null
       setUser(u)
       setLoading(false)
-      window.setTimeout(() => {
-        postVerifiedSignupNotify(session)
-        if (session?.access_token) void activateDemoSession(session.access_token)
-      }, 2500)
     })
     return () => subscription.unsubscribe()
-  }, [postVerifiedSignupNotify])
+  }, [])
 
   useEffect(() => {
     if (!supabase || !user?.id) {
@@ -149,73 +112,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     const sb = supabase
     let cancelled = false
-    // Prefer a fast role path first (no large JSONB metadata) so login isn't stuck on slow RLS.
     const timeoutId = window.setTimeout(() => {
       if (!cancelled) setRole((prev) => prev ?? "user")
-    }, 5000)
+    }, 4000)
 
-    void (async () => {
-      try {
-        const light = await sb
-          .from("profiles")
-          .select("role, client_id, portal_config, account_disabled")
-          .eq("id", user.id)
-          .maybeSingle()
+    // Light query only — never pull full metadata JSONB on every auth (was stalling login).
+    void Promise.resolve(
+      sb.from("profiles").select("role, client_id, portal_config, account_disabled").eq("id", user.id).maybeSingle(),
+    ).then(
+      ({ data, error }) => {
         if (cancelled) return
-        if (light.data?.account_disabled === true) {
-          clearTimeout(timeoutId)
+        clearTimeout(timeoutId)
+        if (data?.account_disabled === true) {
           setAccessBlockedMessage(null)
           setAccountAccessBlocked(true)
           void sb.auth.signOut()
           return
         }
-        if (light.data?.role) {
-          setRole(light.data.role as UserRole)
-        } else if (!light.error) {
+        if (!error && data?.role) {
+          setRole(data.role as UserRole)
+        } else {
           setRole("user")
         }
-        if (light.data?.client_id) setClientId(light.data.client_id as string)
+        if (data?.client_id) setClientId(data.client_id as string)
         else setClientId(DEFAULT_CLIENT_ID)
-        const portalCfgRaw = (light.data?.portal_config as PortalConfig) ?? null
-        if (portalCfgRaw) setPortalConfig(portalCfgRaw)
-
-        // Metadata (photo, demo flags, sandbox) — secondary; may be slow under load.
-        const full = await sb.from("profiles").select("metadata, portal_config, role").eq("id", user.id).maybeSingle()
-        if (cancelled) return
-        clearTimeout(timeoutId)
-        const meta =
-          full.data?.metadata && typeof full.data.metadata === "object" && !Array.isArray(full.data.metadata)
-            ? (full.data.metadata as Record<string, unknown>)
-            : {}
-        const portalCfgMerged =
-          shouldMergeSandboxPortalConfig(meta, (full.data?.portal_config as PortalConfig) ?? portalCfgRaw)
-            ? mergeSandboxPortalConfig((full.data?.portal_config as PortalConfig) ?? portalCfgRaw)
-            : ((full.data?.portal_config as PortalConfig) ?? portalCfgRaw)
-        const demoBlock = demoAccessBlockReason(meta, portalCfgMerged, (full.data?.role as string) ?? light.data?.role)
-        if (demoBlock) {
-          setAccessBlockedMessage(demoBlock)
-          setAccountAccessBlocked(true)
-          void sb.auth.signOut()
-          return
-        }
-        if (full.data?.role) {
-          const roleRaw = full.data.role as UserRole
-          setRole(
-            shouldMergeSandboxPortalConfig(meta, portalCfgMerged) && roleRaw === "new_user"
-              ? "corporate_management"
-              : roleRaw,
-          )
-        }
-        setPortalConfig(portalCfgMerged)
-        const url = meta.profile_photo_url
-        setProfilePhotoUrl(typeof url === "string" && url.trim().startsWith("http") ? url.trim() : null)
-      } catch {
+        setPortalConfig((data?.portal_config as PortalConfig) ?? null)
+      },
+      () => {
         if (!cancelled) {
           clearTimeout(timeoutId)
           setRole((prev) => prev ?? "user")
         }
-      }
-    })()
+      },
+    )
 
     return () => {
       cancelled = true
@@ -232,79 +161,67 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signUp = useCallback(async (email: string, password: string) => {
     if (!supabase) return { error: new Error("Supabase not configured") }
     const { error } = await supabase.auth.signUp({ email, password })
-    if (error) return { error }
-    return { error: null }
+    return { error: error ? new Error(error.message) : null }
   }, [])
 
   const signOut = useCallback(async () => {
-    if (supabase) {
-      void revokeLocalAppSession(supabase, "main")
-      await supabase.auth.signOut()
-    }
+    if (supabase) await supabase.auth.signOut()
   }, [])
 
   const refetchProfile = useCallback(async (): Promise<ProfileFetchResult> => {
     if (!supabase || !user?.id) return { role: null }
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("role, client_id, portal_config, account_disabled, metadata")
-      .eq("id", user.id)
-      .single()
-    if (data?.account_disabled === true) {
-      setAccessBlockedMessage(null)
-      setAccountAccessBlocked(true)
-      await supabase.auth.signOut()
-      return { role: null, error: "Account deactivated" }
-    }
-    const meta =
-      data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
-        ? (data.metadata as Record<string, unknown>)
-        : {}
-    const portalCfgRaw = (data?.portal_config as PortalConfig) ?? null
-    const portalCfg =
-      shouldMergeSandboxPortalConfig(meta, portalCfgRaw)
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("role, client_id, portal_config, account_disabled, metadata")
+        .eq("id", user.id)
+        .maybeSingle()
+      if (data?.account_disabled === true) {
+        setAccessBlockedMessage(null)
+        setAccountAccessBlocked(true)
+        await supabase.auth.signOut()
+        return { role: null, error: "Account deactivated" }
+      }
+      const meta =
+        data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+          ? (data.metadata as Record<string, unknown>)
+          : {}
+      const portalCfgRaw = (data?.portal_config as PortalConfig) ?? null
+      const portalCfg = shouldMergeSandboxPortalConfig(meta, portalCfgRaw)
         ? mergeSandboxPortalConfig(portalCfgRaw)
         : portalCfgRaw
-    const demoBlock = demoAccessBlockReason(meta, portalCfg, data?.role as string | undefined)
-    if (demoBlock) {
-      setAccessBlockedMessage(demoBlock)
-      setAccountAccessBlocked(true)
-      await supabase.auth.signOut()
-      return { role: null, error: demoBlock }
-    }
-    if (error) {
+      const demoBlock = demoAccessBlockReason(meta, portalCfg, data?.role as string | undefined)
+      if (demoBlock) {
+        setAccessBlockedMessage(demoBlock)
+        setAccountAccessBlocked(true)
+        await supabase.auth.signOut()
+        return { role: null, error: demoBlock }
+      }
+      if (error) {
+        const fallback: UserRole = "user"
+        setRole(fallback)
+        return { role: fallback, error: error.message }
+      }
+      const roleRaw = (data?.role as UserRole) ?? "user"
+      const roleFromDb =
+        shouldMergeSandboxPortalConfig(meta, portalCfg) && roleRaw === "new_user"
+          ? "corporate_management"
+          : roleRaw
+      setRole(roleFromDb)
+      if (data?.client_id) setClientId(data.client_id as string)
+      else setClientId(DEFAULT_CLIENT_ID)
+      setPortalConfig(portalCfg)
+      const url = meta.profile_photo_url
+      setProfilePhotoUrl(typeof url === "string" && url.trim().startsWith("http") ? url.trim() : null)
+      return { role: roleFromDb }
+    } catch (e) {
       const fallback: UserRole = "user"
       setRole(fallback)
-      return { role: fallback, error: error.message }
+      return { role: fallback, error: e instanceof Error ? e.message : String(e) }
     }
-    const roleRaw = (data?.role as UserRole) ?? "user"
-    const roleFromDb =
-      shouldMergeSandboxPortalConfig(meta, portalCfg) && roleRaw === "new_user"
-        ? "corporate_management"
-        : roleRaw
-    setRole(roleFromDb)
-    if (data?.client_id) setClientId(data.client_id as string)
-    else setClientId(DEFAULT_CLIENT_ID)
-    setPortalConfig(portalCfg)
-    const url = meta.profile_photo_url
-    setProfilePhotoUrl(typeof url === "string" && url.trim().startsWith("http") ? url.trim() : null)
-    return { role: roleFromDb }
   }, [user?.id])
 
-  const lastFocusRefetchAt = useRef(0)
-
-  // When user returns to the tab, refetch profile (debounced — avoids egress spikes on tab switching).
-  useEffect(() => {
-    const onFocus = () => {
-      if (!user?.id || !refetchProfile) return
-      const now = Date.now()
-      if (now - lastFocusRefetchAt.current < 60_000) return
-      lastFocusRefetchAt.current = now
-      void refetchProfile()
-    }
-    window.addEventListener("focus", onFocus)
-    return () => window.removeEventListener("focus", onFocus)
-  }, [user?.id, refetchProfile])
+  // Crisis mode: no focus refetch (was re-querying profiles constantly).
 
   const value: AuthState = {
     user,
