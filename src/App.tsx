@@ -40,7 +40,6 @@ import VoicePromptStudioPage from "./modules/public/VoicePromptStudioPage"
 import { isReservedBusinessWebProfileSlug } from "./lib/businessPublicProfile"
 import { recordMarketingPageView } from "./lib/siteTrafficBeacon"
 import { useAuth, type UserRole } from "./contexts/AuthContext"
-import MainAppSessionGuard from "./components/MainAppSessionGuard"
 import { shouldUseOfficeManagerPortal, isAdminPortalRole, isOfficeManagerLikeRole } from "./lib/profileRoles"
 import { ErrorBoundary } from "./ErrorBoundary"
 import { usePortalTabs } from "./hooks/usePortalTabs"
@@ -211,7 +210,6 @@ function ContractorPortal({
   initialShell: PortalShell
   setView: (v: View) => void
 }) {
-  const { user } = useAuth()
   const [shell, setShell] = useState<PortalShell>(initialShell)
 
   useEffect(() => {
@@ -230,7 +228,6 @@ function ContractorPortal({
     <ViewProvider setView={setView}>
       <PortalViewProvider onShellChange={handleShellChange}>
         <AppSchemeBridge>
-          <MainAppSessionGuard userId={user?.id ?? null} />
           {shell === "office" ? <OfficeManagerApp /> : <MainApp />}
         </AppSchemeBridge>
       </PortalViewProvider>
@@ -267,7 +264,6 @@ function AdminPortalWithAssistantTrain({ setView }: { setView: (v: View) => void
 
   return (
     <ViewProvider setView={setView}>
-      <MainAppSessionGuard userId={user?.id ?? null} />
       <GlobalAssistantProvider
         setPage={() => {}}
         profileUserId={user?.id ?? null}
@@ -734,6 +730,10 @@ function App() {
   const [signupPackagePreset, setSignupPackagePreset] = useState<string | null>(null)
   const [loginError, setLoginError] = useState("")
   const loginIntentRef = useRef<"admin" | "contractor" | null>(loginIntentFromInitialView(initialView))
+  /** Prevents hash strip after login from bouncing view back to home via syncViewFromHash. */
+  const completingLoginRef = useRef(false)
+  const viewRef = useRef(view)
+  viewRef.current = view
   const rawPathname = typeof window !== "undefined" ? window.location.pathname : "/"
   const pathname = rawPathname.toLowerCase()
 
@@ -812,6 +812,7 @@ function App() {
 
   useEffect(() => {
     const syncViewFromHash = () => {
+      if (completingLoginRef.current) return
       const hash = window.location.hash
       if (hasAppNavDeepLink(hash)) return
       if (isAdminLoginRouteHash(hash)) {
@@ -824,7 +825,8 @@ function App() {
         setView("login")
         return
       }
-      if (view === "login" || view === "admin-login") {
+      const currentView = viewRef.current
+      if (currentView === "login" || currentView === "admin-login") {
         if (isAdminLoginPath()) return
         loginIntentRef.current = null
         setView("home")
@@ -832,7 +834,7 @@ function App() {
     }
     window.addEventListener("hashchange", syncViewFromHash)
     return () => window.removeEventListener("hashchange", syncViewFromHash)
-  }, [view])
+  }, [])
 
   /** Deep links like #/app/customers-email?standalone=1 must open the portal, not the marketing home page. */
   useEffect(() => {
@@ -967,15 +969,24 @@ function App() {
   }
 
   const handleLoginSuccess = useCallback(async (r: UserRole) => {
+    completingLoginRef.current = true
     setLoginError("")
     const intent = resolveLoginIntent(view, loginIntentRef)
 
+    const enterPortal = (next: View) => {
+      setView(next)
+      endLoginFlow(loginIntentRef)
+      window.setTimeout(() => {
+        completingLoginRef.current = false
+      }, 500)
+    }
+
     if (intent === "admin") {
       if (!isAdminPortalRole(r)) {
+        completingLoginRef.current = false
         const { role: refetched, error: fetchErr } = await refetchProfile()
         if (isAdminPortalRole(refetched)) {
-          endLoginFlow(loginIntentRef)
-          setView("admin")
+          enterPortal("admin")
           return
         }
         const roleLabel = refetched ?? "none"
@@ -985,21 +996,18 @@ function App() {
         )
         return
       }
-      endLoginFlow(loginIntentRef)
-      setView("admin")
+      enterPortal("admin")
       return
     }
 
     if (intent === "contractor") {
-      if (shouldUseOfficeManagerPortal(r)) setView("office")
-      else setView("app")
-      endLoginFlow(loginIntentRef)
+      enterPortal(shouldUseOfficeManagerPortal(r) ? "office" : "app")
       return
     }
 
-    if (isAdminPortalRole(r)) setView("admin")
-    else if (shouldUseOfficeManagerPortal(r)) setView("office")
-    else setView("app")
+    if (isAdminPortalRole(r)) enterPortal("admin")
+    else if (shouldUseOfficeManagerPortal(r)) enterPortal("office")
+    else enterPortal("app")
   }, [view, refetchProfile])
 
   if (view === "home") {

@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, useCallback, useRef } f
 import type { User, Session } from "@supabase/supabase-js"
 import { supabase } from "../lib/supabase"
 import { activateDemoSession, demoAccessBlockReason } from "../lib/demoAccountLifecycle"
-import { registerAppSession, revokeLocalAppSession } from "../lib/appSessions"
+import { revokeLocalAppSession } from "../lib/appSessions"
 import { DEV_USER_ID } from "../core/dev"
 import type { PortalConfig } from "../types/portal-builder"
 import { mergeSandboxPortalConfig } from "../lib/sandboxPortalConfig"
@@ -219,17 +219,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signIn = useCallback(async (email: string, password: string) => {
     if (!supabase) return { error: new Error("Supabase not configured") }
     const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) return { error }
-    // Best-effort device registry — must never block or undo login.
-    void registerAppSession(supabase, "main")
-    return { error: null }
+    return { error: error ? new Error(error.message) : null }
   }, [])
 
   const signUp = useCallback(async (email: string, password: string) => {
     if (!supabase) return { error: new Error("Supabase not configured") }
-    const { data, error } = await supabase.auth.signUp({ email, password })
+    const { error } = await supabase.auth.signUp({ email, password })
     if (error) return { error }
-    if (data.session) void registerAppSession(supabase, "main")
     return { error: null }
   }, [])
 
