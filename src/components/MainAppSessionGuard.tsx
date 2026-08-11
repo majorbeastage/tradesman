@@ -1,114 +1,58 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef } from "react"
 import { supabase } from "../lib/supabase"
-import {
-  heartbeatAppSession,
-  registerAppSession,
-  revokeLocalAppSession,
-} from "../lib/appSessions"
-import { getVoiceTrafficInCall, subscribeVoiceTrafficInCall } from "../lib/voiceTrafficGuard"
+import { heartbeatAppSession, registerAppSession } from "../lib/appSessions"
 
 const HEARTBEAT_MS = 60_000
-/** Focus/visibility can fire in bursts; never let them heartbeat faster than this. */
 const MIN_HEARTBEAT_GAP_MS = 30_000
-/** Grace after mount — never sign out during initial register + reclaim. */
-const MOUNT_GRACE_MS = 8_000
 
 /**
- * Main app common-login guard: registers this device, heartbeats, soft-takes over
- * when another main session wins. Never interrupts live voice (defers sign-out).
- *
- * Polls rather than subscribing to user_app_sessions. A realtime subscription here fed
- * itself — each heartbeat wrote last_seen, which published a change, which triggered the
- * next heartbeat — and the resulting write storm took the Supabase instance down with it.
+ * Main app common-login registry: tracks devices in user_app_sessions (up to 4 main).
+ * Registration + heartbeat only — does NOT sign users out (that was breaking login).
+ * Device-limit enforcement can be re-enabled once registry is stable in production.
  */
 export default function MainAppSessionGuard({ userId }: { userId: string | null }) {
-  const [inCall, setInCall] = useState(getVoiceTrafficInCall)
-  const [takeoverPending, setTakeoverPending] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
   const lastTickRef = useRef(0)
   const inFlightRef = useRef(false)
-  const mountedAtRef = useRef(0)
-
-  useEffect(() => subscribeVoiceTrafficInCall(setInCall), [])
 
   useEffect(() => {
     const sb = supabase
     if (!sb || !userId) return
     let cancelled = false
-    mountedAtRef.current = Date.now()
     let registered = false
 
-    const applySuperseded = () => {
-      if (Date.now() - mountedAtRef.current < MOUNT_GRACE_MS) return
-      if (getVoiceTrafficInCall()) {
-        setTakeoverPending(true)
-        setMessage(
-          "This account reached its 4-device limit. This least-recently-used session will end when your call finishes.",
-        )
-        return
-      }
-      setTakeoverPending(false)
-      setMessage("This account reached its 4-device limit. Signing out the least-recently-used session here…")
-      void (async () => {
-        await revokeLocalAppSession(sb, "main")
-        await sb.auth.signOut({ scope: "local" })
-      })()
-    }
-
-    const ensureRegistered = async (): Promise<boolean> => {
+    const ensureRegistered = async () => {
       const r = await registerAppSession(sb, "main")
-      if (cancelled) return false
+      if (cancelled) return
       registered = true
       if (!r.ok && r.error) console.warn("[sessions] register main:", r.error)
-      return r.ok
     }
 
-    /** Fresh sign-in should reclaim an active slot before we sign this device out. */
-    const heartbeatOrReclaim = async () => {
-      let hb = await heartbeatAppSession(sb, "main")
-      if (cancelled) return
-      if (hb.missing || hb.error) {
-        await ensureRegistered()
-        return
-      }
-      if (!hb.superseded) {
-        setTakeoverPending(false)
-        setMessage(null)
-        return
-      }
-      await ensureRegistered()
-      if (cancelled) return
-      hb = await heartbeatAppSession(sb, "main")
-      if (cancelled) return
-      if (hb.superseded) applySuperseded()
-      else {
-        setTakeoverPending(false)
-        setMessage(null)
-      }
-    }
-
-    const tick = (force = false) => {
-      if (!registered || inFlightRef.current) return
+    const tick = async (force = false) => {
+      if (!registered || inFlightRef.current || cancelled) return
       const now = Date.now()
       if (!force && now - lastTickRef.current < MIN_HEARTBEAT_GAP_MS) return
       lastTickRef.current = now
       inFlightRef.current = true
-      void heartbeatOrReclaim().finally(() => {
+      try {
+        const hb = await heartbeatAppSession(sb, "main")
+        if (cancelled) return
+        if (hb.missing || hb.error) await ensureRegistered()
+        // Intentionally ignore hb.superseded — never auto sign-out from here.
+      } finally {
         inFlightRef.current = false
-      })
+      }
     }
 
     void (async () => {
       await ensureRegistered()
-      if (cancelled) return
-      tick(true)
+      if (!cancelled) void tick(true)
     })()
 
-    const interval = window.setInterval(() => tick(true), HEARTBEAT_MS)
-    const onFocus = () => tick()
+    const interval = window.setInterval(() => void tick(true), HEARTBEAT_MS)
+    const onFocus = () => void tick()
     window.addEventListener("focus", onFocus)
     const onVis = () => {
-      if (document.visibilityState === "visible") tick()
+      if (document.visibilityState === "visible") void tick()
     }
     document.addEventListener("visibilitychange", onVis)
 
@@ -120,45 +64,5 @@ export default function MainAppSessionGuard({ userId }: { userId: string | null 
     }
   }, [userId])
 
-  useEffect(() => {
-    const sb = supabase
-    if (inCall) return
-    if (!takeoverPending || !sb) return
-    if (Date.now() - mountedAtRef.current < MOUNT_GRACE_MS) return
-    setTakeoverPending(false)
-    setMessage("This account reached its 4-device limit. Signing out the least-recently-used session here…")
-    void (async () => {
-      await revokeLocalAppSession(sb, "main")
-      await sb.auth.signOut({ scope: "local" })
-    })()
-  }, [inCall, takeoverPending])
-
-  if (!message && !takeoverPending) return null
-
-  return (
-    <div
-      role="status"
-      style={{
-        position: "fixed",
-        top: 0,
-        left: 0,
-        right: 0,
-        zIndex: 10050,
-        padding: "10px 16px",
-        background: takeoverPending ? "#92400e" : "#0f172a",
-        color: "#fff",
-        fontSize: 13,
-        fontWeight: 700,
-        textAlign: "center",
-        boxShadow: "0 4px 16px rgba(15,23,42,0.25)",
-      }}
-    >
-      {message}
-      {takeoverPending ? (
-        <span style={{ display: "block", marginTop: 4, fontWeight: 600, opacity: 0.9, color: "#fde68a" }}>
-          Your call stays connected.
-        </span>
-      ) : null}
-    </div>
-  )
+  return null
 }

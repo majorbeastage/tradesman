@@ -40,6 +40,7 @@ import VoicePromptStudioPage from "./modules/public/VoicePromptStudioPage"
 import { isReservedBusinessWebProfileSlug } from "./lib/businessPublicProfile"
 import { recordMarketingPageView } from "./lib/siteTrafficBeacon"
 import { useAuth, type UserRole } from "./contexts/AuthContext"
+import MainAppSessionGuard from "./components/MainAppSessionGuard"
 import { shouldUseOfficeManagerPortal, isAdminPortalRole, isOfficeManagerLikeRole } from "./lib/profileRoles"
 import { ErrorBoundary } from "./ErrorBoundary"
 import { usePortalTabs } from "./hooks/usePortalTabs"
@@ -210,6 +211,7 @@ function ContractorPortal({
   initialShell: PortalShell
   setView: (v: View) => void
 }) {
+  const { user } = useAuth()
   const [shell, setShell] = useState<PortalShell>(initialShell)
 
   useEffect(() => {
@@ -228,6 +230,7 @@ function ContractorPortal({
     <ViewProvider setView={setView}>
       <PortalViewProvider onShellChange={handleShellChange}>
         <AppSchemeBridge>
+          <MainAppSessionGuard userId={user?.id ?? null} />
           {shell === "office" ? <OfficeManagerApp /> : <MainApp />}
         </AppSchemeBridge>
       </PortalViewProvider>
@@ -264,6 +267,7 @@ function AdminPortalWithAssistantTrain({ setView }: { setView: (v: View) => void
 
   return (
     <ViewProvider setView={setView}>
+      <MainAppSessionGuard userId={user?.id ?? null} />
       <GlobalAssistantProvider
         setPage={() => {}}
         profileUserId={user?.id ?? null}

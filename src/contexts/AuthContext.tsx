@@ -220,8 +220,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!supabase) return { error: new Error("Supabase not configured") }
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) return { error }
-    // Register this device before the session guard heartbeats (avoids stale superseded sign-out).
-    await registerAppSession(supabase, "main")
+    // Best-effort device registry — must never block or undo login.
+    void registerAppSession(supabase, "main")
     return { error: null }
   }, [])
 

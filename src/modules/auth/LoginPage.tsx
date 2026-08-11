@@ -47,13 +47,16 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
 
   const didRedirect = useRef(false)
   useEffect(() => {
-    if (sandboxLoginHint || !user || !role || didRedirect.current) return
-    if (isAdminLogin && !isAdminPortalRole(role)) {
-      setError("Sign out of your contractor account first, or sign in with an admin account.")
-      return
+    if (sandboxLoginHint || !user || didRedirect.current) return
+    if (isAdminLogin) {
+      if (!role) return
+      if (!isAdminPortalRole(role)) {
+        setError("Sign out of your contractor account first, or sign in with an admin account.")
+        return
+      }
     }
     didRedirect.current = true
-    onSuccess(role)
+    onSuccess(role ?? "user")
   }, [user, role, onSuccess, sandboxLoginHint, isAdminLogin])
 
   async function handleSubmit(e: React.FormEvent) {
@@ -117,10 +120,11 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
         if (freshRole) {
           didRedirect.current = true
           onSuccess(freshRole)
-        } else {
-          // Profile fetch slow — open portal; AuthContext resolves role in background.
+        } else if (!isAdminLogin) {
           didRedirect.current = true
           onSuccess("user")
+        } else {
+          setMessage("Signing in… loading your admin profile.")
         }
       }
     } finally {
