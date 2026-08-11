@@ -387,6 +387,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     dataUserId: customerDataUserId,
     sharingScope,
   } = useCustomerDataScope()
+  const customerOwnerUserId = customerDataUserId || userId
   const emailSig = useEmailComposeSignature(userId)
   const { session } = useAuth()
   const { t } = useLocale()
@@ -2319,7 +2320,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       <AddCustomerModal
         open={showAddCustomer}
         onClose={() => setShowAddCustomer(false)}
-        userId={userId}
+        userId={customerOwnerUserId}
         onCreated={focusCustomerAfterCreate}
       />
 

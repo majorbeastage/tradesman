@@ -202,6 +202,7 @@ import {
   type PurchaseOrderRecord,
 } from "../../lib/purchaseOrders"
 import { archiveEstimatePdfFromQuote, openEstimatePdfForProfile } from "../../lib/estimatePdfExport"
+import { openPdfBlobOnDevice } from "../../lib/openPdfOnDevice"
 import { autoAdvanceCustomerWorkflow } from "../../lib/customerWorkflowAutoComplete"
 import { uploadBytesForOutbound } from "../../lib/uploadCommAttachment"
 import { clampAutomatedNotifyInnerText, SMS_AUTOMATED_NOTIFY_INNER_MAX_CHARS, truncateOutboundSmsHard } from "../../lib/smsComplianceLimits"
@@ -4043,10 +4044,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
       const base = await buildCurrentEstimatePdfPayload()
       if (!base) return
       const bytes = await buildQuotePdfBytes(base)
-      const blob = new Blob([bytes as BlobPart], { type: "application/pdf" })
-      const url = URL.createObjectURL(blob)
-      window.open(url, "_blank", "noopener,noreferrer")
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+      const fileName = `estimate-${selectedQuote.id.slice(0, 8)}.pdf`
+      await openPdfBlobOnDevice(bytes, fileName)
     } catch (e) {
       alert(e instanceof Error ? e.message : String(e))
     } finally {

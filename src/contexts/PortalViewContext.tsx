@@ -316,6 +316,17 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
   const usersLoadSeqRef = useRef(0)
   const usersLoadedOnceRef = useRef(false)
   const usersLoadKeyRef = useRef("")
+  const portalConfigLoadSeqRef = useRef(0)
+  const sandboxDemoTeamRef = useRef(sandboxDemoTeam)
+  const authPortalConfigRef = useRef(authPortalConfig)
+
+  useEffect(() => {
+    sandboxDemoTeamRef.current = sandboxDemoTeam
+  }, [sandboxDemoTeam])
+
+  useEffect(() => {
+    authPortalConfigRef.current = authPortalConfig
+  }, [authPortalConfig])
 
   useEffect(() => {
     accessTokenRef.current = session?.access_token ?? null
@@ -424,7 +435,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
     }
     if (authRole === "admin" && !hasAccessToken) return
 
-    const loadKey = `${authUserId}:${authRole ?? ""}:${targetUserId ?? ""}`
+    const loadKey = `${authUserId}:${authRole ?? ""}:${authPortalConfig?.sandbox_account ? "sandbox" : "live"}`
     if (usersLoadKeyRef.current !== loadKey) {
       usersLoadedOnceRef.current = false
       usersLoadKeyRef.current = loadKey
@@ -478,7 +489,7 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
         if (loadSeq === usersLoadSeqRef.current) setLoadingUsers(false)
       }
     })()
-  }, [authUserId, authRole, hasAccessToken, targetUserId])
+  }, [authUserId, authRole, hasAccessToken, authPortalConfig?.sandbox_account, user?.email])
 
   // Admin: merge org roster when view-as target changes — without toggling loadingUsers (avoids bar loop).
   useEffect(() => {
@@ -614,8 +625,13 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
       return filterUsersForViewRole(manageableUsers, viewRole)
     }
 
+    const orgBase = orgScopedUsers.length > 0 ? orgScopedUsers : manageableUsers
+    const ownerId = resolveOrgOwnerFromRoster(orgScopedUsers.length > 0 ? orgScopedUsers : manageableUsers)
+    if (orgScopedUsers.length > 0) {
+      return filterUsersForViewRoleInOrg(orgBase, viewRole, ownerId)
+    }
     return filterAdminPlatformUsersForViewRole(manageableUsers, viewRole, adminTeamMemberIds)
-  }, [authRole, manageableUsers, viewRole, adminTeamMemberIds])
+  }, [authRole, manageableUsers, orgScopedUsers, viewRole, adminTeamMemberIds])
 
   useEffect(() => {
     if (loadingUsers) return
@@ -636,6 +652,10 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
     }
     // Also accept target if present in full manageable list (role filter may lag).
     if (targetUserId && manageableUsers.some((u) => u.userId === targetUserId)) {
+      targetValidatedRef.current = validationKey
+      return
+    }
+    if (targetUserId && orgScopedUsers.some((u) => u.userId === targetUserId)) {
       targetValidatedRef.current = validationKey
       return
     }
@@ -707,27 +727,37 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
     const uid = targetUserId
     if (!uid || !supabase || isPortalViewDefaultTarget(uid)) {
       setScopedPortalConfig(null)
+      setLoadingPortalConfig(false)
       return
     }
     if (isSandboxDemoUserId(uid)) {
-      const member = sandboxDemoMemberById(sandboxDemoTeam, uid)
+      const member = sandboxDemoMemberById(sandboxDemoTeamRef.current, uid)
       setScopedPortalConfig(defaultPortalConfigForViewRole(member?.role ?? "user"))
+      setLoadingPortalConfig(false)
       return
     }
     if (uid === authUserId && !showViewBar) {
-      setScopedPortalConfig(authPortalConfig)
+      setScopedPortalConfig(authPortalConfigRef.current)
+      setLoadingPortalConfig(false)
       return
     }
+    const loadSeq = ++portalConfigLoadSeqRef.current
     setLoadingPortalConfig(true)
-    const { data, error: err } = await supabase.from("profiles").select("portal_config").eq("id", uid).maybeSingle()
-    setLoadingPortalConfig(false)
-    if (err || !data) {
-      setScopedPortalConfig({})
-      return
+    try {
+      const { data, error: err } = await supabase.from("profiles").select("portal_config").eq("id", uid).maybeSingle()
+      if (loadSeq !== portalConfigLoadSeqRef.current) return
+      if (err || !data) {
+        setScopedPortalConfig({})
+        return
+      }
+      const raw = data.portal_config
+      setScopedPortalConfig(raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as PortalConfig) : {})
+    } catch {
+      if (loadSeq === portalConfigLoadSeqRef.current) setScopedPortalConfig({})
+    } finally {
+      if (loadSeq === portalConfigLoadSeqRef.current) setLoadingPortalConfig(false)
     }
-    const raw = data.portal_config
-    setScopedPortalConfig(raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as PortalConfig) : {})
-  }, [targetUserId, authUserId, showViewBar, authPortalConfig, sandboxDemoTeam])
+  }, [targetUserId, authUserId, showViewBar])
 
   useEffect(() => {
     void refreshScopedPortalConfig()
