@@ -261,6 +261,10 @@ const ESTIMATE_TEMPLATE_DOCUMENT_BUNDLE_IDS = new Set([
 const ESTIMATE_TEMPLATE_TEXT_GROUP_IDS = new Set([
   "estimate_template_notes",
   "estimate_template_footer",
+])
+
+/** Built-in job-description controls (always shown; not portal custom fields). */
+const ESTIMATE_TEMPLATE_JOB_DESCRIPTION_IDS = new Set([
   "estimate_template_include_job_description",
   "estimate_template_job_description_label",
 ])
@@ -1272,7 +1276,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
     [portalConfig, aiAutomationsEnabled],
   )
   const estimateTemplateItems = useMemo(
-    () => getControlItemsForUser(portalConfig, "quotes", "estimate_template", { aiAutomationsEnabled }),
+    () =>
+      getControlItemsForUser(portalConfig, "quotes", "estimate_template", { aiAutomationsEnabled }).filter(
+        (i) => !ESTIMATE_TEMPLATE_JOB_DESCRIPTION_IDS.has(i.id),
+      ),
     [portalConfig, aiAutomationsEnabled],
   )
   const estimateTemplateItemsDocument = useMemo(
@@ -1519,7 +1526,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   }
 
   useEffect(() => {
-    if (!showEstimateTemplateModal || !supabase || !userId || estimateTemplateItems.length === 0) return
+    if (!showEstimateTemplateModal || !supabase || !userId) return
     let cancelled = false
     void (async () => {
       const { data } = await supabase.from("profiles").select("document_template_quote, metadata").eq("id", userId).maybeSingle()
@@ -1543,13 +1550,14 @@ export default function QuotesPage(_props: QuotesPageProps) {
       const includeJobDescription = meta.estimate_template_include_job_description === true
       const jobDescriptionLabel =
         typeof meta.estimate_template_job_description_label === "string" ? meta.estimate_template_job_description_label.trim() : ""
-      const next: Record<string, string> = {}
+      const next: Record<string, string> = {
+        /** Always present — built-in, not portal-config dependent. */
+        estimate_template_include_job_description: includeJobDescription ? "checked" : "unchecked",
+        estimate_template_job_description_label: jobDescriptionLabel,
+      }
       for (const item of estimateTemplateItems) {
         if (item.id === "estimate_template_notes") next[item.id] = notes
         else if (item.id === "estimate_template_footer") next[item.id] = footer
-        else if (item.id === "estimate_template_include_job_description")
-          next[item.id] = includeJobDescription ? "checked" : "unchecked"
-        else if (item.id === "estimate_template_job_description_label") next[item.id] = jobDescriptionLabel
         else if (item.id === "estimate_template_output_format")
           next[item.id] = item.options?.includes(fmt) ? fmt : item.options?.[0] ?? ESTIMATE_FMT_PDF
         else if (item.id === "estimate_template_include_prepared_date")
@@ -1662,15 +1670,12 @@ export default function QuotesPage(_props: QuotesPageProps) {
     if (hasItem("estimate_template_offer_esign")) {
       prevMeta.estimate_template_offer_esign = estimateTemplateFormValues.estimate_template_offer_esign === "checked"
     }
-    if (hasItem("estimate_template_include_job_description")) {
-      prevMeta.estimate_template_include_job_description =
-        estimateTemplateFormValues.estimate_template_include_job_description === "checked"
-    }
-    if (hasItem("estimate_template_job_description_label")) {
-      const labelRaw = (estimateTemplateFormValues.estimate_template_job_description_label ?? "").trim()
-      if (labelRaw) prevMeta.estimate_template_job_description_label = labelRaw
-      else delete prevMeta.estimate_template_job_description_label
-    }
+    const includeJobDescriptionChecked =
+      estimateTemplateFormValues.estimate_template_include_job_description === "checked"
+    prevMeta.estimate_template_include_job_description = includeJobDescriptionChecked
+    const jobDescLabelRaw = (estimateTemplateFormValues.estimate_template_job_description_label ?? "").trim()
+    if (jobDescLabelRaw) prevMeta.estimate_template_job_description_label = jobDescLabelRaw
+    else delete prevMeta.estimate_template_job_description_label
     const { error } = await supabase
       .from("profiles")
       .update({
@@ -1716,13 +1721,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
     if (hasItem("estimate_template_offer_esign")) {
       setQuoteOfferEsign(estimateTemplateFormValues.estimate_template_offer_esign === "checked")
     }
-    if (hasItem("estimate_template_include_job_description")) {
-      setQuoteIncludeJobDescription(estimateTemplateFormValues.estimate_template_include_job_description === "checked")
-    }
-    if (hasItem("estimate_template_job_description_label")) {
-      const labelRaw = (estimateTemplateFormValues.estimate_template_job_description_label ?? "").trim()
-      setQuoteJobDescriptionLabel(labelRaw || "Job description")
-    }
+    setQuoteIncludeJobDescription(includeJobDescriptionChecked)
+    setQuoteJobDescriptionLabel(jobDescLabelRaw || "Job description")
     setShowEstimateTemplateModal(false)
   }
 
@@ -5329,6 +5329,67 @@ export default function QuotesPage(_props: QuotesPageProps) {
             onClose={() => void closeEstimateTemplateModal()}
             afterMainForm={
               <>
+                <div
+                  style={{
+                    marginTop: 4,
+                    marginBottom: 12,
+                    padding: "12px 14px",
+                    borderRadius: 10,
+                    border: `1px solid ${theme.border}`,
+                    background: "#f8fafc",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 10,
+                  }}
+                >
+                  <p style={{ margin: 0, fontWeight: 800, fontSize: 14, color: theme.text }}>Job description</p>
+                  <label
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: 10,
+                      cursor: "pointer",
+                      fontSize: 13,
+                      color: theme.text,
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={estimateTemplateFormValues.estimate_template_include_job_description === "checked"}
+                      onChange={(e) =>
+                        setEstimateTemplateFormValues((prev) => ({
+                          ...prev,
+                          estimate_template_include_job_description: e.target.checked ? "checked" : "unchecked",
+                        }))
+                      }
+                      style={{ marginTop: 2 }}
+                    />
+                    <span>
+                      Include job description on customer estimate (per-estimate field in wizard &amp; editor)
+                    </span>
+                  </label>
+                  {estimateTemplateFormValues.estimate_template_include_job_description === "checked" ? (
+                    <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13, color: theme.text }}>
+                      <span style={{ fontWeight: 600 }}>Section heading (optional)</span>
+                      <input
+                        type="text"
+                        value={estimateTemplateFormValues.estimate_template_job_description_label ?? ""}
+                        onChange={(e) =>
+                          setEstimateTemplateFormValues((prev) => ({
+                            ...prev,
+                            estimate_template_job_description_label: e.target.value,
+                          }))
+                        }
+                        placeholder="Job description"
+                        style={theme.formInput}
+                      />
+                      <span style={{ fontSize: 12, color: "#64748b" }}>
+                        Shown on the estimate preview and exported/sent PDF or Word file when filled in.
+                      </span>
+                    </label>
+                  ) : null}
+                </div>
                 {estimateTemplateItemsText.length > 0 ? (
                   <details
                     style={{

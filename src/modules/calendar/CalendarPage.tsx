@@ -164,7 +164,6 @@ import {
   buildAppointmentCancelSmsInner,
   buildAppointmentConfirmSmsInner,
   buildAppointmentRescheduleSmsInner,
-  wrapAppointmentSmsBody,
 } from "../../lib/appointmentCustomerNotify"
 import { fetchQuoteLogoForExport, resolveReceiptTemplateLogoUrl } from "../../lib/quoteLogoImage"
 import { parseCustomerPaymentMetadata, type CustomerPaymentProfileMetadata } from "../../lib/customerPaymentMetadata"
@@ -3936,11 +3935,12 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
           "SMS opt-in is not recorded for this customer. Open the customer profile, complete SMS consent, then try again.",
         )
       } else {
+        /** Inner text only — `/api/outbound-messages` appends the STOP/HELP footer once. */
         const res = await postOutbound("sms", {
           userId: input.ownerUserId,
           customerId: input.customerId,
           to: cust.phone.trim(),
-          body: wrapAppointmentSmsBody(smsInner),
+          body: smsInner,
           ...(input.eventId ? { calendarEventId: input.eventId } : {}),
         })
         const raw = await res.text()

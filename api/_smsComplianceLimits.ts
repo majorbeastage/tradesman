@@ -45,17 +45,33 @@ export function truncateOutboundSmsHard(raw: string): string {
   return clampSmsUserPortion(raw, SMS_OUTBOUND_BODY_HARD_MAX_CHARS)
 }
 
+/** Strip a trailing platform STOP/HELP footer if a caller already appended one. */
+export function stripTrailingSmsComplianceTail(raw: string): string {
+  let t = typeof raw === "string" ? raw.trimEnd() : ""
+  for (const tail of [SMS_COMPLIANCE_TAIL_APPOINTMENT, SMS_COMPLIANCE_TAIL_DEFAULT]) {
+    const normalized = tail.replace(/^\n+/, "").trim()
+    if (!normalized) continue
+    const lower = t.toLowerCase()
+    const idx = lower.lastIndexOf(normalized.toLowerCase())
+    if (idx >= 0 && idx + normalized.length >= t.length - 2) {
+      t = t.slice(0, idx).trimEnd()
+    }
+  }
+  return t
+}
+
 export function finalizeOutboundSmsBody(params: {
   rawBody: string
   variant: SmsOutboundComplianceVariant
   businessDisplayName: string
   smsPolicyUrl?: string
 }): string {
+  const stripped = stripTrailingSmsComplianceTail(params.rawBody)
   if (params.variant === "none") {
-    return truncateOutboundSmsHard(clampSmsUserPortion(params.rawBody, SMS_OUTBOUND_BODY_HARD_MAX_CHARS))
+    return truncateOutboundSmsHard(clampSmsUserPortion(stripped, SMS_OUTBOUND_BODY_HARD_MAX_CHARS))
   }
   const footer = SMS_COMPLIANCE_TAIL_DEFAULT
   const maxUser = Math.max(60, SMS_OUTBOUND_BODY_HARD_MAX_CHARS - footer.length - 4)
-  const user = clampSmsUserPortion(params.rawBody, maxUser)
+  const user = clampSmsUserPortion(stripped, maxUser)
   return truncateOutboundSmsHard(`${user}${footer}`)
 }

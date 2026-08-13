@@ -1456,6 +1456,10 @@ export const DEFAULT_ESTIMATE_TEMPLATE_ITEMS: PortalSettingItem[] = [
     label: "Footer text",
     customFieldSubtype: "textarea",
   },
+  /**
+   * Kept in defaults for portal merge/docs. QuotesPage renders these as a built-in
+   * Job description block (not portal custom fields) so every live client sees them.
+   */
   {
     id: "estimate_template_include_job_description",
     type: "checkbox",

@@ -90,6 +90,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       setUser(nextUser)
       setLoading(false)
+      // Enter portal before profile loads — role defaults to user until light fetch returns.
+      if (nextUser?.id) {
+        setRole((prev) => prev ?? "user")
+      }
       // Crisis mode: do NOT call notify/activate-demo on login — those hit Vercel → Supabase and worsen outages.
     })
     void supabase.auth.getSession().then(({ data: { session: s } }) => {

@@ -1,4 +1,4 @@
-import { buildAutomatedNotifySmsBody } from "./smsComplianceLimits"
+import { clampAutomatedNotifyInnerText } from "./smsComplianceLimits"
 
 export function buildAppointmentConfirmSmsInner(input: {
   customerName: string
@@ -33,6 +33,10 @@ export function buildAppointmentCancelSmsInner(input: {
   return `Hi ${input.customerName}, your appointment with ${input.businessName} on ${input.appointmentDate} at ${input.appointmentTime} for ${title} has been cancelled.`
 }
 
+/**
+ * @deprecated Calendar customer SMS now sends inner text only; `/api/outbound-messages`
+ * appends the STOP/HELP footer once. Kept for call-site compatibility (clamp only).
+ */
 export function wrapAppointmentSmsBody(inner: string): string {
-  return buildAutomatedNotifySmsBody(inner, "appointment")
+  return clampAutomatedNotifyInnerText(inner)
 }
