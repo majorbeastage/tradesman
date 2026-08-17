@@ -19,6 +19,25 @@ function TemplateWireframe({ id, accent }: { id: BusinessProfileTemplateId; acce
     <div style={{ borderRadius: 2, background: "rgba(15,23,42,0.18)", ...style }} />
   )
 
+  if (id === "showcase" || id === "hair_plumbing") {
+    return (
+      <div style={{ display: "grid", gridTemplateRows: "18px 1fr auto", gap: 3, height: "100%" }}>
+        <div style={{ borderRadius: 2, background: accent, opacity: 0.9, position: "relative" }}>
+          <div style={{ position: "absolute", left: 4, bottom: 3, width: "40%", height: 3, borderRadius: 1, background: "#fff", opacity: 0.85 }} />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 2 }}>
+          {photo({})}
+          {photo({})}
+          {photo({})}
+        </div>
+        <div style={{ display: "flex", gap: 2 }}>
+          {block({ height: 4, flex: 1 })}
+          {block({ height: 4, width: 18, background: accent })}
+        </div>
+      </div>
+    )
+  }
+
   if (id === "hero") {
     return (
       <div style={{ display: "grid", gridTemplateRows: "14px 1fr", gap: 3, height: "100%" }}>

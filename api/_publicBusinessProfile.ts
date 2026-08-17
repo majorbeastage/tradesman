@@ -37,12 +37,13 @@ type BusinessPublicProfileSettings = {
   profilePhotoUrl: string | null
   workPhotoUrls: string[]
   publishedSlug: string
-  templateId: "classic" | "hero" | "split" | "gallery"
+  templateId: "classic" | "hero" | "split" | "gallery" | "showcase" | "hair_plumbing"
   theme: {
     primaryColor: string
     secondaryColor: string
     fieldBackgroundColor: string
     fontColor: string
+    accentColor: string
   }
   serviceAreasText: string
   showServiceAreasList: boolean
@@ -52,6 +53,21 @@ type BusinessPublicProfileSettings = {
   facebookUrl: string
   instagramUrl: string
   showSocialLinks: boolean
+  imageSlots: Record<string, string>
+  scrollBands: Array<{ id: string; title: string; body: string; tone: "dark" | "light" | "clear"; enabled?: boolean }>
+  heroHeadline: string
+  ctaLabel: string
+  customDomain: string
+  homeSections: Record<string, boolean>
+  subPages: {
+    about: { enabled: boolean; title: string; body: string }
+    contact: { enabled: boolean; title: string }
+  }
+  featureCards: Array<{ id: string; title: string; body: string }>
+  serviceCards: Array<{ id: string; title: string; body: string }>
+  textStyles: Record<string, Record<string, string>>
+  homeSectionOrder: string[]
+  fixedBackground: boolean
 }
 
 const DEFAULT_THEME = {
@@ -59,6 +75,7 @@ const DEFAULT_THEME = {
   secondaryColor: "#0f172a",
   fieldBackgroundColor: "#f8fafc",
   fontColor: "#0f172a",
+  accentColor: "#b91c1c",
 }
 
 function normalizeHexColor(raw: string, fallback: string): string {
@@ -77,12 +94,22 @@ function parseTheme(raw: unknown): BusinessPublicProfileSettings["theme"] {
       DEFAULT_THEME.fieldBackgroundColor,
     ),
     fontColor: normalizeHexColor(typeof o.fontColor === "string" ? o.fontColor : "", DEFAULT_THEME.fontColor),
+    accentColor: normalizeHexColor(typeof o.accentColor === "string" ? o.accentColor : "", DEFAULT_THEME.accentColor),
   }
 }
 
 function parseTemplateId(raw: unknown): BusinessPublicProfileSettings["templateId"] {
-  if (raw === "hero" || raw === "split" || raw === "gallery" || raw === "classic") return raw
-  return "classic"
+  if (
+    raw === "hero" ||
+    raw === "split" ||
+    raw === "gallery" ||
+    raw === "classic" ||
+    raw === "showcase" ||
+    raw === "hair_plumbing"
+  ) {
+    return raw
+  }
+  return "hair_plumbing"
 }
 
 function parseListField(raw: string, maxItems = 40): string[] {
@@ -149,16 +176,42 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
     profilePhotoUrl: null,
     workPhotoUrls: [],
     publishedSlug: "",
-    templateId: "classic",
+    templateId: "hair_plumbing",
     theme: { ...DEFAULT_THEME },
     serviceAreasText: "",
     showServiceAreasList: false,
     servicesOfferedText: "",
     showServicesOffered: false,
-    showContactForm: false,
+    showContactForm: true,
     facebookUrl: "",
     instagramUrl: "",
     showSocialLinks: true,
+    imageSlots: {},
+    scrollBands: [
+      { id: "about", title: "Your Local Professionals", body: "", tone: "dark" },
+      { id: "services", title: "What We Specialize In", body: "", tone: "light" },
+    ],
+    heroHeadline: "",
+    ctaLabel: "Get a Quote",
+    customDomain: "",
+    homeSections: {
+      hero: true,
+      about_band: true,
+      services_band: true,
+      gallery: true,
+      areas_hours: true,
+      contact_home: true,
+      sticky_cta: true,
+    },
+    subPages: {
+      about: { enabled: true, title: "About Us", body: "" },
+      contact: { enabled: true, title: "Contact Us" },
+    },
+    featureCards: [],
+    serviceCards: [],
+    textStyles: {},
+    homeSectionOrder: ["hero", "about_band", "services_band", "gallery", "areas_hours", "contact_home", "sticky_cta"],
+    fixedBackground: true,
   }
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return base
   const meta = metadata as Record<string, unknown>
@@ -167,7 +220,7 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
   const o = raw as Record<string, unknown>
   if (o.v !== 1 && o.v != null) return base
   const workPhotoUrls = Array.isArray(o.workPhotoUrls)
-    ? o.workPhotoUrls.filter((x): x is string => typeof x === "string" && x.trim().length > 0).slice(0, 5)
+    ? o.workPhotoUrls.filter((x): x is string => typeof x === "string" && x.trim().length > 0).slice(0, 12)
     : []
   const growth = meta.growth_module_v1
   const pages =
@@ -182,6 +235,50 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
     (typeof o.instagramUrl === "string" && o.instagramUrl.trim()) ||
     (typeof pages.instagram === "string" && pages.instagram.trim()) ||
     ""
+  const imageSlots: Record<string, string> = {}
+  if (o.imageSlots && typeof o.imageSlots === "object" && !Array.isArray(o.imageSlots)) {
+    for (const [k, v] of Object.entries(o.imageSlots as Record<string, unknown>)) {
+      if (typeof v === "string" && v.trim()) imageSlots[k] = v.trim()
+    }
+  }
+  const scrollBands: BusinessPublicProfileSettings["scrollBands"] = []
+  if (Array.isArray(o.scrollBands)) {
+    for (const item of o.scrollBands.slice(0, 6)) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue
+      const b = item as Record<string, unknown>
+      scrollBands.push({
+        id: typeof b.id === "string" && b.id.trim() ? b.id.trim().slice(0, 40) : `band_${scrollBands.length + 1}`,
+        title: typeof b.title === "string" ? b.title.trim().slice(0, 120) : "",
+        body: typeof b.body === "string" ? b.body.trim().slice(0, 2000) : "",
+        tone: b.tone === "light" || b.tone === "clear" || b.tone === "dark" ? b.tone : "dark",
+        enabled: b.enabled !== false,
+      })
+    }
+  }
+  const homeSections: Record<string, boolean> = {
+    hero: true,
+    about_band: true,
+    services_band: true,
+    gallery: true,
+    areas_hours: true,
+    contact_home: true,
+    sticky_cta: true,
+  }
+  if (o.homeSections && typeof o.homeSections === "object" && !Array.isArray(o.homeSections)) {
+    for (const [k, v] of Object.entries(o.homeSections as Record<string, unknown>)) {
+      if (v === false) homeSections[k] = false
+      else if (v === true) homeSections[k] = true
+    }
+  }
+  const subRaw = o.subPages && typeof o.subPages === "object" && !Array.isArray(o.subPages) ? (o.subPages as Record<string, unknown>) : {}
+  const aboutRaw =
+    subRaw.about && typeof subRaw.about === "object" && !Array.isArray(subRaw.about)
+      ? (subRaw.about as Record<string, unknown>)
+      : {}
+  const contactRaw =
+    subRaw.contact && typeof subRaw.contact === "object" && !Array.isArray(subRaw.contact)
+      ? (subRaw.contact as Record<string, unknown>)
+      : {}
   return {
     enabled: o.enabled === true,
     tagline: readNestedProfileString(o, "tagline", "short_description", "shortDescription").slice(0, 120),
@@ -201,11 +298,76 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
     showServiceAreasList: o.showServiceAreasList === true,
     servicesOfferedText: readNestedProfileString(o, "servicesOfferedText", "services_offered_text").slice(0, 2000),
     showServicesOffered: o.showServicesOffered === true,
-    showContactForm: o.showContactForm === true,
+    showContactForm: o.showContactForm !== false,
     facebookUrl: fb.slice(0, 500),
     instagramUrl: ig.slice(0, 500),
     showSocialLinks: o.showSocialLinks !== false,
+    imageSlots,
+    scrollBands: scrollBands.length
+      ? scrollBands
+      : [
+          { id: "about", title: "Your Local Professionals", body: "", tone: "dark", enabled: true },
+          { id: "services", title: "What We Specialize In", body: "", tone: "light", enabled: true },
+        ],
+    heroHeadline: readNestedProfileString(o, "heroHeadline", "hero_headline").slice(0, 160),
+    ctaLabel: readNestedProfileString(o, "ctaLabel", "cta_label").slice(0, 40) || "Get a Quote",
+    customDomain: readNestedProfileString(o, "customDomain", "custom_domain")
+      .toLowerCase()
+      .replace(/^https?:\/\//, "")
+      .replace(/\/.*$/, "")
+      .slice(0, 120),
+    homeSections,
+    subPages: {
+      about: {
+        enabled: aboutRaw.enabled !== false,
+        title: typeof aboutRaw.title === "string" && aboutRaw.title.trim() ? aboutRaw.title.trim().slice(0, 80) : "About Us",
+        body: typeof aboutRaw.body === "string" ? aboutRaw.body.trim().slice(0, 8000) : "",
+      },
+      contact: {
+        enabled: contactRaw.enabled !== false,
+        title:
+          typeof contactRaw.title === "string" && contactRaw.title.trim()
+            ? contactRaw.title.trim().slice(0, 80)
+            : "Contact Us",
+      },
+    },
+    featureCards: parseContentCards(o.featureCards, 4),
+    serviceCards: parseContentCards(o.serviceCards, 6),
+    textStyles: parseTextStyles(o.textStyles),
+    homeSectionOrder: Array.isArray(o.homeSectionOrder)
+      ? (o.homeSectionOrder.filter((x): x is string => typeof x === "string") as BusinessPublicProfileSettings["homeSectionOrder"])
+      : base.homeSectionOrder,
+    fixedBackground: o.fixedBackground !== false,
   }
+}
+
+function parseContentCards(raw: unknown, max: number): Array<{ id: string; title: string; body: string }> {
+  if (!Array.isArray(raw)) return []
+  const out: Array<{ id: string; title: string; body: string }> = []
+  for (const item of raw.slice(0, max)) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue
+    const c = item as Record<string, unknown>
+    out.push({
+      id: typeof c.id === "string" && c.id.trim() ? c.id.trim().slice(0, 40) : `card_${out.length + 1}`,
+      title: typeof c.title === "string" ? c.title.trim().slice(0, 120) : "",
+      body: typeof c.body === "string" ? c.body.trim().slice(0, 2000) : "",
+    })
+  }
+  return out
+}
+
+function parseTextStyles(raw: unknown): Record<string, Record<string, string>> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
+  const out: Record<string, Record<string, string>> = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!key.trim() || !value || typeof value !== "object" || Array.isArray(value)) continue
+    const style: Record<string, string> = {}
+    for (const [sk, sv] of Object.entries(value as Record<string, unknown>)) {
+      if (typeof sv === "string" && sv.trim()) style[sk] = sv.trim().slice(0, 120)
+    }
+    if (Object.keys(style).length) out[key.trim().slice(0, 80)] = style
+  }
+  return out
 }
 
 function profileMatchesSlug(row: ProfileRow, slug: string): boolean {
@@ -232,6 +394,8 @@ function isMissingSlugColumnError(message: string): boolean {
 }
 
 async function findPublishedProfileBySlug(supabase: SupabaseClient, slug: string): Promise<ProfileRow | null> {
+  // Indexed / cheap path only. Never scan profiles+metadata for unknown slugs —
+  // public `/{slug}` is a catch-all and bots would burn egress (GB/day).
   const { data: byCol, error: colErr } = await supabase
     .from("profiles")
     .select(PROFILE_SELECT)
@@ -251,50 +415,16 @@ async function findPublishedProfileBySlug(supabase: SupabaseClient, slug: string
     .from("profiles")
     .select(PROFILE_SELECT)
     .filter("metadata->business_public_profile_v1->>publishedSlug", "eq", slug)
-    .limit(8)
+    .eq("metadata->business_public_profile_v1->>enabled", "true")
+    .limit(4)
 
-  if (!pubSlugErr) {
-    for (const row of (byPublishedSlug ?? []) as ProfileRow[]) {
-      if (isPublishedProfile(row)) return row
-    }
+  if (pubSlugErr) {
+    console.warn("[public-business-profile] publishedSlug lookup", pubSlugErr.message)
+    return null
   }
 
-  let offset = 0
-  const pageSize = 100
-  for (let page = 0; page < 20; page++) {
-    const { data: publishedRows, error: pubErr } = await supabase
-      .from("profiles")
-      .select(PROFILE_SELECT)
-      .or("metadata->business_public_profile_v1->>enabled.eq.true,metadata->business_public_profile_v1->>enabled.eq.1")
-      .range(offset, offset + pageSize - 1)
-
-    if (pubErr) {
-      const { data: fallbackRows, error: fallbackErr } = await supabase
-        .from("profiles")
-        .select(PROFILE_SELECT)
-        .filter("metadata->business_public_profile_v1->>enabled", "eq", "true")
-        .range(offset, offset + pageSize - 1)
-      if (fallbackErr) {
-        console.warn("[public-business-profile] metadata enabled lookup", fallbackErr.message)
-        break
-      }
-      const rows = (fallbackRows ?? []) as ProfileRow[]
-      for (const row of rows) {
-        if (!isPublishedProfile(row)) continue
-        if (profileMatchesSlug(row, slug)) return row
-      }
-      if (rows.length < pageSize) break
-      offset += pageSize
-      continue
-    }
-
-    const rows = (publishedRows ?? []) as ProfileRow[]
-    for (const row of rows) {
-      if (!isPublishedProfile(row)) continue
-      if (profileMatchesSlug(row, slug)) return row
-    }
-    if (rows.length < pageSize) break
-    offset += pageSize
+  for (const row of (byPublishedSlug ?? []) as ProfileRow[]) {
+    if (isPublishedProfile(row) && profileMatchesSlug(row, slug)) return row
   }
 
   return null
@@ -429,6 +559,7 @@ export async function handlePublicBusinessProfile(req: VercelRequest, res: Verce
   const slugRaw = typeof slugParam === "string" ? slugParam : Array.isArray(slugParam) ? String(slugParam[0] ?? "") : ""
   const slug = normalizeSlug(slugRaw)
   if (!slug || slug.length < 3) {
+    res.setHeader("Cache-Control", "public, max-age=300")
     res.status(400).json({ ok: false, error: "Invalid slug" })
     return
   }
@@ -444,12 +575,15 @@ export async function handlePublicBusinessProfile(req: VercelRequest, res: Verce
 
     const profile = await findPublishedProfileBySlug(supabase, slug)
     if (!profile?.id) {
-      res.status(404).json({ ok: false, error: "Business profile not found. Publish it in MyT → Business profile / web address." })
+      // Cache misses briefly so bot scanners don't re-query Supabase every hit.
+      res.setHeader("Cache-Control", "public, max-age=120, s-maxage=300")
+      res.status(404).json({ ok: false, error: "Business website not found. Publish it in MyT → Website Builder." })
       return
     }
 
     const settings = parseSettings(profile.metadata)
     if (!settings.enabled) {
+      res.setHeader("Cache-Control", "public, max-age=60, s-maxage=120")
       res.status(404).json({ ok: false, error: "This business profile is not published yet." })
       return
     }
@@ -468,7 +602,7 @@ export async function handlePublicBusinessProfile(req: VercelRequest, res: Verce
     const serviceArea = settings.showServiceArea ? formatServiceArea(profile) : null
     const businessHours = settings.showBusinessHours ? formatBusinessHoursForPublic(profile.business_hours) : []
 
-    res.setHeader("Cache-Control", "public, max-age=30, s-maxage=60, stale-while-revalidate=120")
+    res.setHeader("Cache-Control", "public, max-age=120, s-maxage=300, stale-while-revalidate=600")
     res.status(200).json({
       ok: true,
       slug,
@@ -482,13 +616,29 @@ export async function handlePublicBusinessProfile(req: VercelRequest, res: Verce
       address: address || null,
       serviceArea: serviceArea || null,
       serviceAreas: settings.showServiceAreasList ? parseListField(settings.serviceAreasText) : [],
-      servicesOffered: settings.showServicesOffered ? parseListField(settings.servicesOfferedText) : [],
+      servicesOffered: settings.serviceCards.length
+        ? settings.serviceCards.map((c) => c.title).filter(Boolean)
+        : settings.showServicesOffered
+          ? parseListField(settings.servicesOfferedText)
+          : [],
       businessHours,
       templateId: settings.templateId,
       theme: settings.theme,
-      showContactForm: settings.showContactForm === true,
+      showContactForm: settings.showContactForm !== false,
       facebookUrl: settings.showSocialLinks && settings.facebookUrl ? settings.facebookUrl : undefined,
       instagramUrl: settings.showSocialLinks && settings.instagramUrl ? settings.instagramUrl : undefined,
+      imageSlots: settings.imageSlots,
+      scrollBands: settings.scrollBands,
+      heroHeadline: settings.heroHeadline.trim() || undefined,
+      ctaLabel: settings.ctaLabel.trim() || undefined,
+      customDomain: settings.customDomain.trim() || undefined,
+      homeSections: settings.homeSections,
+      subPages: settings.subPages,
+      featureCards: settings.featureCards.length ? settings.featureCards : undefined,
+      serviceCards: settings.serviceCards.length ? settings.serviceCards : undefined,
+      textStyles: Object.keys(settings.textStyles).length ? settings.textStyles : undefined,
+      homeSectionOrder: settings.homeSectionOrder,
+      fixedBackground: settings.fixedBackground !== false,
     })
   } catch (e) {
     console.error("[public-business-profile]", e)

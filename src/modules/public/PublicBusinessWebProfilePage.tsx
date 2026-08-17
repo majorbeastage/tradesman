@@ -1,15 +1,39 @@
 import { useEffect, useMemo, useState } from "react"
-import { BusinessProfilePublicSite, type PublicBusinessProfileData } from "./BusinessProfilePublicSite"
+import {
+  BusinessProfilePublicSite,
+  type PublicBusinessProfileData,
+} from "./BusinessProfilePublicSite"
+import type { WebsitePublicPageId } from "../../lib/businessPublicProfile"
 
-type Props = { slug: string }
+type Props = {
+  slug: string
+  /** home | about | contact — from URL path */
+  page?: WebsitePublicPageId
+}
 
 type PublicBusinessProfilePayload = PublicBusinessProfileData | { ok?: false; error?: string }
 
-export default function PublicBusinessWebProfilePage({ slug }: Props) {
+export default function PublicBusinessWebProfilePage({ slug, page = "home" }: Props) {
   const [data, setData] = useState<PublicBusinessProfilePayload | null>(null)
   const [loading, setLoading] = useState(true)
+  const [activePage, setActivePage] = useState<WebsitePublicPageId>(page)
 
   const safeSlug = useMemo(() => slug.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 64), [slug])
+
+  useEffect(() => {
+    setActivePage(page)
+  }, [page])
+
+  useEffect(() => {
+    const onPop = () => {
+      const p = window.location.pathname.toLowerCase()
+      if (p.endsWith("/about") || p.endsWith("/about/")) setActivePage("about")
+      else if (p.endsWith("/contact") || p.endsWith("/contact/")) setActivePage("contact")
+      else setActivePage("home")
+    }
+    window.addEventListener("popstate", onPop)
+    return () => window.removeEventListener("popstate", onPop)
+  }, [])
 
   useEffect(() => {
     if (!safeSlug || safeSlug.length < 3) {
@@ -21,8 +45,7 @@ export default function PublicBusinessWebProfilePage({ slug }: Props) {
     void (async () => {
       try {
         const res = await fetch(
-          `/api/platform-tools?__route=public-business-profile&slug=${encodeURIComponent(safeSlug)}&v=${Date.now()}`,
-          { cache: "no-store" },
+          `/api/platform-tools?__route=public-business-profile&slug=${encodeURIComponent(safeSlug)}`,
         )
         const text = await res.text()
         let json: PublicBusinessProfilePayload
@@ -43,7 +66,12 @@ export default function PublicBusinessWebProfilePage({ slug }: Props) {
           setData(
             json && "ok" in json && json.ok
               ? json
-              : { ok: false, error: (json as { error?: string }).error ?? (res.status === 404 ? "Profile not found." : `Could not load profile (${res.status}).`) },
+              : {
+                  ok: false,
+                  error:
+                    (json as { error?: string }).error ??
+                    (res.status === 404 ? "Profile not found." : `Could not load profile (${res.status}).`),
+                },
           )
         }
       } catch {
@@ -88,5 +116,26 @@ export default function PublicBusinessWebProfilePage({ slug }: Props) {
     )
   }
 
-  return <BusinessProfilePublicSite data={data} />
+  const resolvedPage: WebsitePublicPageId =
+    activePage === "about" && data.subPages?.about?.enabled === false
+      ? "home"
+      : activePage === "contact" && data.subPages?.contact?.enabled === false
+        ? "home"
+        : activePage
+
+  return (
+    <BusinessProfilePublicSite
+      data={data}
+      activePage={resolvedPage}
+      onNavigatePage={(next) => {
+        setActivePage(next)
+        const path = next === "home" ? `/${safeSlug}` : `/${safeSlug}/${next}`
+        try {
+          window.history.pushState({}, "", path)
+        } catch {
+          /* ignore */
+        }
+      }}
+    />
+  )
 }

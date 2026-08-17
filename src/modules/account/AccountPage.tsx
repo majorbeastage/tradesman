@@ -375,6 +375,7 @@ export function AccountProfilePanel({
   const [profileContactLoaded, setProfileContactLoaded] = useState(false)
   const [uploadingCompanyLogo, setUploadingCompanyLogo] = useState(false)
   const [businessNameForSlug, setBusinessNameForSlug] = useState("")
+  const [publishedWebSlug, setPublishedWebSlug] = useState<string | null>(null)
   const [publicBusinessLine, setPublicBusinessLine] = useState<string | null>(null)
   const [uploadingProfilePhoto, setUploadingProfilePhoto] = useState(false)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -438,11 +439,16 @@ export function AccountProfilePanel({
       try {
         const { data, error } = await supabase
           .from("profiles")
-          .select("email, display_name, website_url, primary_phone, best_contact_phone, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, service_radius_enabled, service_radius_miles, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours, forward_dial_caller_id_mode, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin, forward_whisper_on_answer, forward_whisper_announcement_template, forward_whisper_only_outside_business_hours, forward_whisper_require_keypress, voicemail_conversations_display, ai_assistant_visible, metadata")
+          .select("email, display_name, website_url, primary_phone, best_contact_phone, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, service_radius_enabled, service_radius_miles, timezone, business_hours, call_forwarding_enabled, call_forwarding_outside_business_hours, forward_dial_caller_id_mode, voicemail_greeting_mode, voicemail_greeting_text, voicemail_greeting_recording_url, voicemail_greeting_pin, forward_whisper_on_answer, forward_whisper_announcement_template, forward_whisper_only_outside_business_hours, forward_whisper_require_keypress, voicemail_conversations_display, ai_assistant_visible, metadata, business_web_profile_slug")
           .eq("id", profileUserId)
           .single()
         if (error) throw error
         setProfileEmailFromDb(typeof data?.email === "string" ? data.email : "")
+        setPublishedWebSlug(
+          typeof (data as { business_web_profile_slug?: string | null }).business_web_profile_slug === "string"
+            ? (data as { business_web_profile_slug: string }).business_web_profile_slug.trim() || null
+            : null,
+        )
         const metaRaw = (data as { metadata?: unknown }).metadata
         const metaObj =
           metaRaw && typeof metaRaw === "object" && !Array.isArray(metaRaw) ? (metaRaw as Record<string, unknown>) : {}
@@ -1068,9 +1074,8 @@ export function AccountProfilePanel({
               sectionId="business_web_profile"
             >
               <BusinessWebProfilePanel
-                profileUserId={profileUserId}
                 businessNameForSlug={businessNameForSlug}
-                companyLogoUrl={companyLogoUrl}
+                publishedSlug={publishedWebSlug}
               />
             </AccountFold>
             </Fragment>

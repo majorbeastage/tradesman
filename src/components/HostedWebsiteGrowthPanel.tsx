@@ -7,7 +7,7 @@ import {
   tradesmanSiteUrlForSlug,
   VERCEL_DNS_INSTRUCTIONS,
 } from "../lib/hostedWebsite"
-import { openWebsiteAdminPortal } from "../lib/websiteAdminHandoff"
+import { openHostedWebsiteEditor } from "../lib/accountNavigation"
 
 const panelStyle: CSSProperties = {
   padding: 16,
@@ -57,10 +57,11 @@ type Props = {
   onSave: () => void | Promise<void>
   saving?: boolean
   compact?: boolean
+  /** Opens MyT → Website builder (templates, colors, logos, photos, contact). */
+  setPage?: (page: string) => void
 }
 
-export function HostedWebsiteGrowthPanel({ hostedWebsite, onPatch, onSave, saving, compact }: Props) {
-  const [editorBusy, setEditorBusy] = useState(false)
+export function HostedWebsiteGrowthPanel({ hostedWebsite, onPatch, onSave, saving, compact, setPage }: Props) {
   const [editorNote, setEditorNote] = useState("")
   const [dnsOpen, setDnsOpen] = useState(false)
 
@@ -69,13 +70,10 @@ export function HostedWebsiteGrowthPanel({ hostedWebsite, onPatch, onSave, savin
       ? resolveTradesmanPublicSiteUrl(hostedWebsite)
       : hostedWebsite.publicUrl.trim()
 
-  async function openEditor() {
-    setEditorBusy(true)
+  function openEditor() {
     setEditorNote("")
-    const result = await openWebsiteAdminPortal()
-    setEditorBusy(false)
-    if (!result.ok) setEditorNote(result.error ?? "Could not open editor.")
-    else setEditorNote("Website editor opened in a new tab — use your Tradesman login (no extra password).")
+    openHostedWebsiteEditor(setPage)
+    setEditorNote("Opened Website builder — pick Classic template, set colors/logo/photos, then publish.")
   }
 
   function setHosting(hosting: HostedWebsiteHosting) {
@@ -86,8 +84,8 @@ export function HostedWebsiteGrowthPanel({ hostedWebsite, onPatch, onSave, savin
     <div style={{ ...panelStyle, marginBottom: compact ? 0 : 14 }}>
       <h2 style={h2}>Your business website</h2>
       <p style={p}>
-        This is your full marketing site (design.com-style templates coming soon) — separate from the quick public
-        business card in MyT. Tradesman hosts on Vercel; you edit here with the same login you use now.
+        Build a Classic marketing site on Tradesman hosting: open Website Builder, pick a template, set
+        brand colors, upload your logo and job photos, then publish. Contact Us uses this account’s phone and email.
       </p>
 
       <p style={{ ...labelStyle, marginBottom: 8 }}>Where is your website?</p>
@@ -98,30 +96,28 @@ export function HostedWebsiteGrowthPanel({ hostedWebsite, onPatch, onSave, savin
         <button type="button" style={choiceBtn(hostedWebsite.hosting === "external")} onClick={() => setHosting("external")}>
           I use another host
         </button>
-        <button type="button" style={choiceBtn(hostedWebsite.hosting === "none")} onClick={() => setHosting("none")}>
-          No website yet
-        </button>
       </div>
 
       {hostedWebsite.hosting === "tradesman" ? (
         <>
           <label style={labelStyle}>
-            Site address on Tradesman hosting
+            Optional custom-domain notes (DNS)
             <input
               value={hostedWebsite.siteSlug}
               onChange={(e) => onPatch({ siteSlug: normalizeSiteSlug(e.target.value) })}
-              placeholder="acme-plumbing"
+              placeholder="acme-plumbing (optional bookkeeping slug)"
               style={inputStyle}
             />
           </label>
           {hostedWebsite.siteSlug ? (
             <p style={{ ...p, marginTop: 6, marginBottom: 0, fontSize: 12 }}>
-              Default URL: <strong>{tradesmanSiteUrlForSlug(hostedWebsite.siteSlug)}</strong>
+              Reference: <strong>{tradesmanSiteUrlForSlug(hostedWebsite.siteSlug)}</strong> — live publish URL comes from
+              Website builder (business name slug on tradesman-us.com).
             </p>
           ) : null}
 
           <label style={{ ...labelStyle, marginTop: 12 }}>
-            Custom domain (optional)
+            Custom domain (optional — later)
             <input
               value={hostedWebsite.customDomain}
               onChange={(e) => onPatch({ customDomain: e.target.value })}
@@ -158,84 +154,51 @@ export function HostedWebsiteGrowthPanel({ hostedWebsite, onPatch, onSave, savin
                   </ul>
                   <p style={{ margin: "8px 0 0" }}>
                     Add <strong>{hostedWebsite.customDomain}</strong> in your Vercel project → Settings → Domains, then
-                    apply these records at your registrar.
+                    point DNS as above.
                   </p>
                 </div>
               ) : null}
             </div>
           ) : null}
 
-          {publicUrl ? (
-            <label style={{ ...labelStyle, marginTop: 12 }}>
-              Public website URL
-              <input readOnly value={publicUrl} style={inputStyle} onFocus={(e) => e.target.select()} />
-            </label>
-          ) : null}
-
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
-            <button type="button" style={primaryBtn} disabled={editorBusy} onClick={() => void openEditor()}>
-              {editorBusy ? "Opening…" : "Open website editor"}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 14 }}>
+            <button type="button" style={primaryBtn} onClick={openEditor}>
+              Open website builder
+            </button>
+            <button type="button" style={secondaryBtn} disabled={saving} onClick={() => void onSave()}>
+              {saving ? "Saving…" : "Save hosting settings"}
             </button>
             {publicUrl ? (
-              <button
-                type="button"
-                style={secondaryBtn}
-                onClick={() => window.open(publicUrl, "_blank", "noopener,noreferrer")}
-              >
+              <a href={publicUrl} target="_blank" rel="noopener noreferrer" style={{ ...secondaryBtn, textDecoration: "none" }}>
                 View live site
-              </button>
+              </a>
             ) : null}
-            <button type="button" style={secondaryBtn} disabled={saving} onClick={() => void onSave()}>
-              {saving ? "Saving…" : "Save website settings"}
-            </button>
           </div>
+          {editorNote ? <p style={{ ...p, marginTop: 10, marginBottom: 0, color: "#0f766e" }}>{editorNote}</p> : null}
         </>
       ) : null}
 
       {hostedWebsite.hosting === "external" ? (
         <>
           <label style={labelStyle}>
-            Your current website URL
+            Your website URL
             <input
               value={hostedWebsite.publicUrl}
-              onChange={(e) => onPatch({ publicUrl: e.target.value.trim() })}
+              onChange={(e) => onPatch({ publicUrl: e.target.value })}
               placeholder="https://www.yourbusiness.com"
               style={inputStyle}
             />
           </label>
-          <p style={{ ...p, marginTop: 8 }}>
-            We use this for Growth grading and campaigns. To move to Tradesman hosting, choose &quot;Tradesman hosts my
-            site&quot; above.
-          </p>
-          <button type="button" style={primaryBtn} disabled={saving} onClick={() => void onSave()}>
-            {saving ? "Saving…" : "Save website URL"}
-          </button>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 14 }}>
+            <button type="button" style={primaryBtn} disabled={saving} onClick={() => void onSave()}>
+              {saving ? "Saving…" : "Save"}
+            </button>
+          </div>
         </>
       ) : null}
 
       {hostedWebsite.hosting === "none" ? (
-        <>
-          <p style={p}>
-            Choose <strong>Tradesman hosts my site</strong> to get a professional site on our Vercel deployment with
-            trade templates (plumbing, HVAC, etc.) as the editor evolves.
-          </p>
-          <button type="button" style={primaryBtn} onClick={() => setHosting("tradesman")}>
-            Start Tradesman hosting
-          </button>
-        </>
-      ) : null}
-
-      {editorNote ? (
-        <p
-          style={{
-            ...p,
-            marginTop: 12,
-            marginBottom: 0,
-            color: editorNote.includes("Could") ? "#b91c1c" : "#047857",
-          }}
-        >
-          {editorNote}
-        </p>
+        <p style={p}>Choose Tradesman hosting to open the website builder, or link an external site.</p>
       ) : null}
     </div>
   )

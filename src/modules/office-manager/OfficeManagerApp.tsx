@@ -15,6 +15,7 @@ import BusinessWorkflowPage from "../workflow/BusinessWorkflowPage"
 import OrganizationChartPage from "../org-chart/OrganizationChartPage"
 import OperationsPage from "../operations/OperationsPage"
 import GrowthPage from "../growth/GrowthPage"
+import WebsiteBuilderPage from "../website-builder/WebsiteBuilderPage"
 import { useEmailClientLayoutFlags } from "../../lib/customersEmailClientNav"
 import { useAuth } from "../../contexts/AuthContext"
 import {
@@ -681,6 +682,7 @@ function OfficeManagerAppContent() {
       {page === "insurance-options" && <InsuranceOptionsPage />}
       {page === "reporting" && <ReportingPage />}
       {page === "growth" && <GrowthPage setPage={setPage} />}
+      {page === "website" && <WebsiteBuilderPage />}
       {page === "business-workflow" && <BusinessWorkflowPage setPage={setPage} />}
       {page === "organization-chart" && <OrganizationChartPage setPage={setPage} />}
       {page === "account" && <AccountPage />}

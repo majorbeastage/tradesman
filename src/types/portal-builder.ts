@@ -64,9 +64,10 @@ export const LEGACY_OPERATIONS_TAB_IDS = [
 ] as const
 
 export const GROWTH_TAB_ID = "growth" as const
+export const WEBSITE_TAB_ID = "website" as const
 
 /** Optional sidebar tabs enabled via portal_config (not in V2 default strip). */
-export const EXTENDED_PORTAL_TAB_IDS = [GROWTH_TAB_ID] as const
+export const EXTENDED_PORTAL_TAB_IDS = [GROWTH_TAB_ID, WEBSITE_TAB_ID] as const
 
 /**
  * Routes that exist in the app but are not left-nav items — reach via dashboard quick links,
@@ -90,6 +91,14 @@ export function isGrowthTabEnabled(portalConfig: PortalConfig | null | undefined
   if (portalConfig.enable_growth_tab === false || portalConfig.tabs?.growth === false) return false
   if (portalConfig.enable_growth_tab === true || portalConfig.tabs?.growth === true) return true
   return portalConfig.tabs?.customers !== false && portalConfig.tabs?.calendar !== false
+}
+
+/** Website Builder portal — hosted marketing sites from trade templates. */
+export function isWebsiteTabEnabled(portalConfig: PortalConfig | null | undefined): boolean {
+  if (!portalConfig) return true
+  if (portalConfig.estimate_tools_only_package === true) return false
+  if (portalConfig.tabs?.website === false) return false
+  return true
 }
 
 export function isLegacyOperationsTabId(tabId: string): boolean {
@@ -188,6 +197,9 @@ export function isPortalTabVisibleInV2(tabId: string, portalConfig: PortalConfig
   if (tabId === GROWTH_TAB_ID) {
     return isGrowthTabEnabled(portalConfig)
   }
+  if (tabId === WEBSITE_TAB_ID) {
+    return isWebsiteTabEnabled(portalConfig)
+  }
   if (tabId === OPERATIONS_TAB_ID) {
     return isOperationsPackageEnabled(portalConfig) && portalConfig?.tabs?.operations !== false
   }
@@ -254,6 +266,7 @@ export const TAB_ID_LABELS: Record<string, string> = {
   'tech-support': 'Tradesman Help Desk',
   settings: 'Settings',
   [GROWTH_TAB_ID]: 'Growth',
+  [WEBSITE_TAB_ID]: 'Website',
   'business-workflow': 'My Business Workflow',
   'organization-chart': 'Organization chart',
   reporting: 'Reporting',
@@ -459,6 +472,7 @@ function fullOperationsTabs(): Record<string, boolean> {
     purchase_orders: false,
     parts_inventory: false,
     growth: true,
+    website: true,
   }
 }
 
@@ -498,6 +512,7 @@ export function getPortalConfigForProductPackage(packageId: ProductPackageId): P
     "tech-support": true,
     settings: false,
     growth: true,
+    website: true,
   }
   return { tabs, enable_growth_tab: true }
 }
@@ -675,9 +690,21 @@ export function applyGrowthTabOrder(order: string[], portalConfig: PortalConfig)
   return out
 }
 
+/** Insert Website Builder after Growth (or after Dashboard). */
+export function applyWebsiteTabOrder(order: string[], portalConfig: PortalConfig): string[] {
+  if (!isWebsiteTabEnabled(portalConfig)) return order
+  const out = [...order]
+  if (out.includes(WEBSITE_TAB_ID)) return out
+  const gi = out.indexOf(GROWTH_TAB_ID)
+  const di = out.indexOf("dashboard")
+  const insertAt = gi >= 0 ? gi + 1 : di >= 0 ? di + 1 : 0
+  out.splice(insertAt, 0, WEBSITE_TAB_ID)
+  return out
+}
+
 /** Insert optional Operations hub (or legacy separate tabs) before Estimates. */
 export function applyOptionalPortalTabOrder(order: string[], portalConfig: PortalConfig): string[] {
-  let out = applyGrowthTabOrder(order, portalConfig)
+  let out = applyWebsiteTabOrder(applyGrowthTabOrder(order, portalConfig), portalConfig)
   const qi = out.indexOf("quotes")
   const insertAt = qi >= 0 ? qi : out.length
   if (isOperationsPackageEnabled(portalConfig)) {

@@ -367,6 +367,7 @@ export default function GrowthPage({ setPage }: Props) {
           onPatchHostedWebsite={patchHostedWebsite}
           onSaveHostedWebsite={saveHostedWebsiteNow}
           saving={saving}
+          setPage={setPage}
         />
       ) : null}
 
@@ -455,6 +456,7 @@ function OverviewSection({
         onPatch={onPatchHostedWebsite}
         onSave={onSaveHostedWebsite}
         saving={saving}
+        setPage={setPage}
       />
 
       <div style={{ ...panelStyle, marginBottom: 14 }}>
@@ -506,6 +508,7 @@ function ProfilesSection({
   onPatchHostedWebsite,
   onSaveHostedWebsite,
   saving,
+  setPage,
 }: {
   doc: GrowthModuleDoc
   updateDoc: (patch: Partial<GrowthModuleDoc> | ((prev: GrowthModuleDoc) => GrowthModuleDoc)) => void
@@ -516,6 +519,7 @@ function ProfilesSection({
   onPatchHostedWebsite: (patch: Partial<HostedWebsiteDoc>) => void
   onSaveHostedWebsite: () => void
   saving: boolean
+  setPage: (page: string) => void
 }) {
   const [accessGuideOpen, setAccessGuideOpen] = useState(true)
   const [openPlatformId, setOpenPlatformId] = useState<string | null>("google")
@@ -570,6 +574,7 @@ function ProfilesSection({
       onSave={onSaveHostedWebsite}
       saving={saving}
       compact
+      setPage={setPage}
     />
     <div style={panelStyle}>
       <h2 style={h2}>Business profiles</h2>

@@ -26,8 +26,13 @@ export function consumeAccountSectionPrefill(): string | null {
   }
 }
 
-/** Open the in-app hosted website editor (same Tradesman login — no separate admin password). */
-export function openHostedWebsiteEditor(setPage: (page: string) => void): void {
-  queueAccountSectionOpen("business_web_profile")
-  setPage("account")
+/** Open the Website Builder portal (hosted marketing sites). */
+export function openHostedWebsiteEditor(setPage?: (page: string) => void): void {
+  if (setPage) {
+    setPage("website")
+    return
+  }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("tradesman-open-page", { detail: { page: "website" } }))
+  }
 }

@@ -1,8 +1,29 @@
-import { useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
+import { useMemo, useState, type CSSProperties, type DragEvent, type FormEvent, type MouseEvent, type ReactNode } from "react"
 import logo from "../../assets/logo.png"
 import { PhotoLightbox } from "../../components/PhotoLightbox"
-import type { BusinessProfileTemplateId, BusinessProfileTheme } from "../../lib/businessPublicProfile"
-import { DEFAULT_BUSINESS_PROFILE_THEME } from "../../lib/businessPublicProfile"
+import type {
+  BusinessProfileTemplateId,
+  BusinessProfileTheme,
+  WebsiteContentCard,
+  WebsiteHomeSectionId,
+  WebsiteHomeSections,
+  WebsiteImageSlots,
+  WebsitePublicPageId,
+  WebsiteScrollBand,
+  WebsiteSubPages,
+  WebsiteTextStyle,
+  WebsiteTextStyles,
+} from "../../lib/businessPublicProfile"
+import {
+  DEFAULT_BUSINESS_PROFILE_THEME,
+  defaultWebsiteFeatureCards,
+  defaultWebsiteHomeSectionOrder,
+  defaultWebsiteServiceCards,
+  defaultWebsiteSubPages,
+  emptyWebsiteHomeSections,
+  resolveWebsiteSlotImage,
+  websiteTextStyleToCss,
+} from "../../lib/businessPublicProfile"
 
 export type PublicBusinessProfileData = {
   ok: true
@@ -24,6 +45,27 @@ export type PublicBusinessProfileData = {
   showContactForm?: boolean
   facebookUrl?: string | null
   instagramUrl?: string | null
+  imageSlots?: WebsiteImageSlots
+  scrollBands?: WebsiteScrollBand[]
+  heroHeadline?: string
+  ctaLabel?: string
+  customDomain?: string
+  homeSections?: WebsiteHomeSections
+  subPages?: WebsiteSubPages
+  featureCards?: WebsiteContentCard[]
+  serviceCards?: WebsiteContentCard[]
+  textStyles?: WebsiteTextStyles
+  homeSectionOrder?: WebsiteHomeSectionId[]
+  fixedBackground?: boolean
+}
+
+export type WebsiteCanvasEditorProps = {
+  selectedTargetId?: string | null
+  onSelectTarget?: (targetId: string | null) => void
+  onTargetContextMenu?: (targetId: string, clientX: number, clientY: number) => void
+  onDropImageOnSlot?: (slotId: string, imageUrl: string) => void
+  onPatchTextStyle?: (targetId: string, patch: Partial<WebsiteTextStyle>) => void
+  onReorderHomeSection?: (fromId: string, toId: string) => void
 }
 
 type ContactFormProps = {
@@ -38,6 +80,7 @@ function themeVars(theme: BusinessProfileTheme): CSSProperties {
     ["--bp-secondary" as string]: theme.secondaryColor,
     ["--bp-field-bg" as string]: theme.fieldBackgroundColor,
     ["--bp-font" as string]: theme.fontColor,
+    ["--bp-accent" as string]: theme.accentColor || "#b91c1c",
   }
 }
 
@@ -82,6 +125,8 @@ function PoweredByFooter() {
         gap: 10,
         borderTop: "1px solid rgba(15,23,42,0.08)",
         background: "#fff",
+        position: "relative",
+        zIndex: 2,
       }}
     >
       <a href="https://www.tradesman-us.com" style={{ display: "inline-flex", alignItems: "center", gap: 10, textDecoration: "none" }}>
@@ -520,6 +565,734 @@ function AboutBlock({ aboutUs }: { aboutUs?: string }) {
   )
 }
 
+function CanvasEditable({
+  targetId,
+  editMode,
+  selectedTargetId,
+  onSelectTarget,
+  onTargetContextMenu,
+  onPatchTextStyle,
+  as: Tag = "div",
+  className,
+  style,
+  children,
+  href,
+  onAnchorClick,
+  enableMoveResize = false,
+  offsetX = 0,
+  offsetY = 0,
+}: {
+  targetId: string
+  editMode?: boolean
+  selectedTargetId?: string | null
+  onSelectTarget?: (targetId: string | null) => void
+  onTargetContextMenu?: (targetId: string, clientX: number, clientY: number) => void
+  onPatchTextStyle?: (targetId: string, patch: Partial<WebsiteTextStyle>) => void
+  as?: "div" | "span" | "h1" | "h2" | "h3" | "p" | "button" | "section" | "strong" | "a"
+  className?: string
+  style?: CSSProperties
+  children: ReactNode
+  href?: string
+  onAnchorClick?: (e: MouseEvent) => void
+  enableMoveResize?: boolean
+  offsetX?: number
+  offsetY?: number
+}) {
+  if (!editMode) {
+    if (Tag === "a") {
+      return (
+        <a className={className} style={style} href={href || "#"} onClick={onAnchorClick}>
+          {children}
+        </a>
+      )
+    }
+    const Comp = Tag
+    return (
+      <Comp className={className} style={style}>
+        {children}
+      </Comp>
+    )
+  }
+  const selected = selectedTargetId === targetId
+  const Comp = Tag === "a" ? "span" : Tag
+
+  const startMove = (e: MouseEvent) => {
+    if (!enableMoveResize || !onPatchTextStyle || !selected) return
+    if ((e.target as HTMLElement).closest?.("[data-resize-handle]")) return
+    e.preventDefault()
+    e.stopPropagation()
+    const startX = e.clientX
+    const startY = e.clientY
+    const ox0 = offsetX
+    const oy0 = offsetY
+    const onMove = (ev: globalThis.MouseEvent) => {
+      onPatchTextStyle(targetId, {
+        offsetX: ox0 + (ev.clientX - startX),
+        offsetY: oy0 + (ev.clientY - startY),
+      })
+    }
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove)
+      window.removeEventListener("mouseup", onUp)
+    }
+    window.addEventListener("mousemove", onMove)
+    window.addEventListener("mouseup", onUp)
+  }
+
+  const startResize = (e: MouseEvent) => {
+    if (!enableMoveResize || !onPatchTextStyle) return
+    e.preventDefault()
+    e.stopPropagation()
+    const el = (e.currentTarget as HTMLElement).parentElement
+    const startX = e.clientX
+    const startW = el?.getBoundingClientRect().width ?? 200
+    const onMove = (ev: globalThis.MouseEvent) => {
+      onPatchTextStyle(targetId, { maxWidth: Math.max(80, Math.round(startW + (ev.clientX - startX))) })
+    }
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove)
+      window.removeEventListener("mouseup", onUp)
+    }
+    window.addEventListener("mousemove", onMove)
+    window.addEventListener("mouseup", onUp)
+  }
+
+  return (
+    <Comp
+      className={`${className ?? ""}${selected ? " bp-edit-selected" : " bp-edit-target"}`.trim()}
+      style={{
+        ...style,
+        cursor: enableMoveResize && selected ? "move" : "pointer",
+        position: style?.position ?? (enableMoveResize ? "relative" : undefined),
+        display: style?.display ?? (enableMoveResize ? "inline-block" : undefined),
+      }}
+      data-edit-target={targetId}
+      onClick={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        onSelectTarget?.(targetId)
+      }}
+      onMouseDown={(e) => {
+        if (enableMoveResize && selected && e.button === 0) startMove(e)
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        onSelectTarget?.(targetId)
+        onTargetContextMenu?.(targetId, e.clientX, e.clientY)
+      }}
+    >
+      {children}
+      {selected && enableMoveResize ? (
+        <span data-resize-handle className="bp-edit-resize" title="Drag to resize width" onMouseDown={startResize} />
+      ) : null}
+    </Comp>
+  )
+}
+
+function ShowcaseLayout({
+  data,
+  theme,
+  onPhotoClick,
+  previewMode = false,
+  activePage = "home",
+  onNavigatePage,
+  editor,
+}: {
+  data: PublicBusinessProfileData
+  theme: BusinessProfileTheme
+  onPhotoClick: (url: string) => void
+  previewMode?: boolean
+  activePage?: WebsitePublicPageId
+  onNavigatePage?: (page: WebsitePublicPageId) => void
+  editor?: WebsiteCanvasEditorProps
+}) {
+  const editMode = Boolean(previewMode && editor?.onSelectTarget)
+  const photos = data.workPhotoUrls ?? []
+  const slots = data.imageSlots
+  const sections = { ...emptyWebsiteHomeSections(), ...(data.homeSections ?? {}) }
+  const subPages = data.subPages ?? defaultWebsiteSubPages()
+  const textStyles = data.textStyles ?? {}
+  const featureCards = data.featureCards?.length ? data.featureCards : defaultWebsiteFeatureCards()
+  const serviceCards = data.serviceCards?.length
+    ? data.serviceCards
+    : (data.servicesOffered ?? []).length
+      ? (data.servicesOffered ?? []).slice(0, 3).map((title, i) => ({
+          id: `service_${i + 1}`,
+          title,
+          body: `Professional ${title.toLowerCase()} for homes and businesses in your area.`,
+        }))
+      : defaultWebsiteServiceCards()
+  const logoUrl = data.profilePhotoUrl || null
+  const background =
+    resolveWebsiteSlotImage(slots, "background", photos, logoUrl) ||
+    resolveWebsiteSlotImage(slots, "hero", photos, logoUrl)
+  const feature1 = resolveWebsiteSlotImage(slots, "feature_1", photos)
+  const feature2 = resolveWebsiteSlotImage(slots, "feature_2", photos)
+  const serviceImgs = [
+    resolveWebsiteSlotImage(slots, "service_1", photos),
+    resolveWebsiteSlotImage(slots, "service_2", photos),
+    resolveWebsiteSlotImage(slots, "service_3", photos),
+  ]
+  const telHref = data.phone ? `tel:${data.phone.replace(/\D/g, "")}` : null
+  const headline = (data.heroHeadline || data.businessName || "").trim()
+  const headlineLines = headline.includes("\n")
+    ? headline.split(/\n+/).map((x) => x.trim()).filter(Boolean)
+    : [headline].filter(Boolean)
+  const displayLines = headlineLines.length ? headlineLines : [data.businessName]
+  const bands =
+    data.scrollBands && data.scrollBands.length
+      ? data.scrollBands
+      : [
+          { id: "about", title: "Your Local Plumbing Professionals", body: data.aboutUs || "", tone: "dark" as const, enabled: true },
+          { id: "services", title: "What We Specialize In", body: "", tone: "light" as const, enabled: true },
+        ]
+  const assigned = new Set(
+    Object.values(slots ?? {}).filter((u): u is string => typeof u === "string" && Boolean(u)),
+  )
+  if (background) assigned.add(background)
+  serviceImgs.forEach((u) => {
+    if (u) assigned.add(u)
+  })
+  if (feature1) assigned.add(feature1)
+  if (feature2) assigned.add(feature2)
+  const gallery = photos.filter((u) => !assigned.has(u))
+  const ctaLabel = (data.ctaLabel || "Get a Quote").trim() || "Get a Quote"
+
+  const base = `/${encodeURIComponent(data.slug)}`
+  const hrefFor = (page: WebsitePublicPageId) => {
+    if (page === "home") return base
+    return `${base}/${page}`
+  }
+  const go = (page: WebsitePublicPageId, e: MouseEvent) => {
+    if (editMode) {
+      e.preventDefault()
+      return
+    }
+    if (onNavigatePage) {
+      e.preventDefault()
+      onNavigatePage(page)
+    }
+  }
+
+  const styleFor = (id: string): CSSProperties => websiteTextStyleToCss(textStyles[id]) as CSSProperties
+  const textChrome = (id: string) => ({
+    editMode,
+    selectedTargetId: editor?.selectedTargetId,
+    onSelectTarget: editor?.onSelectTarget,
+    onTargetContextMenu: editor?.onTargetContextMenu,
+    onPatchTextStyle: editor?.onPatchTextStyle,
+    enableMoveResize: editMode,
+    offsetX: textStyles[id]?.offsetX ?? 0,
+    offsetY: textStyles[id]?.offsetY ?? 0,
+    style: styleFor(id),
+  })
+  const fixedBackground = data.fixedBackground !== false
+  const homeOrder = data.homeSectionOrder?.length ? data.homeSectionOrder : defaultWebsiteHomeSectionOrder()
+  const bandRank = (bandId: string) => {
+    if (bandId === "about") return homeOrder.indexOf("about_band")
+    if (bandId === "services") return homeOrder.indexOf("services_band")
+    return 50
+  }
+  const orderedBands = [...bands].sort((a, b) => bandRank(a.id) - bandRank(b.id))
+
+  const onSlotDrop = (slotId: string, e: DragEvent) => {
+    if (!editMode) return
+    e.preventDefault()
+    e.stopPropagation()
+    const url = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain")
+    if (url?.startsWith("http")) editor?.onDropImageOnSlot?.(slotId, url.trim())
+  }
+
+  const bgStyle = background
+    ? { backgroundImage: `url(${background})` }
+    : { background: `linear-gradient(135deg, ${theme.secondaryColor}, ${theme.primaryColor})` }
+
+  const nav = (
+    <header className="bp-showcase-topbar bp-showcase-topbar-light">
+      <div className="bp-showcase-topbar-inner">
+        <div className="bp-showcase-topbar-brand">
+          {logoUrl ? (
+            <img src={logoUrl} alt="" className="bp-showcase-topbar-logo" onClick={() => onPhotoClick(logoUrl)} />
+          ) : null}
+          <a href={hrefFor("home")} onClick={(e) => go("home", e)} style={{ color: "inherit", textDecoration: "none" }}>
+            {data.businessName}
+          </a>
+        </div>
+        <nav className="bp-showcase-topbar-actions">
+          <a
+            href={hrefFor("home")}
+            onClick={(e) => go("home", e)}
+            className={`bp-showcase-nav-link bp-showcase-nav-link-dark${activePage === "home" ? " bp-showcase-nav-link-active-dark" : ""}`}
+          >
+            Home
+          </a>
+          {subPages.about.enabled ? (
+            <a
+              href={hrefFor("about")}
+              onClick={(e) => go("about", e)}
+              className={`bp-showcase-nav-link bp-showcase-nav-link-dark${activePage === "about" ? " bp-showcase-nav-link-active-dark" : ""}`}
+            >
+              {subPages.about.title || "About Us"}
+            </a>
+          ) : null}
+          {subPages.contact.enabled ? (
+            <a
+              href={hrefFor("contact")}
+              onClick={(e) => go("contact", e)}
+              className={`bp-showcase-nav-link bp-showcase-nav-link-dark${activePage === "contact" ? " bp-showcase-nav-link-active-dark" : ""}`}
+            >
+              {subPages.contact.title || "Contact Us"}
+            </a>
+          ) : null}
+          {telHref ? (
+            <a href={telHref} className="bp-showcase-btn bp-showcase-btn-dark bp-showcase-btn-sm">
+              Call {data.phone}
+            </a>
+          ) : null}
+        </nav>
+      </div>
+    </header>
+  )
+
+  const contactBlock = (
+    <div className="bp-showcase-band-inner">
+      <CanvasEditable
+        as="h2"
+        targetId="contact_page.title"
+        editMode={editMode}
+        selectedTargetId={editor?.selectedTargetId}
+        onSelectTarget={editor?.onSelectTarget}
+        onTargetContextMenu={editor?.onTargetContextMenu}
+        style={styleFor("contact_page.title")}
+      >
+        {subPages.contact.title || "Contact Us"}
+      </CanvasEditable>
+      <p className="bp-showcase-band-body" style={{ marginBottom: 16 }}>
+        Reach {data.businessName} directly — calls, email, and requests go to this business.
+      </p>
+      <div className="bp-showcase-contact-direct">
+        {data.phone ? (
+          <a href={telHref || "#"} className="bp-showcase-contact-line">
+            <strong>Phone</strong>
+            <span>{data.phone}</span>
+          </a>
+        ) : null}
+        {data.email ? (
+          <a href={`mailto:${data.email}`} className="bp-showcase-contact-line">
+            <strong>Email</strong>
+            <span>{data.email}</span>
+          </a>
+        ) : null}
+        {data.address ? (
+          <div className="bp-showcase-contact-line">
+            <strong>Address</strong>
+            <span style={{ whiteSpace: "pre-wrap" }}>{data.address}</span>
+          </div>
+        ) : null}
+      </div>
+      {data.showContactForm ? (
+        <BusinessProfileContactForm slug={data.slug} businessName={data.businessName} theme={theme} />
+      ) : null}
+      <SocialFollowBlock facebookUrl={data.facebookUrl} instagramUrl={data.instagramUrl} />
+    </div>
+  )
+
+  const homeContent = (
+    <>
+      {sections.hero ? (
+        <CanvasEditable
+          as="section"
+          targetId="section.hero"
+          editMode={editMode}
+          selectedTargetId={editor?.selectedTargetId}
+          onSelectTarget={editor?.onSelectTarget}
+          onTargetContextMenu={editor?.onTargetContextMenu}
+          className="bp-showcase-hero bp-showcase-hero-parallax"
+        >
+          <div className="bp-showcase-hero-inner">
+            <div className="bp-showcase-hero-copy">
+              <CanvasEditable as="div" targetId="hero.headline" {...textChrome("hero.headline")}>
+                {displayLines.map((line) => (
+                  <h1 key={line} style={styleFor("hero.headline")}>
+                    {line}
+                  </h1>
+                ))}
+              </CanvasEditable>
+              {data.tagline ? (
+                <CanvasEditable
+                  as="p"
+                  targetId="hero.tagline"
+                  className="bp-showcase-tagline-accent"
+                  {...textChrome("hero.tagline")}
+                >
+                  {data.tagline}
+                </CanvasEditable>
+              ) : editMode ? (
+                <CanvasEditable
+                  as="p"
+                  targetId="hero.tagline"
+                  className="bp-showcase-tagline-accent bp-edit-placeholder"
+                  {...textChrome("hero.tagline")}
+                >
+                  Add accent tagline…
+                </CanvasEditable>
+              ) : null}
+              <div className="bp-showcase-cta-row">
+                {subPages.contact.enabled || data.showContactForm || data.email || telHref || editMode ? (
+                  <CanvasEditable
+                    as="a"
+                    targetId="hero.cta"
+                    className="bp-showcase-btn bp-showcase-btn-jagged"
+                    href={subPages.contact.enabled ? hrefFor("contact") : "#bp-contact"}
+                    onAnchorClick={(e) => {
+                      if (subPages.contact.enabled) go("contact", e)
+                    }}
+                    {...textChrome("hero.cta")}
+                  >
+                    {ctaLabel}
+                  </CanvasEditable>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </CanvasEditable>
+      ) : null}
+
+      {orderedBands.map((band) => {
+        if (band.enabled === false) return null
+        const isServices = band.id === "services"
+        if (isServices && !sections.services_band) return null
+        if (!isServices && band.id === "about" && !sections.about_band) return null
+        const title = band.title.trim() || (isServices ? "What We Specialize In" : "About us")
+        const body = band.body.trim() || (band.id === "about" ? data.aboutUs || "" : "")
+        if (isServices) {
+          return (
+            <CanvasEditable
+              key={band.id}
+              as="section"
+              targetId="section.services_band"
+              editMode={editMode}
+              selectedTargetId={editor?.selectedTargetId}
+              onSelectTarget={editor?.onSelectTarget}
+              onTargetContextMenu={editor?.onTargetContextMenu}
+              className={`bp-showcase-band bp-showcase-band-${band.tone}`}
+            >
+              <div className="bp-showcase-band-inner">
+                <CanvasEditable
+                  as="h2"
+                  targetId="band.services.title"
+                  editMode={editMode}
+                  selectedTargetId={editor?.selectedTargetId}
+                  onSelectTarget={editor?.onSelectTarget}
+                  onTargetContextMenu={editor?.onTargetContextMenu}
+                  style={styleFor("band.services.title")}
+                >
+                  {title}
+                </CanvasEditable>
+                <div className="bp-showcase-service-trio">
+                  {serviceCards.slice(0, 3).map((card, i) => (
+                    <article key={card.id || i} className="bp-showcase-service-photo-card">
+                      {serviceImgs[i] ? (
+                        <button
+                          type="button"
+                          className={`bp-showcase-service-photo${editMode ? " bp-edit-target" : ""}`}
+                          onClick={() => {
+                            if (editMode) editor?.onSelectTarget?.(`slot.service_${i + 1}`)
+                            else onPhotoClick(serviceImgs[i]!)
+                          }}
+                          onDragOver={(e) => editMode && e.preventDefault()}
+                          onDrop={(e) => onSlotDrop(`service_${i + 1}`, e)}
+                          onContextMenu={(e) => {
+                            if (!editMode) return
+                            e.preventDefault()
+                            editor?.onSelectTarget?.(`slot.service_${i + 1}`)
+                            editor?.onTargetContextMenu?.(`slot.service_${i + 1}`, e.clientX, e.clientY)
+                          }}
+                        >
+                          <img src={serviceImgs[i]!} alt="" />
+                        </button>
+                      ) : (
+                        <div
+                          className={`bp-showcase-service-photo bp-showcase-service-photo-empty${editMode ? " bp-edit-target" : ""}`}
+                          onDragOver={(e) => editMode && e.preventDefault()}
+                          onDrop={(e) => onSlotDrop(`service_${i + 1}`, e)}
+                          onClick={() => editMode && editor?.onSelectTarget?.(`slot.service_${i + 1}`)}
+                        >
+                          {editMode ? "Drop photo" : null}
+                        </div>
+                      )}
+                      <CanvasEditable
+                        as="h3"
+                        targetId={`service.${i}.title`}
+                        editMode={editMode}
+                        selectedTargetId={editor?.selectedTargetId}
+                        onSelectTarget={editor?.onSelectTarget}
+                        onTargetContextMenu={editor?.onTargetContextMenu}
+                        style={styleFor(`service.${i}.title`)}
+                      >
+                        {card.title || "Service"}
+                      </CanvasEditable>
+                      <CanvasEditable
+                        as="p"
+                        targetId={`service.${i}.body`}
+                        editMode={editMode}
+                        selectedTargetId={editor?.selectedTargetId}
+                        onSelectTarget={editor?.onSelectTarget}
+                        onTargetContextMenu={editor?.onTargetContextMenu}
+                        style={styleFor(`service.${i}.body`)}
+                      >
+                        {card.body || "Add a short description…"}
+                      </CanvasEditable>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            </CanvasEditable>
+          )
+        }
+        return (
+          <CanvasEditable
+            key={band.id}
+            as="section"
+            targetId="section.about_band"
+            editMode={editMode}
+            selectedTargetId={editor?.selectedTargetId}
+            onSelectTarget={editor?.onSelectTarget}
+            onTargetContextMenu={editor?.onTargetContextMenu}
+            className={`bp-showcase-band bp-showcase-band-${band.tone}`}
+          >
+            <div className="bp-showcase-band-inner">
+              <CanvasEditable
+                as="h2"
+                targetId="band.about.title"
+                editMode={editMode}
+                selectedTargetId={editor?.selectedTargetId}
+                onSelectTarget={editor?.onSelectTarget}
+                onTargetContextMenu={editor?.onTargetContextMenu}
+                style={{ textAlign: "center", ...styleFor("band.about.title") }}
+              >
+                {title}
+              </CanvasEditable>
+              <CanvasEditable
+                as="p"
+                targetId="band.about.body"
+                editMode={editMode}
+                selectedTargetId={editor?.selectedTargetId}
+                onSelectTarget={editor?.onSelectTarget}
+                onTargetContextMenu={editor?.onTargetContextMenu}
+                className="bp-showcase-band-body"
+                style={{ textAlign: "center", maxWidth: 720, margin: "0 auto", ...styleFor("band.about.body") }}
+              >
+                {body || (editMode ? "Add about text…" : "")}
+              </CanvasEditable>
+              {(feature1 || feature2 || featureCards.length || editMode) && band.id === "about" ? (
+                <div className="bp-showcase-feature-row">
+                  {featureCards.slice(0, 2).map((card, idx) => {
+                    const url = idx === 0 ? feature1 : feature2
+                    const slotId = idx === 0 ? "feature_1" : "feature_2"
+                    return (
+                      <div key={card.id || idx} className="bp-showcase-feature-item">
+                        {url ? (
+                          <button
+                            type="button"
+                            className={`bp-showcase-feature-thumb${editMode ? " bp-edit-target" : ""}`}
+                            onClick={() => {
+                              if (editMode) editor?.onSelectTarget?.(`slot.${slotId}`)
+                              else onPhotoClick(url)
+                            }}
+                            onDragOver={(e) => editMode && e.preventDefault()}
+                            onDrop={(e) => onSlotDrop(slotId, e)}
+                          >
+                            <img src={url} alt="" />
+                          </button>
+                        ) : editMode ? (
+                          <div
+                            className="bp-showcase-feature-thumb bp-edit-target"
+                            style={{ display: "grid", placeItems: "center", fontSize: 10 }}
+                            onDragOver={(e) => e.preventDefault()}
+                            onDrop={(e) => onSlotDrop(slotId, e)}
+                            onClick={() => editor?.onSelectTarget?.(`slot.${slotId}`)}
+                          >
+                            Drop
+                          </div>
+                        ) : null}
+                        <div>
+                          <CanvasEditable
+                            as="strong"
+                            targetId={`feature.${idx}.title`}
+                            editMode={editMode}
+                            selectedTargetId={editor?.selectedTargetId}
+                            onSelectTarget={editor?.onSelectTarget}
+                            onTargetContextMenu={editor?.onTargetContextMenu}
+                            style={styleFor(`feature.${idx}.title`)}
+                          >
+                            {card.title}
+                          </CanvasEditable>
+                          <CanvasEditable
+                            as="p"
+                            targetId={`feature.${idx}.body`}
+                            editMode={editMode}
+                            selectedTargetId={editor?.selectedTargetId}
+                            onSelectTarget={editor?.onSelectTarget}
+                            onTargetContextMenu={editor?.onTargetContextMenu}
+                            style={styleFor(`feature.${idx}.body`)}
+                          >
+                            {card.body}
+                          </CanvasEditable>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : null}
+            </div>
+          </CanvasEditable>
+        )
+      })}
+
+      {sections.gallery && (gallery.length || editMode) ? (
+        <CanvasEditable
+          as="section"
+          targetId="section.gallery"
+          editMode={editMode}
+          selectedTargetId={editor?.selectedTargetId}
+          onSelectTarget={editor?.onSelectTarget}
+          onTargetContextMenu={editor?.onTargetContextMenu}
+          className="bp-showcase-band bp-showcase-band-light"
+        >
+          <div className="bp-showcase-band-inner">
+            <h2>Our work</h2>
+            {gallery.length ? (
+              <WorkPhotosBlock urls={gallery} dense onPhotoClick={(url) => onPhotoClick(url)} />
+            ) : (
+              <p className="bp-showcase-band-body">Upload photos and leave some unassigned to fill the gallery.</p>
+            )}
+          </div>
+        </CanvasEditable>
+      ) : null}
+
+      {sections.areas_hours && ((data.serviceAreas ?? []).length || (data.businessHours ?? []).length) ? (
+        <CanvasEditable
+          as="section"
+          targetId="section.areas_hours"
+          editMode={editMode}
+          selectedTargetId={editor?.selectedTargetId}
+          onSelectTarget={editor?.onSelectTarget}
+          onTargetContextMenu={editor?.onTargetContextMenu}
+          className="bp-showcase-band bp-showcase-band-clear"
+        >
+          <div className="bp-showcase-band-inner bp-showcase-lower">
+            <ServiceAreasBlock items={data.serviceAreas ?? []} />
+            <HoursBlock hours={data.businessHours ?? []} />
+          </div>
+        </CanvasEditable>
+      ) : null}
+
+      {sections.contact_home ? (
+        <CanvasEditable
+          as="section"
+          targetId="section.contact_home"
+          editMode={editMode}
+          selectedTargetId={editor?.selectedTargetId}
+          onSelectTarget={editor?.onSelectTarget}
+          onTargetContextMenu={editor?.onTargetContextMenu}
+          className="bp-showcase-band bp-showcase-band-dark"
+        >
+          <div id="bp-contact">{contactBlock}</div>
+        </CanvasEditable>
+      ) : null}
+
+      {sections.sticky_cta && (telHref || data.showContactForm || subPages.contact.enabled) ? (
+        <div className={`bp-showcase-sticky${previewMode ? " bp-showcase-sticky-preview" : ""}`}>
+          {telHref ? (
+            <a href={telHref} className="bp-showcase-btn bp-showcase-btn-primary">
+              Call {data.businessName}
+            </a>
+          ) : null}
+          <a
+            href={subPages.contact.enabled ? hrefFor("contact") : "#bp-contact"}
+            onClick={(e) => {
+              if (subPages.contact.enabled) go("contact", e)
+            }}
+            className="bp-showcase-btn bp-showcase-btn-ghost"
+          >
+            Contact us
+          </a>
+        </div>
+      ) : null}
+    </>
+  )
+
+  const aboutBody = (subPages.about.body || data.aboutUs || "").trim()
+  const pageContent =
+    activePage === "about" && subPages.about.enabled ? (
+      <section className="bp-showcase-band bp-showcase-band-light">
+        <div className="bp-showcase-band-inner" style={{ maxWidth: 800 }}>
+          <CanvasEditable
+            as="h2"
+            targetId="about_page.title"
+            editMode={editMode}
+            selectedTargetId={editor?.selectedTargetId}
+            onSelectTarget={editor?.onSelectTarget}
+            onTargetContextMenu={editor?.onTargetContextMenu}
+            style={styleFor("about_page.title")}
+          >
+            {subPages.about.title || "About Us"}
+          </CanvasEditable>
+          <CanvasEditable
+            as="p"
+            targetId="about_page.body"
+            editMode={editMode}
+            selectedTargetId={editor?.selectedTargetId}
+            onSelectTarget={editor?.onSelectTarget}
+            onTargetContextMenu={editor?.onTargetContextMenu}
+            className="bp-showcase-band-body"
+            style={{ whiteSpace: "pre-wrap", ...styleFor("about_page.body") }}
+          >
+            {aboutBody || (editMode ? "Add About Us copy…" : "")}
+          </CanvasEditable>
+        </div>
+      </section>
+    ) : activePage === "contact" && subPages.contact.enabled ? (
+      <section id="bp-contact" className="bp-showcase-band bp-showcase-band-dark">
+        {contactBlock}
+      </section>
+    ) : (
+      homeContent
+    )
+
+  return (
+    <div
+      className={`bp-shell bp-shell-showcase${previewMode ? " bp-shell-showcase-preview" : ""}`}
+      onClick={() => {
+        if (editMode) editor?.onSelectTarget?.(null)
+      }}
+    >
+      <div
+        className={
+          fixedBackground
+            ? `bp-showcase-fixed-bg${previewMode ? " bp-showcase-fixed-bg-preview" : ""}${editMode ? " bp-edit-target" : ""}`
+            : `bp-showcase-scroll-bg${editMode ? " bp-edit-target" : ""}`
+        }
+        style={bgStyle}
+        aria-hidden
+        onDragOver={(e) => editMode && e.preventDefault()}
+        onDrop={(e) => onSlotDrop("background", e)}
+        onClick={(e) => {
+          if (!editMode) return
+          e.stopPropagation()
+          editor?.onSelectTarget?.("slot.background")
+        }}
+      />
+      <div className="bp-showcase-scroll-layer">
+        {nav}
+        {pageContent}
+      </div>
+    </div>
+  )
+}
+
 function ClassicLayout({
   data,
   theme,
@@ -634,19 +1407,45 @@ function GalleryLayout({
   )
 }
 
-export function BusinessProfilePublicSite({ data }: { data: PublicBusinessProfileData }) {
+export function BusinessProfilePublicSite({
+  data,
+  previewMode = false,
+  activePage = "home",
+  onNavigatePage,
+  editor,
+}: {
+  data: PublicBusinessProfileData
+  /** When true, fixed background is scoped to the preview scroll frame. */
+  previewMode?: boolean
+  activePage?: WebsitePublicPageId
+  onNavigatePage?: (page: WebsitePublicPageId) => void
+  /** Builder canvas: click / right-click targets. */
+  editor?: WebsiteCanvasEditorProps
+}) {
   const theme = useMemo(() => ({ ...DEFAULT_BUSINESS_PROFILE_THEME, ...(data.theme ?? {}) }), [data.theme])
-  const templateId = data.templateId ?? "classic"
+  const templateId = data.templateId ?? "hair_plumbing"
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null)
 
-  const openPhoto = (url: string, alt = "Work photo") => setLightbox({ src: url, alt })
+  const openPhoto = (url: string, alt = "Work photo") => {
+    if (editor?.onSelectTarget) return
+    setLightbox({ src: url, alt })
+  }
 
   const shell: CSSProperties = {
     minHeight: "100vh",
     width: "100%",
-    background: templateId === "hero" ? "#eef2f6" : "linear-gradient(180deg, #f8fafc 0%, #eef2f6 100%)",
-    fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+    background:
+      templateId === "showcase" || templateId === "hair_plumbing"
+        ? "transparent"
+        : templateId === "hero"
+          ? "#eef2f6"
+          : "linear-gradient(180deg, #f8fafc 0%, #eef2f6 100%)",
+    fontFamily:
+      templateId === "showcase" || templateId === "hair_plumbing"
+        ? '"Jost", system-ui, -apple-system, "Segoe UI", sans-serif'
+        : 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
     color: theme.fontColor,
+    position: "relative",
     ...themeVars(theme),
   }
 
@@ -655,6 +1454,7 @@ export function BusinessProfilePublicSite({ data }: { data: PublicBusinessProfil
   return (
     <div style={shell}>
       <style>{`
+        @import url("https://fonts.googleapis.com/css2?family=Jost:ital,wght@0,400;0,600;0,700;1,700&family=Oswald:wght@600;700&display=swap");
         .bp-shell {
           width: 100%;
           box-sizing: border-box;
@@ -715,6 +1515,236 @@ export function BusinessProfilePublicSite({ data }: { data: PublicBusinessProfil
           margin: 0 auto;
           padding: 12px clamp(16px, 3vw, 40px) 32px;
         }
+        .bp-shell-showcase { background: transparent; color: var(--bp-font); padding-bottom: 88px; position: relative; isolation: isolate; }
+        .bp-shell-showcase-preview { min-height: 100%; }
+        .bp-edit-target {
+          outline: 1px dashed transparent;
+          transition: outline-color 0.12s ease, box-shadow 0.12s ease;
+        }
+        .bp-edit-target:hover { outline-color: rgba(37, 99, 235, 0.55); }
+        .bp-edit-selected {
+          outline: 2px solid #2563eb !important;
+          box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.18);
+          position: relative;
+          z-index: 2;
+        }
+        .bp-edit-placeholder { opacity: 0.55; font-style: italic; }
+        .bp-edit-resize {
+          position: absolute;
+          right: -6px;
+          bottom: -6px;
+          width: 14px;
+          height: 14px;
+          border-radius: 3px;
+          background: #2563eb;
+          border: 2px solid #fff;
+          cursor: nwse-resize;
+          z-index: 5;
+          box-shadow: 0 1px 4px rgba(15,23,42,0.35);
+        }
+        .bp-showcase-scroll-bg {
+          position: absolute; inset: 0; z-index: 0;
+          background-size: cover; background-position: center; background-repeat: no-repeat;
+          pointer-events: none;
+        }
+        .bp-showcase-scroll-bg.bp-edit-target { pointer-events: auto; }
+        .bp-showcase-fixed-bg {
+          position: fixed; inset: 0; z-index: 0;
+          background-size: cover; background-position: center; background-repeat: no-repeat;
+          pointer-events: none;
+        }
+        /* Sticky + negative margin: bg stays put while bands scroll over it inside preview overflow. */
+        .bp-showcase-fixed-bg-preview {
+          position: sticky;
+          top: 0;
+          left: 0;
+          right: 0;
+          height: 100vh;
+          width: 100%;
+          margin-bottom: -100vh;
+          inset: auto;
+        }
+        .bp-showcase-scroll-layer {
+          position: relative;
+          z-index: 1;
+        }
+        .bp-showcase-fixed-bg::after {
+          content: ""; position: absolute; inset: 0;
+          background: linear-gradient(180deg, rgba(0,0,0,0.18) 0%, rgba(0,0,0,0.08) 40%, rgba(0,0,0,0.22) 100%);
+        }
+        .bp-showcase-topbar {
+          position: sticky; top: 0; z-index: 30;
+          background: rgba(255,255,255,0.96); backdrop-filter: blur(10px);
+          border-bottom: 1px solid rgba(15,23,42,0.08);
+        }
+        .bp-showcase-topbar-dark {
+          background: #000; border-bottom: none; color: #fff;
+        }
+        .bp-showcase-topbar-light {
+          background: #fff; color: #0f172a; border-bottom: 1px solid #e5e7eb;
+        }
+        .bp-showcase-nav-link-dark { color: #0f172a !important; font-weight: 600; }
+        .bp-showcase-nav-link-active-dark { color: var(--bp-accent) !important; }
+        .bp-showcase-btn-dark { background: #000; color: #fff; border-radius: 999px; }
+        .bp-showcase-topbar-inner {
+          max-width: 1200px; margin: 0 auto;
+          padding: 12px clamp(16px, 3vw, 40px);
+          display: flex; align-items: center; justify-content: space-between; gap: 12px;
+          position: relative; z-index: 1;
+        }
+        .bp-showcase-topbar-brand {
+          display: flex; align-items: center; gap: 10px;
+          font-family: "Oswald", system-ui, sans-serif;
+          font-weight: 700; font-size: 1.35rem; color: inherit; letter-spacing: 0.02em;
+        }
+        .bp-showcase-topbar-logo {
+          width: 52px; height: 52px; object-fit: cover; border-radius: 999px;
+          border: 2px solid rgba(255,255,255,0.35); cursor: zoom-in; background: #fff;
+        }
+        .bp-showcase-topbar-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+        .bp-showcase-nav-link {
+          color: #fff; text-decoration: none; font-weight: 700; font-size: 13px; padding: 6px 10px;
+        }
+        .bp-showcase-nav-link-active {
+          background: #fff; color: #000; border-radius: 4px;
+        }
+        .bp-showcase-hero {
+          min-height: min(68vh, 560px);
+          background-size: cover;
+          background-position: center;
+          color: #fff;
+          display: flex;
+          align-items: flex-end;
+          position: relative; z-index: 1;
+        }
+        .bp-showcase-hero-parallax {
+          min-height: min(78vh, 720px);
+          background: transparent;
+          align-items: center;
+          color: #0f172a;
+        }
+        .bp-showcase-hero-inner {
+          width: 100%;
+          max-width: 1200px;
+          margin: 0 auto;
+          padding: clamp(28px, 5vw, 64px) clamp(20px, 4vw, 48px);
+        }
+        .bp-showcase-hero-copy h1 {
+          margin: 0;
+          font-family: "Oswald", system-ui, sans-serif;
+          font-size: clamp(2.8rem, 8vw, 4.8rem);
+          font-weight: 700;
+          line-height: 1.15;
+          max-width: 14ch;
+          color: #0f172a;
+        }
+        .bp-showcase-tagline-accent {
+          margin: 14px 0 0;
+          font-family: "Jost", system-ui, sans-serif;
+          font-size: clamp(1.1rem, 2.5vw, 1.5rem);
+          letter-spacing: 0.02em;
+          text-transform: none;
+          font-weight: 700;
+          font-style: italic;
+          color: var(--bp-accent);
+        }
+        .bp-showcase-cta-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+        .bp-showcase-btn {
+          display: inline-flex; align-items: center; justify-content: center;
+          padding: 12px 18px; border-radius: 999px; font-weight: 800; font-size: 14px;
+          text-decoration: none; border: 2px solid transparent;
+        }
+        .bp-showcase-btn-sm { padding: 8px 12px; font-size: 12px; }
+        .bp-showcase-btn-primary { background: var(--bp-primary); color: #fff; }
+        .bp-showcase-btn-ghost { background: rgba(255,255,255,0.12); color: #fff; border-color: rgba(255,255,255,0.35); }
+        .bp-showcase-btn-light { background: #fff; color: #000; border-radius: 6px; }
+        .bp-showcase-btn-outline {
+          background: #fff; color: var(--bp-font); border-color: rgba(15,23,42,0.12);
+        }
+        .bp-showcase-btn-jagged {
+          background: #000; color: #fff; border: 2px solid #000;
+          border-radius: 999px;
+          padding: 14px 28px;
+          letter-spacing: 0.02em;
+          font-family: "Jost", system-ui, sans-serif;
+        }
+        .bp-showcase-btn-jagged:hover { background: #fff; color: #000; }
+        .bp-showcase-band {
+          position: relative; z-index: 1;
+          padding: clamp(28px, 4vw, 52px) 0;
+        }
+        .bp-showcase-band-dark { background: #000; color: #fff; }
+        .bp-showcase-band-light { background: #fff; color: #0f172a; }
+        .bp-showcase-band-clear { background: transparent; color: #fff; }
+        .bp-showcase-band-inner {
+          max-width: 1200px; margin: 0 auto; padding: 0 clamp(20px, 4vw, 48px);
+        }
+        .bp-showcase-band h2 {
+          margin: 0 0 16px;
+          font-family: "Oswald", system-ui, sans-serif;
+          font-size: clamp(1.8rem, 4vw, 2.5rem);
+          font-weight: 700;
+          line-height: 1.15;
+        }
+        .bp-showcase-band-split {
+          display: grid;
+          grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+          gap: clamp(18px, 3vw, 40px);
+          align-items: start;
+        }
+        .bp-showcase-band-body {
+          margin: 0; font-size: 16px; line-height: 1.65; opacity: 0.92;
+        }
+        .bp-showcase-feature-row {
+          display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 22px;
+          padding-top: 18px; border-top: 1px solid rgba(255,255,255,0.2);
+        }
+        .bp-showcase-feature-item { display: flex; gap: 12px; align-items: flex-start; }
+        .bp-showcase-feature-thumb {
+          width: 56px; height: 56px; padding: 0; border: 0; border-radius: 8px; overflow: hidden; cursor: zoom-in; flex: none;
+          background: rgba(255,255,255,0.12);
+        }
+        .bp-showcase-feature-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .bp-showcase-feature-item strong { display: block; margin-bottom: 4px; font-size: 15px; }
+        .bp-showcase-feature-item p { margin: 0; font-size: 13px; line-height: 1.4; opacity: 0.85; }
+        .bp-showcase-service-trio {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 18px;
+          margin-top: 8px;
+        }
+        .bp-showcase-service-photo-card h3 {
+          margin: 12px 0 6px;
+          font-family: Georgia, "Times New Roman", serif;
+          font-size: 20px;
+        }
+        .bp-showcase-service-photo-card p { margin: 0; font-size: 14px; line-height: 1.5; color: rgba(15,23,42,0.7); }
+        .bp-showcase-service-photo {
+          display: block; width: 100%; aspect-ratio: 4/3; padding: 0; border: 0; border-radius: 18px; overflow: hidden;
+          background: #e2e8f0; cursor: zoom-in;
+        }
+        .bp-showcase-service-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .bp-showcase-service-photo-empty { cursor: default; }
+        .bp-showcase-lower {
+          display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+          gap: clamp(20px, 3vw, 40px); align-items: start;
+        }
+        .bp-showcase-contact-direct { display: grid; gap: 10px; margin-bottom: 16px; }
+        .bp-showcase-contact-line {
+          display: grid; gap: 2px; text-decoration: none; color: inherit;
+          padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12);
+        }
+        .bp-showcase-contact-line strong { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.7; }
+        .bp-showcase-contact-line span { font-size: 15px; font-weight: 700; color: #fff; }
+        .bp-showcase-sticky {
+          position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: none; gap: 8px;
+          padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+          background: rgba(15,23,42,0.92); backdrop-filter: blur(8px);
+        }
+        .bp-showcase-sticky-preview {
+          position: absolute;
+        }
+        .bp-showcase-sticky .bp-showcase-btn { flex: 1; }
         .bp-work-photos {
           grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr));
         }
@@ -737,12 +1767,25 @@ export function BusinessProfilePublicSite({ data }: { data: PublicBusinessProfil
         }
         @media (max-width: 900px) {
           .bp-hero-grid,
-          .bp-split-grid {
+          .bp-split-grid,
+          .bp-showcase-lower,
+          .bp-showcase-band-split,
+          .bp-showcase-feature-row,
+          .bp-showcase-service-trio {
             grid-template-columns: 1fr !important;
           }
+          .bp-showcase-sticky { display: flex; }
         }
       `}</style>
-      {templateId === "hero" ? (
+      {templateId === "showcase" || templateId === "hair_plumbing" ? (
+        <ShowcaseLayout
+          {...layoutProps}
+          previewMode={previewMode}
+          activePage={activePage}
+          onNavigatePage={onNavigatePage}
+          editor={editor}
+        />
+      ) : templateId === "hero" ? (
         <HeroLayout {...layoutProps} />
       ) : templateId === "split" ? (
         <SplitLayout {...layoutProps} />
@@ -751,9 +1794,18 @@ export function BusinessProfilePublicSite({ data }: { data: PublicBusinessProfil
       ) : (
         <ClassicLayout {...layoutProps} />
       )}
-      <div style={{ width: "100%", maxWidth: 1120, margin: "0 auto", padding: "8px clamp(16px, 3vw, 40px) 0" }}>
-        <SocialFollowBlock facebookUrl={data.facebookUrl} instagramUrl={data.instagramUrl} />
-      </div>
+      {templateId === "showcase" || templateId === "hair_plumbing" ? null : (
+        <div
+          style={{
+            width: "100%",
+            maxWidth: 1120,
+            margin: "0 auto",
+            padding: "8px clamp(16px, 3vw, 40px) 0",
+          }}
+        >
+          <SocialFollowBlock facebookUrl={data.facebookUrl} instagramUrl={data.instagramUrl} />
+        </div>
+      )}
       <PoweredByFooter />
       {lightbox ? <PhotoLightbox src={lightbox.src} alt={lightbox.alt} onClose={() => setLightbox(null)} /> : null}
     </div>

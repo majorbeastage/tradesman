@@ -883,19 +883,16 @@ export async function resolveCommunicationAccountOwnerId(
   const uid = userId.trim()
   if (!uid) return uid
 
-  const { data: link, error: linkErr } = await supabase
-    .from("office_manager_clients")
-    .select("office_manager_id")
-    .eq("user_id", uid)
-    .limit(1)
-    .maybeSingle()
-  if (linkErr) throw linkErr
-  const omId =
-    typeof link?.office_manager_id === "string" && link.office_manager_id.trim()
-      ? link.office_manager_id.trim()
-      : ""
-  if (omId && omId !== uid) return omId
-
+  /**
+   * Who owns the Twilio / email channels for outbound?
+   * - Team shells → account owner (they never have their own DID)
+   * - Account owners (OM / corporate_management) → always themselves, even if an
+   *   Admin “Office manager” row incorrectly lists them as a managed client
+   * - Otherwise → office_manager_clients.office_manager_id when present
+   *
+   * Checking OM-link *before* owner role used to redirect paying owners (e.g. Hair Plumbing)
+   * to a platform OM with no SMS channel → “No Twilio SMS number on file” with zero Twilio logs.
+   */
   const { data: invite, error: inviteErr } = await supabase
     .from("team_member_invites")
     .select("account_owner_id")
@@ -910,6 +907,42 @@ export async function resolveCommunicationAccountOwnerId(
         : ""
     if (ownerId && ownerId !== uid) return ownerId
   }
+
+  const { data: profile, error: profileErr } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", uid)
+    .maybeSingle()
+  if (profileErr) throw profileErr
+  const role = typeof profile?.role === "string" ? profile.role.trim() : ""
+  if (role === "office_manager" || role === "corporate_management") return uid
+
+  /** Prefer own business line when present (covers mis-linked OM rows for owners with role=user). */
+  const { data: ownRows, error: ownErr } = await supabase
+    .from("client_communication_channels")
+    .select("public_address")
+    .eq("user_id", uid)
+    .eq("active", true)
+    .limit(25)
+  if (ownErr) throw ownErr
+  const hasOwnPublicLine = (ownRows ?? []).some(
+    (r) => typeof (r as { public_address?: string }).public_address === "string" &&
+      String((r as { public_address?: string }).public_address).trim() !== "",
+  )
+  if (hasOwnPublicLine) return uid
+
+  const { data: link, error: linkErr } = await supabase
+    .from("office_manager_clients")
+    .select("office_manager_id")
+    .eq("user_id", uid)
+    .limit(1)
+    .maybeSingle()
+  if (linkErr) throw linkErr
+  const omId =
+    typeof link?.office_manager_id === "string" && link.office_manager_id.trim()
+      ? link.office_manager_id.trim()
+      : ""
+  if (omId && omId !== uid) return omId
 
   return uid
 }

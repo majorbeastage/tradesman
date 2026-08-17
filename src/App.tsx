@@ -17,6 +17,8 @@ import OrganizationChartPage from "./modules/org-chart/OrganizationChartPage"
 import OperationsPage from "./modules/operations/OperationsPage"
 import { OPEN_INVOICES_EVENT } from "./lib/workflowNavigation"
 import GrowthPage from "./modules/growth/GrowthPage"
+import WebsiteBuilderPage from "./modules/website-builder/WebsiteBuilderPage"
+import WebsiteBuilderPopoutPage from "./modules/website-builder/WebsiteBuilderPopoutPage"
 import MarketingHomePage from "./modules/home/MarketingHomePage"
 import MarketingHomePreviewPage from "./modules/home/MarketingHomePreviewPage"
 import LoginPage from "./modules/auth/LoginPage"
@@ -122,6 +124,7 @@ function isBuiltinAppPage(page: string): boolean {
     "insurance-options",
     "reporting",
     "growth",
+    "website",
     "business-workflow",
     "organization-chart",
   ])
@@ -703,6 +706,7 @@ function MainAppInner() {
       {page === "insurance-options" && <InsuranceOptionsPage />}
       {page === "reporting" && <ReportingPage />}
       {page === "growth" && <GrowthPage setPage={setPage} />}
+      {page === "website" && <WebsiteBuilderPage />}
       {page === "business-workflow" && <BusinessWorkflowPage setPage={setPage} />}
       {page === "organization-chart" && <OrganizationChartPage setPage={setPage} />}
       {page === "account" && <AccountPage />}
@@ -865,6 +869,10 @@ function App() {
     return <AcceptTeamInvitePage />
   }
 
+  if (pathname === "/website-builder-preview") {
+    return <WebsiteBuilderPopoutPage />
+  }
+
   if (pathname === "/privacy") {
     return <PrivacyPage />
   }
@@ -956,11 +964,20 @@ function App() {
     if (esignToken) return <EstimateEsignPage token={esignToken} />
   }
 
+  const businessWebProfileSubMatch = /^\/([^/]+)\/(about|contact)\/?$/i.exec(pathname)
+  if (businessWebProfileSubMatch) {
+    const slug = decodeURIComponent(businessWebProfileSubMatch[1] || "").trim().toLowerCase()
+    const sub = (businessWebProfileSubMatch[2] || "").toLowerCase() as "about" | "contact"
+    if (!isReservedBusinessWebProfileSlug(slug) && (sub === "about" || sub === "contact")) {
+      return <PublicBusinessWebProfilePage slug={slug} page={sub} />
+    }
+  }
+
   const businessWebProfileMatch = /^\/([^/]+)\/?$/i.exec(pathname)
   if (businessWebProfileMatch) {
     const slug = decodeURIComponent(businessWebProfileMatch[1] || "").trim().toLowerCase()
     if (!isReservedBusinessWebProfileSlug(slug)) {
-      return <PublicBusinessWebProfilePage slug={slug} />
+      return <PublicBusinessWebProfilePage slug={slug} page="home" />
     }
   }
 

@@ -187,6 +187,10 @@
     { "source": "/voice-studio/:token", "destination": "/index.html" },
     { "source": "/voice-studio/:token/", "destination": "/index.html" },
     { "source": "/embed/lead/:path*", "destination": "/index.html" },
+    { "source": "/:slug/about", "destination": "/index.html" },
+    { "source": "/:slug/about/", "destination": "/index.html" },
+    { "source": "/:slug/contact", "destination": "/index.html" },
+    { "source": "/:slug/contact/", "destination": "/index.html" },
     { "source": "/:slug", "destination": "/index.html" }
   ]
 }

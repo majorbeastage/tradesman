@@ -148,6 +148,16 @@ export function AppNavigationProvider({ page, setPage, children }: Props) {
     }
   }, [page])
 
+  useEffect(() => {
+    const onOpenPage = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ page?: string }>).detail
+      const next = typeof detail?.page === "string" ? detail.page.trim() : ""
+      if (next) navigatePage(next)
+    }
+    window.addEventListener("tradesman-open-page", onOpenPage as EventListener)
+    return () => window.removeEventListener("tradesman-open-page", onOpenPage as EventListener)
+  }, [navigatePage])
+
   return (
     <AppNavigationContext.Provider
       value={{ page, navigatePage, registerOverlay, openOverlay, closeOverlay }}
