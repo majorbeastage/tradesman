@@ -54,6 +54,7 @@ type BusinessPublicProfileSettings = {
   facebookUrl: string
   instagramUrl: string
   showSocialLinks: boolean
+  socialLinks: Record<string, string>
   imageSlots: Record<string, string>
   scrollBands: Array<{ id: string; title: string; body: string; tone: "dark" | "light" | "clear"; enabled?: boolean }>
   heroHeadline: string
@@ -64,9 +65,10 @@ type BusinessPublicProfileSettings = {
     about: { enabled: boolean; title: string; body: string }
     contact: { enabled: boolean; title: string }
   }
+  customPages: Array<{ id: string; enabled: boolean; title: string; body: string }>
   featureCards: Array<{ id: string; title: string; body: string }>
   serviceCards: Array<{ id: string; title: string; body: string }>
-  textStyles: Record<string, Record<string, string>>
+  textStyles: Record<string, Record<string, string | number>>
   homeSectionOrder: string[]
   fixedBackground: boolean
   footerCopyright: string
@@ -190,6 +192,7 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
     facebookUrl: "",
     instagramUrl: "",
     showSocialLinks: true,
+    socialLinks: {},
     imageSlots: {},
     scrollBands: [
       { id: "about", title: "Your Local Professionals", body: "", tone: "dark" },
@@ -211,6 +214,7 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
       about: { enabled: true, title: "About Us", body: "" },
       contact: { enabled: true, title: "Contact Us" },
     },
+    customPages: [],
     featureCards: [],
     serviceCards: [],
     textStyles: {},
@@ -308,6 +312,7 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
     facebookUrl: fb.slice(0, 500),
     instagramUrl: ig.slice(0, 500),
     showSocialLinks: o.showSocialLinks !== false,
+    socialLinks: parseSocialLinks(o.socialLinks, fb, ig),
     imageSlots,
     scrollBands: scrollBands.length
       ? scrollBands
@@ -337,6 +342,7 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
             : "Contact Us",
       },
     },
+    customPages: parseCustomPages(o.customPages),
     featureCards: parseContentCards(o.featureCards, 4),
     serviceCards: parseContentCards(o.serviceCards, 6),
     textStyles: parseTextStyles(o.textStyles),
@@ -347,6 +353,36 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
     footerCopyright: readNestedProfileString(o, "footerCopyright", "footer_copyright").slice(0, 200),
     showPoweredBy: o.showPoweredBy === true,
   }
+}
+
+function parseSocialLinks(raw: unknown, facebookUrl: string, instagramUrl: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof v === "string" && v.trim()) out[k] = v.trim().slice(0, 500)
+    }
+  }
+  if (!out.facebook && facebookUrl.trim()) out.facebook = facebookUrl.trim().slice(0, 500)
+  if (!out.instagram && instagramUrl.trim()) out.instagram = instagramUrl.trim().slice(0, 500)
+  return out
+}
+
+function parseCustomPages(raw: unknown): Array<{ id: string; enabled: boolean; title: string; body: string }> {
+  if (!Array.isArray(raw)) return []
+  const out: Array<{ id: string; enabled: boolean; title: string; body: string }> = []
+  for (const item of raw.slice(0, 6)) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue
+    const c = item as Record<string, unknown>
+    const id = typeof c.id === "string" && c.id.trim() ? c.id.trim().replace(/[^a-z0-9_-]/gi, "").slice(0, 40) : ""
+    if (!id) continue
+    out.push({
+      id,
+      enabled: c.enabled !== false,
+      title: typeof c.title === "string" && c.title.trim() ? c.title.trim().slice(0, 80) : "New page",
+      body: typeof c.body === "string" ? c.body.trim().slice(0, 8000) : "",
+    })
+  }
+  return out
 }
 
 function parseContentCards(raw: unknown, max: number): Array<{ id: string; title: string; body: string }> {
@@ -364,14 +400,15 @@ function parseContentCards(raw: unknown, max: number): Array<{ id: string; title
   return out
 }
 
-function parseTextStyles(raw: unknown): Record<string, Record<string, string>> {
+function parseTextStyles(raw: unknown): Record<string, Record<string, string | number>> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
-  const out: Record<string, Record<string, string>> = {}
+  const out: Record<string, Record<string, string | number>> = {}
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     if (!key.trim() || !value || typeof value !== "object" || Array.isArray(value)) continue
-    const style: Record<string, string> = {}
+    const style: Record<string, string | number> = {}
     for (const [sk, sv] of Object.entries(value as Record<string, unknown>)) {
       if (typeof sv === "string" && sv.trim()) style[sk] = sv.trim().slice(0, 120)
+      else if (typeof sv === "number" && Number.isFinite(sv)) style[sk] = sv
     }
     if (Object.keys(style).length) out[key.trim().slice(0, 80)] = style
   }
@@ -670,6 +707,7 @@ export async function handlePublicBusinessProfile(req: VercelRequest, res: Verce
       showContactForm: settings.showContactForm !== false,
       facebookUrl: settings.showSocialLinks && settings.facebookUrl ? settings.facebookUrl : undefined,
       instagramUrl: settings.showSocialLinks && settings.instagramUrl ? settings.instagramUrl : undefined,
+      socialLinks: settings.showSocialLinks ? settings.socialLinks : undefined,
       imageSlots: settings.imageSlots,
       scrollBands: settings.scrollBands,
       heroHeadline: settings.heroHeadline.trim() || undefined,
@@ -677,6 +715,7 @@ export async function handlePublicBusinessProfile(req: VercelRequest, res: Verce
       customDomain: settings.customDomain.trim() || undefined,
       homeSections: settings.homeSections,
       subPages: settings.subPages,
+      customPages: settings.customPages.length ? settings.customPages : undefined,
       featureCards: settings.featureCards.length ? settings.featureCards : undefined,
       serviceCards: settings.serviceCards.length ? settings.serviceCards : undefined,
       textStyles: Object.keys(settings.textStyles).length ? settings.textStyles : undefined,

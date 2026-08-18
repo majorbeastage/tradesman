@@ -29,7 +29,11 @@ export default function PublicBusinessWebProfilePage({ slug, page = "home" }: Pr
       const p = window.location.pathname.toLowerCase()
       if (p.endsWith("/about") || p.endsWith("/about/")) setActivePage("about")
       else if (p.endsWith("/contact") || p.endsWith("/contact/")) setActivePage("contact")
-      else setActivePage("home")
+      else {
+        const custom = /\/page\/([^/]+)\/?$/i.exec(p)
+        if (custom?.[1]) setActivePage(`custom:${custom[1]}`)
+        else setActivePage("home")
+      }
     }
     window.addEventListener("popstate", onPop)
     return () => window.removeEventListener("popstate", onPop)
@@ -121,7 +125,11 @@ export default function PublicBusinessWebProfilePage({ slug, page = "home" }: Pr
       ? "home"
       : activePage === "contact" && data.subPages?.contact?.enabled === false
         ? "home"
-        : activePage
+        : typeof activePage === "string" && activePage.startsWith("custom:")
+          ? data.customPages?.some((p) => p.enabled !== false && `custom:${p.id}` === activePage)
+            ? activePage
+            : "home"
+          : activePage
 
   return (
     <BusinessProfilePublicSite
@@ -129,7 +137,12 @@ export default function PublicBusinessWebProfilePage({ slug, page = "home" }: Pr
       activePage={resolvedPage}
       onNavigatePage={(next) => {
         setActivePage(next)
-        const path = next === "home" ? `/${safeSlug}` : `/${safeSlug}/${next}`
+        const path =
+          next === "home"
+            ? `/${safeSlug}`
+            : typeof next === "string" && next.startsWith("custom:")
+              ? `/${safeSlug}/page/${next.slice("custom:".length)}`
+              : `/${safeSlug}/${next}`
         try {
           window.history.pushState({}, "", path)
         } catch {

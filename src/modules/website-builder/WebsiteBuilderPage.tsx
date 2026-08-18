@@ -9,10 +9,12 @@ import {
   BUSINESS_PROFILE_BRAND_PRESETS,
   BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX,
   DEFAULT_BUSINESS_PROFILE_THEME,
+  WEBSITE_BUILT_IN_LINK_OPTIONS,
   WEBSITE_BUILDER_PREVIEW_STORAGE_KEY,
   WEBSITE_FONT_OPTIONS,
   WEBSITE_FONT_SIZE_OPTIONS,
   WEBSITE_HOME_SECTION_OPTIONS,
+  WEBSITE_SOCIAL_PLATFORM_OPTIONS,
   businessWebProfilePublicUrl,
   businessWebProfileSlugFromName,
   emptyBusinessPublicProfileSettings,
@@ -20,13 +22,16 @@ import {
   parseBusinessProfileListField,
   parseBusinessPublicProfileSettings,
   type BusinessPublicProfileSettings,
+  type WebsiteBuiltInLinkTarget,
   type WebsiteHomeSectionId,
   type WebsiteImageSlotId,
   type WebsitePublicPageId,
+  type WebsiteSocialPlatformId,
   type WebsiteTextStyle,
 } from "../../lib/businessPublicProfile"
 import { mergeHostedWebsiteMetadata, parseHostedWebsiteDoc, VERCEL_DNS_INSTRUCTIONS } from "../../lib/hostedWebsite"
 import { mergeSocialPresenceIntoMetadata, readSocialPresenceFromMetadata } from "../../lib/socialPresenceSync"
+import PlatformBadge from "../../components/PlatformBadge"
 import {
   getWebsiteTextValue,
   hideSectionFromSettings,
@@ -265,13 +270,28 @@ export default function WebsiteBuilderPage() {
   }, [load])
 
   useEffect(() => {
+    if (!contextMenu) return
     const close = () => setContextMenu(null)
-    window.addEventListener("click", close)
-    return () => window.removeEventListener("click", close)
-  }, [])
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close()
+    }
+    const onPointer = (e: PointerEvent) => {
+      const t = e.target as HTMLElement | null
+      if (t?.closest?.("[data-wb-context-menu]")) return
+      close()
+    }
+    window.addEventListener("keydown", onKey)
+    // Capture so canvas stopPropagation cannot keep the menu stuck open.
+    window.addEventListener("pointerdown", onPointer, true)
+    return () => {
+      window.removeEventListener("keydown", onKey)
+      window.removeEventListener("pointerdown", onPointer, true)
+    }
+  }, [contextMenu])
 
   const previewData: PublicBusinessProfileData = useMemo(() => {
     const logo = settings.profilePhotoUrl || contact.companyLogoUrl
+    const social = settings.socialLinks
     return {
       ok: true,
       slug: slug || "preview",
@@ -289,8 +309,9 @@ export default function WebsiteBuilderPage() {
       templateId: settings.templateId,
       theme: settings.theme,
       showContactForm: settings.showContactForm,
-      facebookUrl: settings.showSocialLinks ? settings.facebookUrl : null,
-      instagramUrl: settings.showSocialLinks ? settings.instagramUrl : null,
+      facebookUrl: settings.showSocialLinks ? social.facebook || settings.facebookUrl : null,
+      instagramUrl: settings.showSocialLinks ? social.instagram || settings.instagramUrl : null,
+      socialLinks: settings.showSocialLinks ? social : null,
       imageSlots: settings.imageSlots,
       scrollBands: settings.scrollBands,
       heroHeadline: settings.heroHeadline || undefined,
@@ -298,6 +319,7 @@ export default function WebsiteBuilderPage() {
       customDomain: settings.customDomain || undefined,
       homeSections: settings.homeSections,
       subPages: settings.subPages,
+      customPages: settings.customPages,
       featureCards: settings.featureCards,
       serviceCards: settings.serviceCards,
       textStyles: settings.textStyles,
@@ -398,8 +420,8 @@ export default function WebsiteBuilderPage() {
       const domain = normalizeDomainInput(next.customDomain)
       const withSite = mergeBusinessPublicProfileMetadata(prevMeta, { ...next, customDomain: domain }, nextSlug)
       const withSocial = mergeSocialPresenceIntoMetadata(withSite, {
-        facebook: next.facebookUrl,
-        instagram: next.instagramUrl,
+        facebook: next.socialLinks.facebook || next.facebookUrl,
+        instagram: next.socialLinks.instagram || next.instagramUrl,
       })
       const nextMeta = mergeHostedWebsiteMetadata(withSocial, {
         hosting: "tradesman",
@@ -513,7 +535,7 @@ export default function WebsiteBuilderPage() {
 
   function onSelectTarget(id: string | null) {
     setSelectedTargetId(id)
-    if (!id) setContextMenu(null)
+    setContextMenu(null)
   }
 
   function onTargetContextMenu(targetId: string, clientX: number, clientY: number) {
@@ -524,6 +546,93 @@ export default function WebsiteBuilderPage() {
   function onDropImageOnSlot(slotId: string, imageUrl: string) {
     assignSlot(slotId as WebsiteImageSlotId, imageUrl)
     setSelectedTargetId(`slot.${slotId}`)
+    setContextMenu(null)
+  }
+
+  function addTextField() {
+    const idx = Math.min(settings.featureCards.length, 3)
+    setSettings((s) => {
+      const nextCards = [
+        ...s.featureCards,
+        {
+          id: `feature_${Date.now().toString(36)}`,
+          title: "New highlight",
+          body: "Add a short description…",
+        },
+      ].slice(0, 4)
+      return {
+        ...s,
+        featureCards: nextCards,
+        homeSections: { ...s.homeSections, about_band: true },
+      }
+    })
+    setSelectedTargetId(`feature.${idx}.title`)
+    setMessage("Added a text highlight — edit it in the left panel.")
+  }
+
+  function addPhotoField() {
+    const slots: WebsiteImageSlotId[] = ["feature_1", "feature_2", "service_1", "service_2", "service_3"]
+    const empty = slots.find((id) => !settings.imageSlots[id])
+    const target = empty || "feature_1"
+    setSettings((s) => ({
+      ...s,
+      homeSections: {
+        ...s.homeSections,
+        about_band: target.startsWith("feature") ? true : s.homeSections.about_band,
+        services_band: target.startsWith("service") ? true : s.homeSections.services_band,
+      },
+    }))
+    setSelectedTargetId(`slot.${target}`)
+    setMessage(empty ? `Select a photo from the tray and drag it onto ${target.replace("_", " ")}.` : "Replace an existing photo slot — drag from the tray.")
+  }
+
+  function addSubPage() {
+    setSettings((s) => {
+      if (!s.subPages.about.enabled) {
+        return { ...s, subPages: { ...s.subPages, about: { ...s.subPages.about, enabled: true } } }
+      }
+      if (!s.subPages.contact.enabled) {
+        return { ...s, subPages: { ...s.subPages, contact: { ...s.subPages.contact, enabled: true } } }
+      }
+      const id = `page_${Date.now().toString(36)}`
+      return {
+        ...s,
+        customPages: [
+          ...s.customPages,
+          { id, enabled: true, title: "New page", body: "Tell customers about this topic…" },
+        ].slice(0, 6),
+      }
+    })
+    setMessage("Sub-page ready — use the preview page tabs to open it.")
+  }
+
+  function addSocialPlatform(platform: WebsiteSocialPlatformId) {
+    setSettings((s) => ({
+      ...s,
+      showSocialLinks: true,
+      socialLinks: {
+        ...s.socialLinks,
+        [platform]: s.socialLinks[platform] || "",
+      },
+      facebookUrl: platform === "facebook" ? s.facebookUrl || s.socialLinks.facebook || "" : s.facebookUrl,
+      instagramUrl: platform === "instagram" ? s.instagramUrl || s.socialLinks.instagram || "" : s.instagramUrl,
+    }))
+    setMessage(`Add the ${platform} URL below, then Save & publish.`)
+  }
+
+  function setSocialUrl(platform: WebsiteSocialPlatformId, url: string) {
+    setSettings((s) => {
+      const socialLinks = { ...s.socialLinks }
+      if (!url.trim()) delete socialLinks[platform]
+      else socialLinks[platform] = url.trim()
+      return {
+        ...s,
+        socialLinks,
+        facebookUrl: platform === "facebook" ? url.trim() : s.facebookUrl,
+        instagramUrl: platform === "instagram" ? url.trim() : s.instagramUrl,
+        showSocialLinks: true,
+      }
+    })
   }
 
   function removeSelected() {
@@ -767,6 +876,31 @@ export default function WebsiteBuilderPage() {
                 Done
               </button>
             </div>
+            <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
+              Link to
+              <select
+                value={(selectedStyle.linkTarget as WebsiteBuiltInLinkTarget | undefined) || (selectedTargetId === "hero.cta" ? "contact" : "none")}
+                onChange={(e) => {
+                  const value = e.target.value as WebsiteBuiltInLinkTarget
+                  setSettings((s) => ({
+                    ...s,
+                    textStyles: patchWebsiteTextStyle(s.textStyles, selectedTargetId, {
+                      linkTarget: value === "none" ? undefined : value,
+                    }),
+                  }))
+                }}
+                style={field}
+              >
+                {WEBSITE_BUILT_IN_LINK_OPTIONS.map((opt) => (
+                  <option key={opt.id} value={opt.id}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+              Built-in destinations only (home, about, contact, call, email). Quote button uses this by default.
+            </p>
           </div>
         ) : selectedTargetId && selectedKind === "section" ? (
           <div style={{ ...sectionCard, borderColor: "#2563eb" }}>
@@ -791,21 +925,58 @@ export default function WebsiteBuilderPage() {
         ) : selectedTargetId && selectedKind === "image" ? (
           <div style={{ ...sectionCard, borderColor: "#2563eb" }}>
             <div style={{ fontSize: 12, fontWeight: 900 }}>{websiteEditTargetLabel(selectedTargetId)}</div>
-            <p style={{ margin: 0, fontSize: 12, color: "#475569" }}>Drag a photo from the tray below onto this slot.</p>
-            <button
-              type="button"
-              onClick={removeSelected}
-              style={{
-                padding: "8px 12px",
-                borderRadius: 8,
-                border: `1px solid ${theme.border}`,
-                background: "#fff",
-                fontWeight: 700,
-                cursor: "pointer",
-              }}
-            >
-              Clear image
-            </button>
+            <p style={{ margin: 0, fontSize: 12, color: "#475569" }}>
+              Drag a photo from the tray below onto this slot, or clear it.
+            </p>
+            {(selectedTargetId === "slot.feature_1" || selectedTargetId === "slot.feature_2") && (
+              <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
+                Thumbnail size ({selectedStyle.imageSize ?? 56}px)
+                <input
+                  type="range"
+                  min={40}
+                  max={140}
+                  value={selectedStyle.imageSize ?? 56}
+                  onChange={(e) =>
+                    setSettings((s) => ({
+                      ...s,
+                      textStyles: patchWebsiteTextStyle(s.textStyles, selectedTargetId, {
+                        imageSize: Number(e.target.value),
+                      }),
+                    }))
+                  }
+                />
+              </label>
+            )}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                onClick={removeSelected}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  border: `1px solid ${theme.border}`,
+                  background: "#fff",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                Clear image
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedTargetId(null)}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  border: `1px solid ${theme.border}`,
+                  background: "#fff",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                Done
+              </button>
+            </div>
           </div>
         ) : (
           <div style={sectionCard}>
@@ -815,6 +986,137 @@ export default function WebsiteBuilderPage() {
             </p>
           </div>
         )}
+
+        <div style={sectionCard}>
+          <div style={{ fontSize: 12, fontWeight: 900 }}>Quick add</div>
+          <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+            Legend for common edits — then click the new item in the preview to polish it.
+          </p>
+          <div style={{ display: "grid", gap: 6 }}>
+            {(
+              [
+                ["Add a text field", addTextField],
+                ["Add photo field", addPhotoField],
+                ["Add new sub-page", addSubPage],
+              ] as const
+            ).map(([label, fn]) => (
+              <button
+                key={label}
+                type="button"
+                onClick={fn}
+                style={{
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: `1px solid ${theme.border}`,
+                  background: "#f8fafc",
+                  fontSize: 12,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                  textAlign: "left",
+                  color: EDITOR_INK,
+                }}
+              >
+                + {label}
+              </button>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, fontWeight: 800, marginTop: 4 }}>Add social media link</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {WEBSITE_SOCIAL_PLATFORM_OPTIONS.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                title={opt.label}
+                onClick={() => addSocialPlatform(opt.id)}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "5px 8px",
+                  borderRadius: 8,
+                  border: `1px solid ${theme.border}`,
+                  background: "#fff",
+                  cursor: "pointer",
+                  fontSize: 11,
+                  fontWeight: 700,
+                }}
+              >
+                <PlatformBadge id={opt.id} size={18} />
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          {Object.keys(settings.socialLinks).length > 0 ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              {WEBSITE_SOCIAL_PLATFORM_OPTIONS.filter((opt) => opt.id in settings.socialLinks).map((opt) => (
+                <label key={opt.id} style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <PlatformBadge id={opt.id} size={18} />
+                    {opt.label} URL
+                  </span>
+                  <input
+                    value={settings.socialLinks[opt.id] || ""}
+                    onChange={(e) => setSocialUrl(opt.id, e.target.value)}
+                    placeholder={`https://…`}
+                    style={field}
+                  />
+                </label>
+              ))}
+            </div>
+          ) : null}
+          {settings.customPages.length > 0 ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 800 }}>Custom sub-pages</div>
+              {settings.customPages.map((page) => (
+                <div key={page.id} style={{ display: "grid", gap: 6, padding: 8, borderRadius: 8, border: `1px solid ${theme.border}` }}>
+                  <input
+                    value={page.title}
+                    onChange={(e) =>
+                      setSettings((s) => ({
+                        ...s,
+                        customPages: s.customPages.map((p) => (p.id === page.id ? { ...p, title: e.target.value } : p)),
+                      }))
+                    }
+                    style={field}
+                  />
+                  <textarea
+                    rows={3}
+                    value={page.body}
+                    onChange={(e) =>
+                      setSettings((s) => ({
+                        ...s,
+                        customPages: s.customPages.map((p) => (p.id === page.id ? { ...p, body: e.target.value } : p)),
+                      }))
+                    }
+                    style={{ ...field, resize: "vertical", fontSize: 12 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSettings((s) => ({
+                        ...s,
+                        customPages: s.customPages.filter((p) => p.id !== page.id),
+                      }))
+                    }
+                    style={{
+                      justifySelf: "start",
+                      padding: "6px 10px",
+                      borderRadius: 8,
+                      border: "1px solid #fecaca",
+                      background: "#fff1f2",
+                      color: "#b91c1c",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      fontSize: 11,
+                    }}
+                  >
+                    Remove page
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
 
         <div style={sectionCard}>
           <div style={{ fontSize: 12, fontWeight: 900 }}>Photos</div>
@@ -1101,7 +1403,7 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
             background: "rgba(15,23,42,0.96)",
           }}
         >
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {(
               [
                 ["home", "Home"],
@@ -1127,6 +1429,28 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                 {name}
               </button>
             ))}
+            {settings.customPages.filter((p) => p.enabled !== false).map((page) => {
+              const id = `custom:${page.id}` as WebsitePublicPageId
+              return (
+                <button
+                  key={page.id}
+                  type="button"
+                  onClick={() => setPreviewPage(id)}
+                  style={{
+                    padding: "7px 12px",
+                    borderRadius: 8,
+                    border: previewPage === id ? "2px solid #fbbf24" : "1px solid rgba(255,255,255,0.25)",
+                    background: previewPage === id ? "rgba(251,191,36,0.15)" : "transparent",
+                    color: "#fff",
+                    fontWeight: 800,
+                    fontSize: 12,
+                    cursor: "pointer",
+                  }}
+                >
+                  {page.title || "Page"}
+                </button>
+              )
+            })}
           </div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             <button
@@ -1215,6 +1539,7 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
         {contextMenu ? (
           <div
             role="menu"
+            data-wb-context-menu
             style={{
               position: "fixed",
               left: contextMenu.x,
@@ -1229,6 +1554,7 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
               color: "#0f172a",
             }}
             onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
           >
             <button
               type="button"

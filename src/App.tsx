@@ -877,6 +877,13 @@ function App() {
         />
       )
     }
+    const customPageMatch = /^\/page\/([^/]+)\/?$/i.exec(pathname)
+    if (customPageMatch?.[1]) {
+      const pageId = customPageMatch[1].toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 40)
+      if (pageId) {
+        return <PublicBusinessWebProfilePage slug={customDomainSlug} page={`custom:${pageId}`} />
+      }
+    }
     return <PublicBusinessWebProfilePage slug={customDomainSlug} page="home" />
   }
 
@@ -993,6 +1000,19 @@ function App() {
     const sub = (businessWebProfileSubMatch[2] || "").toLowerCase() as "about" | "contact"
     if (!isReservedBusinessWebProfileSlug(slug) && (sub === "about" || sub === "contact")) {
       return <PublicBusinessWebProfilePage slug={slug} page={sub} />
+    }
+  }
+
+  const businessWebProfileCustomMatch = /^\/([^/]+)\/page\/([^/]+)\/?$/i.exec(pathname)
+  if (businessWebProfileCustomMatch) {
+    const slug = decodeURIComponent(businessWebProfileCustomMatch[1] || "").trim().toLowerCase()
+    const pageId = decodeURIComponent(businessWebProfileCustomMatch[2] || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]/g, "")
+      .slice(0, 40)
+    if (!isReservedBusinessWebProfileSlug(slug) && pageId) {
+      return <PublicBusinessWebProfilePage slug={slug} page={`custom:${pageId}`} />
     }
   }
 

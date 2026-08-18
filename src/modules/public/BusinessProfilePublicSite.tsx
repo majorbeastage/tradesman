@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type FormEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react"
 import logo from "../../assets/logo.png"
 import { PhotoLightbox } from "../../components/PhotoLightbox"
+import PlatformBadge, { type PlatformBadgeId, isPlatformBadgeId } from "../../components/PlatformBadge"
 import type {
   BusinessProfileTemplateId,
   BusinessProfileTheme,
+  WebsiteBuiltInLinkTarget,
   WebsiteContentCard,
+  WebsiteCustomPage,
   WebsiteHomeSectionId,
   WebsiteHomeSections,
   WebsiteImageSlots,
   WebsitePublicPageId,
   WebsiteScrollBand,
+  WebsiteSocialLinks,
   WebsiteSubPages,
   WebsiteTextStyle,
   WebsiteTextStyles,
@@ -22,6 +26,7 @@ import {
   defaultWebsiteSubPages,
   emptyWebsiteHomeSections,
   resolveWebsiteSlotImage,
+  websiteCustomPagePathId,
   websiteTextStyleToCss,
 } from "../../lib/businessPublicProfile"
 
@@ -45,6 +50,7 @@ export type PublicBusinessProfileData = {
   showContactForm?: boolean
   facebookUrl?: string | null
   instagramUrl?: string | null
+  socialLinks?: WebsiteSocialLinks | null
   imageSlots?: WebsiteImageSlots
   scrollBands?: WebsiteScrollBand[]
   heroHeadline?: string
@@ -52,6 +58,7 @@ export type PublicBusinessProfileData = {
   customDomain?: string
   homeSections?: WebsiteHomeSections
   subPages?: WebsiteSubPages
+  customPages?: WebsiteCustomPage[]
   featureCards?: WebsiteContentCard[]
   serviceCards?: WebsiteContentCard[]
   textStyles?: WebsiteTextStyles
@@ -89,28 +96,46 @@ function themeVars(theme: BusinessProfileTheme): CSSProperties {
 }
 
 function SocialFollowBlock({
+  socialLinks,
   facebookUrl,
   instagramUrl,
 }: {
+  socialLinks?: WebsiteSocialLinks | null
   facebookUrl?: string | null
   instagramUrl?: string | null
 }) {
-  if (!facebookUrl && !instagramUrl) return null
+  const links: Array<{ id: PlatformBadgeId; url: string; label: string }> = []
+  const seen = new Set<string>()
+  const push = (id: string, url: string | null | undefined, label: string) => {
+    const href = (url || "").trim()
+    if (!href || !isPlatformBadgeId(id) || seen.has(id)) return
+    seen.add(id)
+    links.push({ id, url: href, label })
+  }
+  if (socialLinks) {
+    for (const [id, url] of Object.entries(socialLinks)) push(id, url, id)
+  }
+  push("facebook", facebookUrl, "Facebook")
+  push("instagram", instagramUrl, "Instagram")
+  if (!links.length) return null
   return (
     <section style={{ padding: "8px 0" }}>
       <SectionFrame>
         <SectionHeading>Follow us</SectionHeading>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 14, fontSize: 15 }}>
-          {facebookUrl ? (
-            <a href={facebookUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--bp-primary)", fontWeight: 700 }}>
-              Facebook
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
+          {links.map((item) => (
+            <a
+              key={item.id}
+              href={item.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={item.label}
+              aria-label={item.label}
+              style={{ display: "inline-flex", textDecoration: "none" }}
+            >
+              <PlatformBadge id={item.id} size={36} />
             </a>
-          ) : null}
-          {instagramUrl ? (
-            <a href={instagramUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--bp-primary)", fontWeight: 700 }}>
-              Instagram
-            </a>
-          ) : null}
+          ))}
         </div>
       </SectionFrame>
     </section>
@@ -800,8 +825,12 @@ function ShowcaseLayout({
   const ctaLabel = (data.ctaLabel || "Get a Quote").trim() || "Get a Quote"
 
   const base = `/${encodeURIComponent(data.slug)}`
+  const customPages = (data.customPages ?? []).filter((p) => p.enabled !== false)
   const hrefFor = (page: WebsitePublicPageId) => {
     if (page === "home") return base
+    if (typeof page === "string" && page.startsWith("custom:")) {
+      return `${base}/page/${websiteCustomPagePathId(page)}`
+    }
     return `${base}/${page}`
   }
   const go = (page: WebsitePublicPageId, e: MouseEvent) => {
@@ -813,6 +842,15 @@ function ShowcaseLayout({
       e.preventDefault()
       onNavigatePage(page)
     }
+  }
+  const resolveBuiltInHref = (target: WebsiteBuiltInLinkTarget | undefined, fallback: WebsiteBuiltInLinkTarget = "contact") => {
+    const t = target && target !== "none" ? target : fallback
+    if (t === "home") return { href: hrefFor("home"), page: "home" as WebsitePublicPageId | null }
+    if (t === "about") return { href: hrefFor("about"), page: "about" as WebsitePublicPageId | null }
+    if (t === "contact") return { href: hrefFor("contact"), page: "contact" as WebsitePublicPageId | null }
+    if (t === "phone" && telHref) return { href: telHref, page: null }
+    if (t === "email" && data.email) return { href: `mailto:${data.email}`, page: null }
+    return { href: hrefFor("contact"), page: "contact" as WebsitePublicPageId | null }
   }
 
   const styleFor = (id: string): CSSProperties => websiteTextStyleToCss(textStyles[id]) as CSSProperties
@@ -908,6 +946,19 @@ function ShowcaseLayout({
               {subPages.contact.title || "Contact Us"}
             </a>
           ) : null}
+          {customPages.map((page) => {
+            const pageId = `custom:${page.id}` as WebsitePublicPageId
+            return (
+              <a
+                key={page.id}
+                href={hrefFor(pageId)}
+                onClick={(e) => go(pageId, e)}
+                className={`bp-showcase-nav-link bp-showcase-nav-link-dark${activePage === pageId ? " bp-showcase-nav-link-active-dark" : ""}`}
+              >
+                {page.title || "Page"}
+              </a>
+            )
+          })}
           {telHref ? (
             <a href={telHref} className="bp-showcase-btn bp-showcase-btn-dark bp-showcase-btn-sm">
               Call {data.phone}
@@ -957,7 +1008,11 @@ function ShowcaseLayout({
       {data.showContactForm ? (
         <BusinessProfileContactForm slug={data.slug} businessName={data.businessName} theme={theme} />
       ) : null}
-      <SocialFollowBlock facebookUrl={data.facebookUrl} instagramUrl={data.instagramUrl} />
+      <SocialFollowBlock
+        socialLinks={data.socialLinks}
+        facebookUrl={data.facebookUrl}
+        instagramUrl={data.instagramUrl}
+      />
     </div>
   )
 
@@ -1003,18 +1058,23 @@ function ShowcaseLayout({
               ) : null}
               <div className="bp-showcase-cta-row">
                 {subPages.contact.enabled || data.showContactForm || data.email || telHref || editMode ? (
-                  <CanvasEditable
-                    as="a"
-                    targetId="hero.cta"
-                    className="bp-showcase-btn bp-showcase-btn-jagged"
-                    href={subPages.contact.enabled ? hrefFor("contact") : "#bp-contact"}
-                    onAnchorClick={(e) => {
-                      if (subPages.contact.enabled) go("contact", e)
-                    }}
-                    {...textChrome("hero.cta")}
-                  >
-                    {ctaLabel}
-                  </CanvasEditable>
+                  (() => {
+                    const cta = resolveBuiltInHref(textStyles["hero.cta"]?.linkTarget, "contact")
+                    return (
+                      <CanvasEditable
+                        as="a"
+                        targetId="hero.cta"
+                        className="bp-showcase-btn bp-showcase-btn-jagged"
+                        href={cta.href}
+                        onAnchorClick={(e) => {
+                          if (cta.page) go(cta.page, e)
+                        }}
+                        {...textChrome("hero.cta")}
+                      >
+                        {ctaLabel}
+                      </CanvasEditable>
+                    )
+                  })()
                 ) : null}
               </div>
             </div>
@@ -1154,28 +1214,48 @@ function ShowcaseLayout({
                   {featureCards.slice(0, 2).map((card, idx) => {
                     const url = idx === 0 ? feature1 : feature2
                     const slotId = idx === 0 ? "feature_1" : "feature_2"
+                    const slotTarget = `slot.${slotId}`
+                    const thumbSize = textStyles[slotTarget]?.imageSize ?? 56
                     return (
                       <div key={card.id || idx} className="bp-showcase-feature-item">
                         {url ? (
                           <button
                             type="button"
-                            className={`bp-showcase-feature-thumb${editMode ? " bp-edit-target" : ""}`}
+                            className={`bp-showcase-feature-thumb${editMode ? " bp-edit-target" : ""}${
+                              editor?.selectedTargetId === slotTarget ? " bp-edit-selected" : ""
+                            }`}
+                            style={{ width: thumbSize, height: thumbSize }}
                             onClick={() => {
-                              if (editMode) editor?.onSelectTarget?.(`slot.${slotId}`)
+                              if (editMode) editor?.onSelectTarget?.(slotTarget)
                               else onPhotoClick(url)
                             }}
                             onDragOver={(e) => editMode && e.preventDefault()}
                             onDrop={(e) => onSlotDrop(slotId, e)}
+                            onContextMenu={(e) => {
+                              if (!editMode) return
+                              e.preventDefault()
+                              e.stopPropagation()
+                              editor?.onSelectTarget?.(slotTarget)
+                              editor?.onTargetContextMenu?.(slotTarget, e.clientX, e.clientY)
+                            }}
                           >
                             <img src={url} alt="" />
                           </button>
                         ) : editMode ? (
                           <div
-                            className="bp-showcase-feature-thumb bp-edit-target"
-                            style={{ display: "grid", placeItems: "center", fontSize: 10 }}
+                            className={`bp-showcase-feature-thumb bp-edit-target${
+                              editor?.selectedTargetId === slotTarget ? " bp-edit-selected" : ""
+                            }`}
+                            style={{ display: "grid", placeItems: "center", fontSize: 10, width: thumbSize, height: thumbSize }}
                             onDragOver={(e) => e.preventDefault()}
                             onDrop={(e) => onSlotDrop(slotId, e)}
-                            onClick={() => editor?.onSelectTarget?.(`slot.${slotId}`)}
+                            onClick={() => editor?.onSelectTarget?.(slotTarget)}
+                            onContextMenu={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              editor?.onSelectTarget?.(slotTarget)
+                              editor?.onTargetContextMenu?.(slotTarget, e.clientX, e.clientY)
+                            }}
                           >
                             Drop
                           </div>
@@ -1288,6 +1368,10 @@ function ShowcaseLayout({
   )
 
   const aboutBody = (subPages.about.body || data.aboutUs || "").trim()
+  const activeCustom =
+    typeof activePage === "string" && activePage.startsWith("custom:")
+      ? customPages.find((p) => `custom:${p.id}` === activePage) || null
+      : null
   const pageContent =
     activePage === "about" && subPages.about.enabled ? (
       <section className="bp-showcase-band bp-showcase-band-light">
@@ -1320,6 +1404,15 @@ function ShowcaseLayout({
     ) : activePage === "contact" && subPages.contact.enabled ? (
       <section id="bp-contact" className="bp-showcase-band bp-showcase-band-dark">
         {contactBlock}
+      </section>
+    ) : activeCustom ? (
+      <section className="bp-showcase-band bp-showcase-band-light">
+        <div className="bp-showcase-band-inner" style={{ maxWidth: 800 }}>
+          <h2 style={{ marginTop: 0 }}>{activeCustom.title || "Page"}</h2>
+          <p className="bp-showcase-band-body" style={{ whiteSpace: "pre-wrap" }}>
+            {activeCustom.body || (editMode ? "Add page copy in the left panel…" : "")}
+          </p>
+        </div>
       </section>
     ) : (
       homeContent
@@ -1910,7 +2003,11 @@ export function BusinessProfilePublicSite({
             padding: "8px clamp(16px, 3vw, 40px) 0",
           }}
         >
-          <SocialFollowBlock facebookUrl={data.facebookUrl} instagramUrl={data.instagramUrl} />
+          <SocialFollowBlock
+        socialLinks={data.socialLinks}
+        facebookUrl={data.facebookUrl}
+        instagramUrl={data.instagramUrl}
+      />
         </div>
       )}
       <CanvasEditable

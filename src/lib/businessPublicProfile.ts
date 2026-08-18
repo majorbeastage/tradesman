@@ -50,6 +50,41 @@ export type WebsiteContentCard = {
   body: string
 }
 
+/** Built-in destinations for CTA / text links in the editor (no free-form URLs required). */
+export const WEBSITE_BUILT_IN_LINK_OPTIONS = [
+  { id: "none", label: "No link" },
+  { id: "home", label: "Home page" },
+  { id: "about", label: "About page" },
+  { id: "contact", label: "Contact page" },
+  { id: "phone", label: "Call phone" },
+  { id: "email", label: "Send email" },
+] as const
+
+export type WebsiteBuiltInLinkTarget = (typeof WEBSITE_BUILT_IN_LINK_OPTIONS)[number]["id"]
+
+export const WEBSITE_SOCIAL_PLATFORM_OPTIONS = [
+  { id: "facebook", label: "Facebook" },
+  { id: "instagram", label: "Instagram" },
+  { id: "google", label: "Google Business" },
+  { id: "yelp", label: "Yelp" },
+  { id: "tiktok", label: "TikTok" },
+  { id: "youtube", label: "YouTube" },
+  { id: "x", label: "X" },
+  { id: "linkedin", label: "LinkedIn" },
+] as const
+
+export type WebsiteSocialPlatformId = (typeof WEBSITE_SOCIAL_PLATFORM_OPTIONS)[number]["id"]
+
+export type WebsiteSocialLinks = Partial<Record<WebsiteSocialPlatformId, string>>
+
+/** Extra About-style pages beyond About / Contact. */
+export type WebsiteCustomPage = {
+  id: string
+  enabled: boolean
+  title: string
+  body: string
+}
+
 /** Per-field typography overrides keyed by edit target id (e.g. hero.headline). */
 export type WebsiteTextStyle = {
   color?: string
@@ -64,6 +99,10 @@ export type WebsiteTextStyle = {
   offsetY?: number
   /** Optional max width for wrapping / resize. */
   maxWidth?: number
+  /** Built-in link for buttons / clickable text. */
+  linkTarget?: WebsiteBuiltInLinkTarget
+  /** Image slot display size (feature thumbs, etc.). */
+  imageSize?: number
 }
 
 export type WebsiteTextStyles = Partial<Record<string, WebsiteTextStyle>>
@@ -122,7 +161,57 @@ export type WebsiteSubPages = {
   contact: { enabled: boolean; title: string }
 }
 
-export type WebsitePublicPageId = "home" | WebsiteSubPageId
+export type WebsitePublicPageId = "home" | WebsiteSubPageId | `custom:${string}`
+
+export function websiteCustomPagePathId(pageId: string): string {
+  return pageId.replace(/^custom:/, "").replace(/[^a-z0-9-]/gi, "").slice(0, 40)
+}
+
+export function parseWebsiteCustomPages(raw: unknown): WebsiteCustomPage[] {
+  if (!Array.isArray(raw)) return []
+  const out: WebsiteCustomPage[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue
+    const o = item as Record<string, unknown>
+    const id =
+      typeof o.id === "string" && o.id.trim()
+        ? o.id.trim().replace(/[^a-z0-9_-]/gi, "").slice(0, 40)
+        : ""
+    if (!id) continue
+    const title =
+      typeof o.title === "string" && o.title.trim() ? o.title.trim().slice(0, 80) : "New page"
+    out.push({
+      id,
+      enabled: o.enabled !== false,
+      title,
+      body: typeof o.body === "string" ? o.body.trim().slice(0, 8000) : "",
+    })
+    if (out.length >= 6) break
+  }
+  return out
+}
+
+export function emptyWebsiteSocialLinks(): WebsiteSocialLinks {
+  return {}
+}
+
+export function parseWebsiteSocialLinks(raw: unknown, facebookUrl = "", instagramUrl = ""): WebsiteSocialLinks {
+  const out: WebsiteSocialLinks = emptyWebsiteSocialLinks()
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const o = raw as Record<string, unknown>
+    for (const opt of WEBSITE_SOCIAL_PLATFORM_OPTIONS) {
+      const v = o[opt.id]
+      if (typeof v === "string" && v.trim()) out[opt.id] = v.trim().slice(0, 500)
+    }
+  }
+  if (!out.facebook && facebookUrl.trim()) out.facebook = facebookUrl.trim().slice(0, 500)
+  if (!out.instagram && instagramUrl.trim()) out.instagram = instagramUrl.trim().slice(0, 500)
+  return out
+}
+
+export function isWebsiteBuiltInLinkTarget(value: unknown): value is WebsiteBuiltInLinkTarget {
+  return typeof value === "string" && WEBSITE_BUILT_IN_LINK_OPTIONS.some((o) => o.id === value)
+}
 
 export function emptyWebsiteHomeSections(): WebsiteHomeSections {
   return {
@@ -369,6 +458,10 @@ export function parseWebsiteTextStyles(raw: unknown): WebsiteTextStyles {
     if (typeof o.offsetX === "number" && Number.isFinite(o.offsetX)) style.offsetX = Math.max(-600, Math.min(600, Math.round(o.offsetX)))
     if (typeof o.offsetY === "number" && Number.isFinite(o.offsetY)) style.offsetY = Math.max(-600, Math.min(600, Math.round(o.offsetY)))
     if (typeof o.maxWidth === "number" && Number.isFinite(o.maxWidth)) style.maxWidth = Math.max(80, Math.min(1200, Math.round(o.maxWidth)))
+    if (isWebsiteBuiltInLinkTarget(o.linkTarget) && o.linkTarget !== "none") style.linkTarget = o.linkTarget
+    if (typeof o.imageSize === "number" && Number.isFinite(o.imageSize)) {
+      style.imageSize = Math.max(32, Math.min(280, Math.round(o.imageSize)))
+    }
     if (Object.keys(style).length) out[key.trim().slice(0, 80)] = style
   }
   return out
@@ -503,6 +596,8 @@ export type BusinessPublicProfileSettings = {
   facebookUrl: string
   instagramUrl: string
   showSocialLinks: boolean
+  /** Extended social profile URLs (includes facebook/instagram + more). */
+  socialLinks: WebsiteSocialLinks
   /** Drag-and-drop image placements by page area. */
   imageSlots: WebsiteImageSlots
   /** Horizontal content bars that scroll over the fixed background. */
@@ -517,6 +612,8 @@ export type BusinessPublicProfileSettings = {
   homeSections: WebsiteHomeSections
   /** Standalone About / Contact pages (not only homepage anchors). */
   subPages: WebsiteSubPages
+  /** Extra client-defined sub-pages. */
+  customPages: WebsiteCustomPage[]
   /** Feature highlight cards under the about band. */
   featureCards: WebsiteContentCard[]
   /** Specialty / service cards (title + body + image slot). */
@@ -558,6 +655,7 @@ export function emptyBusinessPublicProfileSettings(): BusinessPublicProfileSetti
     facebookUrl: "",
     instagramUrl: "",
     showSocialLinks: true,
+    socialLinks: emptyWebsiteSocialLinks(),
     imageSlots: emptyWebsiteImageSlots(),
     scrollBands: [
       { id: "about", title: "About us", body: "", tone: "dark", enabled: true },
@@ -568,6 +666,7 @@ export function emptyBusinessPublicProfileSettings(): BusinessPublicProfileSetti
     customDomain: "",
     homeSections: emptyWebsiteHomeSections(),
     subPages: defaultWebsiteSubPages(),
+    customPages: [],
     featureCards: [],
     serviceCards: [],
     textStyles: {},
@@ -693,6 +792,11 @@ export function parseBusinessPublicProfileSettings(metadata: unknown): BusinessP
     facebookUrl: readNestedProfileString(o, "facebookUrl", "facebook_url").slice(0, 500),
     instagramUrl: readNestedProfileString(o, "instagramUrl", "instagram_url").slice(0, 500),
     showSocialLinks: o.showSocialLinks !== false,
+    socialLinks: parseWebsiteSocialLinks(
+      o.socialLinks,
+      readNestedProfileString(o, "facebookUrl", "facebook_url"),
+      readNestedProfileString(o, "instagramUrl", "instagram_url"),
+    ),
     imageSlots: parseWebsiteImageSlots(o.imageSlots),
     scrollBands: parseWebsiteScrollBands(o.scrollBands),
     heroHeadline: readNestedProfileString(o, "heroHeadline", "hero_headline").slice(0, 160),
@@ -704,6 +808,7 @@ export function parseBusinessPublicProfileSettings(metadata: unknown): BusinessP
       .slice(0, 120),
     homeSections: parseWebsiteHomeSections(o.homeSections),
     subPages: parseWebsiteSubPages(o.subPages),
+    customPages: parseWebsiteCustomPages(o.customPages),
     featureCards: parseWebsiteContentCards(o.featureCards, defaultWebsiteFeatureCards(), 4),
     serviceCards: parseWebsiteContentCards(o.serviceCards, defaultWebsiteServiceCards(), 6),
     textStyles: parseWebsiteTextStyles(o.textStyles),
@@ -738,9 +843,14 @@ export function mergeBusinessPublicProfileMetadata(
       servicesOfferedText: settings.servicesOfferedText.trim().slice(0, 2000),
       showServicesOffered: settings.showServicesOffered === true,
       showContactForm: settings.showContactForm !== false,
-      facebookUrl: settings.facebookUrl.trim().slice(0, 500),
-      instagramUrl: settings.instagramUrl.trim().slice(0, 500),
+      facebookUrl: (settings.socialLinks.facebook || settings.facebookUrl).trim().slice(0, 500),
+      instagramUrl: (settings.socialLinks.instagram || settings.instagramUrl).trim().slice(0, 500),
       showSocialLinks: settings.showSocialLinks !== false,
+      socialLinks: parseWebsiteSocialLinks(
+        settings.socialLinks,
+        settings.socialLinks.facebook || settings.facebookUrl,
+        settings.socialLinks.instagram || settings.instagramUrl,
+      ),
       imageSlots: parseWebsiteImageSlots(settings.imageSlots),
       scrollBands: parseWebsiteScrollBands(settings.scrollBands),
       heroHeadline: settings.heroHeadline.trim().slice(0, 160),
@@ -753,6 +863,7 @@ export function mergeBusinessPublicProfileMetadata(
         .slice(0, 120),
       homeSections: parseWebsiteHomeSections(settings.homeSections),
       subPages: parseWebsiteSubPages(settings.subPages),
+      customPages: parseWebsiteCustomPages(settings.customPages),
       featureCards: parseWebsiteContentCards(settings.featureCards, defaultWebsiteFeatureCards(), 4),
       serviceCards: parseWebsiteContentCards(settings.serviceCards, defaultWebsiteServiceCards(), 6),
       textStyles: parseWebsiteTextStyles(settings.textStyles),
