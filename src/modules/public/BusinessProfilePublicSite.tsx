@@ -1325,10 +1325,12 @@ function ShowcaseLayout({
       homeContent
     )
 
+  const isHairPlumbing = data.templateId === "hair_plumbing"
+
   return (
     <div
       ref={shellRef}
-      className={`bp-shell bp-shell-showcase${previewMode ? " bp-shell-showcase-preview" : ""}`}
+      className={`bp-shell bp-shell-showcase${isHairPlumbing ? " bp-shell-hair-plumbing" : ""}${previewMode ? " bp-shell-showcase-preview" : ""}`}
       onClick={() => {
         if (editMode) editor?.onSelectTarget?.(null)
       }}
@@ -1669,6 +1671,32 @@ export function BusinessProfilePublicSite({
           width: 56px; height: 56px; object-fit: contain; border-radius: 999px;
           border: 2px solid rgba(15,23,42,0.12); cursor: zoom-in; background: #fff;
           padding: 4px; box-sizing: border-box;
+        }
+        /* Hair Plumbing: larger mark in the topbar only — keeps nav/CTA readable */
+        .bp-shell-hair-plumbing .bp-showcase-topbar-inner {
+          padding-top: 10px;
+          padding-bottom: 10px;
+          min-height: 104px;
+        }
+        .bp-shell-hair-plumbing .bp-showcase-topbar-brand {
+          gap: 14px;
+          font-size: clamp(1.05rem, 2.2vw, 1.28rem);
+        }
+        .bp-shell-hair-plumbing .bp-showcase-topbar-logo {
+          width: 92px;
+          height: 92px;
+          border-radius: 18px;
+          padding: 6px;
+          border-width: 1px;
+          flex-shrink: 0;
+        }
+        @media (max-width: 720px) {
+          .bp-shell-hair-plumbing .bp-showcase-topbar-inner { min-height: 84px; }
+          .bp-shell-hair-plumbing .bp-showcase-topbar-logo {
+            width: 72px;
+            height: 72px;
+            border-radius: 14px;
+          }
         }
         .bp-showcase-topbar-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
         .bp-showcase-nav-link {
