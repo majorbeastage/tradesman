@@ -38,26 +38,7 @@ const CONTENT = {
   ],
 }
 
-async function uploadFromUrl(
-  service: SupabaseClient,
-  userId: string,
-  filename: string,
-  sourceUrl: string,
-): Promise<string | null> {
-  const res = await fetch(sourceUrl)
-  if (!res.ok) return null
-  const buf = Buffer.from(await res.arrayBuffer())
-  const path = `${userId}/web-profile/hair_${filename}`
-  const { error } = await service.storage.from("profile-photos").upload(path, buf, {
-    upsert: true,
-    contentType: "image/jpeg",
-  })
-  if (error) throw error
-  const { data } = service.storage.from("profile-photos").getPublicUrl(path)
-  return data.publicUrl
-}
-
-/** One-shot Classic site preload for Hair Plumbing (no Design.com chrome). */
+/** One-shot Classic site preload for Hair Plumbing (no Design.com chrome). Uses public /seed/ URLs — no storage upload. */
 export async function bootstrapHairPlumbingWebsiteIfNeeded(
   service: SupabaseClient,
   opts: { userId: string; slug: string; metadata: Record<string, unknown>; publicOrigin: string },
@@ -65,34 +46,17 @@ export async function bootstrapHairPlumbingWebsiteIfNeeded(
   if (opts.metadata.hair_plumbing_site_seeded_at) return false
 
   const base = opts.publicOrigin.replace(/\/+$/, "")
-  const softener = await uploadFromUrl(
-    service,
-    opts.userId,
-    "water-softener.jpg",
-    `${base}/seed/hair-plumbing/water-softener.jpg`,
-  )
-  const repairs = await uploadFromUrl(
-    service,
-    opts.userId,
-    "service-repairs.jpg",
-    `${base}/seed/hair-plumbing/service-repairs.jpg`,
-  )
-  const heater = await uploadFromUrl(
-    service,
-    opts.userId,
-    "water-heater.jpg",
-    `${base}/seed/hair-plumbing/water-heater.jpg`,
-  )
-
-  const workPhotoUrls = [softener, repairs, heater].filter(Boolean) as string[]
-  const imageSlots: Record<string, string> = {}
-  if (softener) {
-    imageSlots.background = softener
-    imageSlots.hero = softener
-    imageSlots.service_1 = softener
+  const softener = `${base}/seed/hair-plumbing/water-softener.jpg`
+  const repairs = `${base}/seed/hair-plumbing/service-repairs.jpg`
+  const heater = `${base}/seed/hair-plumbing/water-heater.jpg`
+  const workPhotoUrls = [softener, repairs, heater]
+  const imageSlots = {
+    background: softener,
+    hero: softener,
+    service_1: softener,
+    service_2: repairs,
+    service_3: heater,
   }
-  if (repairs) imageSlots.service_2 = repairs
-  if (heater) imageSlots.service_3 = heater
 
   const site = {
     v: 1 as const,
