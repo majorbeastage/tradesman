@@ -366,8 +366,8 @@ export function parseWebsiteTextStyles(raw: unknown): WebsiteTextStyles {
     if (o.textTransform === "none" || o.textTransform === "uppercase" || o.textTransform === "capitalize") {
       style.textTransform = o.textTransform
     }
-    if (typeof o.offsetX === "number" && Number.isFinite(o.offsetX)) style.offsetX = Math.max(-400, Math.min(400, Math.round(o.offsetX)))
-    if (typeof o.offsetY === "number" && Number.isFinite(o.offsetY)) style.offsetY = Math.max(-400, Math.min(400, Math.round(o.offsetY)))
+    if (typeof o.offsetX === "number" && Number.isFinite(o.offsetX)) style.offsetX = Math.max(-600, Math.min(600, Math.round(o.offsetX)))
+    if (typeof o.offsetY === "number" && Number.isFinite(o.offsetY)) style.offsetY = Math.max(-600, Math.min(600, Math.round(o.offsetY)))
     if (typeof o.maxWidth === "number" && Number.isFinite(o.maxWidth)) style.maxWidth = Math.max(80, Math.min(1200, Math.round(o.maxWidth)))
     if (Object.keys(style).length) out[key.trim().slice(0, 80)] = style
   }
@@ -460,14 +460,16 @@ export function resolveWebsiteSlotImage(
 ): string | null {
   const direct = slots?.[slot]?.trim()
   if (direct) return direct
-  if (slot === "background") return workPhotoUrls[0] || null
-  if (slot === "hero") return slots?.background?.trim() || workPhotoUrls[0] || logoUrl || null
+  // Do not auto-reuse service gallery photos as the page background — that made Hair Plumbing’s
+  // water-softener shot appear as both the fixed background and the first service card.
+  if (slot === "background") return null
+  if (slot === "hero") return slots?.background?.trim() || null
   if (slot === "feature_1") return workPhotoUrls[1] || workPhotoUrls[0] || null
   if (slot === "feature_2") return workPhotoUrls[2] || workPhotoUrls[1] || null
-  if (slot === "service_1") return workPhotoUrls[3] || workPhotoUrls[0] || null
-  if (slot === "service_2") return workPhotoUrls[4] || workPhotoUrls[1] || null
-  if (slot === "service_3") return workPhotoUrls[5] || workPhotoUrls[2] || null
-  return null
+  if (slot === "service_1") return workPhotoUrls[0] || null
+  if (slot === "service_2") return workPhotoUrls[1] || null
+  if (slot === "service_3") return workPhotoUrls[2] || null
+  return logoUrl || null
 }
 
 export type BusinessPublicProfileSettings = {

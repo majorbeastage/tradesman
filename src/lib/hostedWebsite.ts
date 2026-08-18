@@ -89,7 +89,7 @@ export function normalizeDomain(input: string): string {
     .toLowerCase()
     .replace(/^https?:\/\//, "")
     .replace(/\/.*$/, "")
-    .replace(/^www\./, "")
+    .replace(/\.$/, "")
 }
 
 /** Origin for the public sites Vercel project (customer-facing pages). */

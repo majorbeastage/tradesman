@@ -79,7 +79,7 @@ function normalizeDomainInput(raw: string): string {
     .toLowerCase()
     .replace(/^https?:\/\//, "")
     .replace(/\/.*$/, "")
-    .replace(/^www\./, "")
+    .replace(/\.$/, "")
 }
 
 export default function WebsiteBuilderPage() {
@@ -297,17 +297,28 @@ export default function WebsiteBuilderPage() {
 
   function openPopoutPreview() {
     try {
-      sessionStorage.setItem(WEBSITE_BUILDER_PREVIEW_STORAGE_KEY, JSON.stringify(previewData))
+      const payload = JSON.stringify(previewData)
+      // localStorage is shared across windows; sessionStorage is not when open() uses noopener.
+      localStorage.setItem(WEBSITE_BUILDER_PREVIEW_STORAGE_KEY, payload)
+      sessionStorage.setItem(WEBSITE_BUILDER_PREVIEW_STORAGE_KEY, payload)
     } catch {
       setError("Could not open preview window (storage blocked).")
       return
     }
+    // Do not pass noopener — it returns null and isolates storage from the opener.
     const w = window.open(
       "/website-builder-preview",
       "tradesman-website-preview",
-      "noopener,noreferrer,width=1280,height=900",
+      "width=1280,height=900,menubar=no,toolbar=no,location=no,status=no",
     )
-    if (!w) setError("Pop-out blocked — allow pop-ups for this site.")
+    if (!w) setError("Pop-out blocked — allow pop-ups for this site, then try again.")
+    else {
+      try {
+        w.focus()
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   function patchTextStyle(targetId: string, patch: Partial<WebsiteTextStyle>) {
@@ -826,22 +837,46 @@ export default function WebsiteBuilderPage() {
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {settings.workPhotoUrls.map((url) => (
-              <img
-                key={url}
-                src={url}
-                alt=""
-                draggable
-                onDragStart={(e) => onPhotoDragStart(url, e)}
-                title="Drag onto a photo slot in the preview"
-                style={{
-                  width: 56,
-                  height: 56,
-                  objectFit: "cover",
-                  borderRadius: 8,
-                  border: `1px solid ${theme.border}`,
-                  cursor: "grab",
-                }}
-              />
+              <div key={url} style={{ position: "relative" }}>
+                <img
+                  src={url}
+                  alt=""
+                  draggable
+                  onDragStart={(e) => onPhotoDragStart(url, e)}
+                  title="Drag onto a photo slot in the preview"
+                  style={{
+                    width: 56,
+                    height: 56,
+                    objectFit: "cover",
+                    borderRadius: 8,
+                    border:
+                      settings.imageSlots.background === url ? "2px solid #c81e1e" : `1px solid ${theme.border}`,
+                    cursor: "grab",
+                    display: "block",
+                  }}
+                />
+                <button
+                  type="button"
+                  title="Use as fixed page background"
+                  onClick={() => assignSlot("background", url)}
+                  style={{
+                    position: "absolute",
+                    left: 2,
+                    right: 2,
+                    bottom: 2,
+                    border: "none",
+                    borderRadius: 4,
+                    background: "rgba(15,23,42,0.82)",
+                    color: "#fff",
+                    fontSize: 9,
+                    fontWeight: 800,
+                    padding: "2px 0",
+                    cursor: "pointer",
+                  }}
+                >
+                  BG
+                </button>
+              </div>
             ))}
           </div>
         </div>
@@ -857,7 +892,9 @@ export default function WebsiteBuilderPage() {
             Keep background photo fixed while bars scroll over it
           </label>
           <p style={{ margin: 0, fontSize: 11, color: "#475569", lineHeight: 1.45 }}>
-            Drag a photo onto the page background (or select Background in the preview) to set the image.
+            Drag a photo from the library onto the dark page background (or select “Background” in the preview). The
+            gold/brass sink photo was not in the Design.com export folder we received — only the three service photos —
+            so upload that sink image with + Photo, then drag it onto the background slot.
           </p>
         </div>
 
@@ -982,15 +1019,26 @@ export default function WebsiteBuilderPage() {
 
         <details style={sectionCard} open={dnsOpen} onToggle={(e) => setDnsOpen((e.target as HTMLDetailsElement).open)}>
           <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 900 }}>Custom domain / DNS</summary>
+          <p style={{ margin: "10px 0 0", fontSize: 12, color: "#334155", lineHeight: 1.5 }}>
+            Put the <strong>customer’s public domain</strong> here (example: <code>www.hairplumbing.com</code>), not the
+            Vercel preview URL. Tradesman already hosts the site at{" "}
+            <code>/{slug || "your-slug"}</code> on tradesman-us.com. The custom domain is what homeowners type in the
+            browser after DNS is pointed at us.
+          </p>
           <label style={{ display: "grid", gap: 6, fontSize: 12, fontWeight: 700, marginTop: 10 }}>
-            Domain
+            Customer domain
             <input
               value={settings.customDomain}
               onChange={(e) => setSettings((s) => ({ ...s, customDomain: e.target.value }))}
-              placeholder="www.yourbusiness.com"
+              placeholder="www.hairplumbing.com"
               style={field}
             />
           </label>
+          <p style={{ margin: 0, fontSize: 11, color: "#475569", lineHeight: 1.45 }}>
+            Why we ask: so the live link, sitemap, and publish URL show their brand domain. You still add that same
+            domain in the Vercel project, and the customer (or you) still creates the DNS records below at their
+            registrar.
+          </p>
           <pre
             style={{
               margin: 0,
@@ -1002,10 +1050,16 @@ export default function WebsiteBuilderPage() {
               color: "#334155",
             }}
           >
-            {`A record (apex) → ${VERCEL_DNS_INSTRUCTIONS.apexA}
-CNAME (www) → ${VERCEL_DNS_INSTRUCTIONS.wwwCname}
+            {`At the customer’s DNS host (GoDaddy, Cloudflare, etc.):
 
-${VERCEL_DNS_INSTRUCTIONS.note}`}
+A record (apex hairplumbing.com) → ${VERCEL_DNS_INSTRUCTIONS.apexA}
+CNAME (www.hairplumbing.com) → ${VERCEL_DNS_INSTRUCTIONS.wwwCname}
+
+Then in Vercel → Project → Domains: add www.hairplumbing.com (and apex if used).
+${VERCEL_DNS_INSTRUCTIONS.note}
+
+Until DNS + Vercel domain are connected, the working public URL is:
+${slug ? businessWebProfilePublicUrl(slug, typeof window !== "undefined" ? window.location.origin : undefined) : "https://www.tradesman-us.com/{slug}"}`}
           </pre>
         </details>
 

@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 /** Bump to re-apply Classic content (logo, copy, images) for Hair Plumbing. */
-export const HAIR_PLUMBING_SITE_SEED_VERSION = 2
+export const HAIR_PLUMBING_SITE_SEED_VERSION = 3
 
 const CONTENT = {
   heroHeadline: "Expert Plumbers\nQuality Service",
@@ -54,9 +54,9 @@ export async function bootstrapHairPlumbingWebsiteIfNeeded(
   const heater = `${base}/seed/hair-plumbing/water-heater.jpg`
   const logo = `${base}/seed/hair-plumbing/logo.png`
   const workPhotoUrls = [softener, repairs, heater]
+  // Background is intentionally unset: the Design.com export never included the separate
+  // gold/brass sink hero — only these three service photos. Client uploads + drag to Background.
   const imageSlots = {
-    background: softener,
-    hero: softener,
     service_1: softener,
     service_2: repairs,
     service_3: heater,

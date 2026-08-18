@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties, type DragEvent, type FormEvent, type MouseEvent, type ReactNode } from "react"
+import { useMemo, useState, type CSSProperties, type DragEvent, type FormEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react"
 import logo from "../../assets/logo.png"
 import { PhotoLightbox } from "../../components/PhotoLightbox"
 import type {
@@ -619,65 +619,96 @@ function CanvasEditable({
   }
   const selected = selectedTargetId === targetId
   const Comp = Tag === "a" ? "span" : Tag
+  const ox = offsetX || 0
+  const oy = offsetY || 0
+  const { transform: _styleTransform, ...styleWithoutTransform } = style ?? {}
 
-  const startMove = (e: MouseEvent) => {
-    if (!enableMoveResize || !onPatchTextStyle || !selected) return
+  const startMove = (e: ReactPointerEvent) => {
+    if (!enableMoveResize || !onPatchTextStyle) return
     if ((e.target as HTMLElement).closest?.("[data-resize-handle]")) return
     e.preventDefault()
     e.stopPropagation()
+    onSelectTarget?.(targetId)
     const startX = e.clientX
     const startY = e.clientY
-    const ox0 = offsetX
-    const oy0 = offsetY
-    const onMove = (ev: globalThis.MouseEvent) => {
-      onPatchTextStyle(targetId, {
-        offsetX: ox0 + (ev.clientX - startX),
-        offsetY: oy0 + (ev.clientY - startY),
-      })
+    const ox0 = ox
+    const oy0 = oy
+    const target = e.currentTarget as HTMLElement
+    try {
+      target.setPointerCapture(e.pointerId)
+    } catch {
+      /* ignore */
     }
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove)
-      window.removeEventListener("mouseup", onUp)
+    const onMove = (ev: PointerEvent) => {
+      const nextX = Math.max(-600, Math.min(600, Math.round(ox0 + (ev.clientX - startX))))
+      const nextY = Math.max(-600, Math.min(600, Math.round(oy0 + (ev.clientY - startY))))
+      target.style.transform = `translate(${nextX}px, ${nextY}px)`
+      target.dataset.dragX = String(nextX)
+      target.dataset.dragY = String(nextY)
     }
-    window.addEventListener("mousemove", onMove)
-    window.addEventListener("mouseup", onUp)
+    const onUp = (ev: PointerEvent) => {
+      target.removeEventListener("pointermove", onMove)
+      target.removeEventListener("pointerup", onUp)
+      target.removeEventListener("pointercancel", onUp)
+      try {
+        target.releasePointerCapture(ev.pointerId)
+      } catch {
+        /* ignore */
+      }
+      const nextX = Number(target.dataset.dragX ?? ox0)
+      const nextY = Number(target.dataset.dragY ?? oy0)
+      onPatchTextStyle(targetId, { offsetX: nextX, offsetY: nextY })
+    }
+    target.addEventListener("pointermove", onMove)
+    target.addEventListener("pointerup", onUp)
+    target.addEventListener("pointercancel", onUp)
   }
 
-  const startResize = (e: MouseEvent) => {
+  const startResize = (e: ReactPointerEvent) => {
     if (!enableMoveResize || !onPatchTextStyle) return
     e.preventDefault()
     e.stopPropagation()
+    onSelectTarget?.(targetId)
     const el = (e.currentTarget as HTMLElement).parentElement
     const startX = e.clientX
     const startW = el?.getBoundingClientRect().width ?? 200
-    const onMove = (ev: globalThis.MouseEvent) => {
-      onPatchTextStyle(targetId, { maxWidth: Math.max(80, Math.round(startW + (ev.clientX - startX))) })
+    const onMove = (ev: PointerEvent) => {
+      const w = Math.max(80, Math.round(startW + (ev.clientX - startX)))
+      if (el) el.style.maxWidth = `${w}px`
+      ;(e.currentTarget as HTMLElement).dataset.resizeW = String(w)
     }
     const onUp = () => {
-      window.removeEventListener("mousemove", onMove)
-      window.removeEventListener("mouseup", onUp)
+      window.removeEventListener("pointermove", onMove)
+      window.removeEventListener("pointerup", onUp)
+      const w = Number((e.currentTarget as HTMLElement).dataset.resizeW ?? startW)
+      onPatchTextStyle(targetId, { maxWidth: w })
     }
-    window.addEventListener("mousemove", onMove)
-    window.addEventListener("mouseup", onUp)
+    window.addEventListener("pointermove", onMove)
+    window.addEventListener("pointerup", onUp)
+  }
+
+  const baseStyle: CSSProperties = {
+    ...styleWithoutTransform,
+    cursor: enableMoveResize ? (selected ? "grab" : "pointer") : "pointer",
+    position: styleWithoutTransform.position ?? (enableMoveResize ? "relative" : undefined),
+    display: styleWithoutTransform.display ?? (enableMoveResize ? "inline-block" : undefined),
+    transform: enableMoveResize ? `translate(${ox}px, ${oy}px)` : _styleTransform,
+    touchAction: enableMoveResize ? "none" : undefined,
+    userSelect: enableMoveResize ? "none" : undefined,
   }
 
   return (
     <Comp
       className={`${className ?? ""}${selected ? " bp-edit-selected" : " bp-edit-target"}`.trim()}
-      style={{
-        ...style,
-        cursor: enableMoveResize && selected ? "move" : "pointer",
-        position: style?.position ?? (enableMoveResize ? "relative" : undefined),
-        display: style?.display ?? (enableMoveResize ? "inline-block" : undefined),
-      }}
+      style={baseStyle}
       data-edit-target={targetId}
       onClick={(e) => {
         e.preventDefault()
         e.stopPropagation()
         onSelectTarget?.(targetId)
       }}
-      onMouseDown={(e) => {
-        if (enableMoveResize && selected && e.button === 0) startMove(e)
+      onPointerDown={(e) => {
+        if (enableMoveResize && e.button === 0) startMove(e)
       }}
       onContextMenu={(e) => {
         e.preventDefault()
@@ -688,7 +719,12 @@ function CanvasEditable({
     >
       {children}
       {selected && enableMoveResize ? (
-        <span data-resize-handle className="bp-edit-resize" title="Drag to resize width" onMouseDown={startResize} />
+        <span
+          data-resize-handle
+          className="bp-edit-resize"
+          title="Drag to resize width"
+          onPointerDown={startResize}
+        />
       ) : null}
     </Comp>
   )
@@ -1555,6 +1591,7 @@ export function BusinessProfilePublicSite({
         .bp-showcase-fixed-bg {
           position: fixed; inset: 0; z-index: 0;
           background-size: cover; background-position: center; background-repeat: no-repeat;
+          background-attachment: fixed;
           pointer-events: none;
         }
         /* Sticky + negative margin: bg stays put while bands scroll over it inside preview overflow. */
@@ -1563,18 +1600,21 @@ export function BusinessProfilePublicSite({
           top: 0;
           left: 0;
           right: 0;
-          height: 100vh;
+          height: 100%;
+          min-height: 100%;
           width: 100%;
-          margin-bottom: -100vh;
+          margin-bottom: -100%;
           inset: auto;
+          background-attachment: scroll;
         }
         .bp-showcase-scroll-layer {
           position: relative;
           z-index: 1;
         }
-        .bp-showcase-fixed-bg::after {
+        .bp-showcase-fixed-bg::after,
+        .bp-showcase-fixed-bg-preview::after {
           content: ""; position: absolute; inset: 0;
-          background: linear-gradient(180deg, rgba(0,0,0,0.18) 0%, rgba(0,0,0,0.08) 40%, rgba(0,0,0,0.22) 100%);
+          background: linear-gradient(180deg, rgba(0,0,0,0.22) 0%, rgba(0,0,0,0.1) 40%, rgba(0,0,0,0.28) 100%);
         }
         .bp-showcase-topbar {
           position: sticky; top: 0; z-index: 30;
@@ -1678,8 +1718,8 @@ export function BusinessProfilePublicSite({
           position: relative; z-index: 1;
           padding: clamp(28px, 4vw, 52px) 0;
         }
-        .bp-showcase-band-dark { background: #000; color: #fff; }
-        .bp-showcase-band-light { background: #fff; color: #0f172a; }
+        .bp-showcase-band-dark { background: rgba(0, 0, 0, 0.78); color: #fff; backdrop-filter: blur(2px); }
+        .bp-showcase-band-light { background: rgba(255, 255, 255, 0.92); color: #0f172a; backdrop-filter: blur(2px); }
         .bp-showcase-band-clear { background: transparent; color: #fff; }
         .bp-showcase-band-inner {
           max-width: 1200px; margin: 0 auto; padding: 0 clamp(20px, 4vw, 48px);
