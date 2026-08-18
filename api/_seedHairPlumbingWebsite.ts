@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 /** Bump to re-apply Classic content (logo, copy, images) for Hair Plumbing. */
-export const HAIR_PLUMBING_SITE_SEED_VERSION = 4
+export const HAIR_PLUMBING_SITE_SEED_VERSION = 5
 
 const CONTENT = {
   heroHeadline: "Expert Plumbers\nQuality Service",
@@ -107,7 +107,7 @@ export async function bootstrapHairPlumbingWebsiteIfNeeded(
     ],
     heroHeadline: CONTENT.heroHeadline,
     ctaLabel: CONTENT.ctaLabel,
-    customDomain: "",
+    customDomain: "www.hairplumbing.com",
     homeSections: {
       hero: true,
       about_band: true,
@@ -127,7 +127,7 @@ export async function bootstrapHairPlumbingWebsiteIfNeeded(
     homeSectionOrder: ["hero", "about_band", "services_band", "gallery", "areas_hours", "contact_home", "sticky_cta"],
     fixedBackground: true,
     footerCopyright: CONTENT.footerCopyright,
-    showPoweredBy: false,
+    showPoweredBy: true,
   }
 
   const nextMeta = {

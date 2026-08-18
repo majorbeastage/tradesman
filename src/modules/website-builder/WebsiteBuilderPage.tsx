@@ -8,6 +8,7 @@ import { theme } from "../../styles/theme"
 import {
   BUSINESS_PROFILE_BRAND_PRESETS,
   BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX,
+  DEFAULT_BUSINESS_PROFILE_THEME,
   WEBSITE_BUILDER_PREVIEW_STORAGE_KEY,
   WEBSITE_FONT_OPTIONS,
   WEBSITE_FONT_SIZE_OPTIONS,
@@ -144,6 +145,18 @@ export default function WebsiteBuilderPage() {
       const parsed = parseBusinessPublicProfileSettings(meta)
       const social = readSocialPresenceFromMetadata(meta)
       const hosted = parseHostedWebsiteDoc(meta)
+      const name = (profile?.display_name || "").trim()
+      const nextSlug =
+        typeof profile?.business_web_profile_slug === "string" && profile.business_web_profile_slug.trim()
+          ? profile.business_web_profile_slug.trim().toLowerCase()
+          : businessWebProfileSlugFromName(name)
+      const profileEmail = typeof profile?.email === "string" ? profile.email.trim().toLowerCase() : ""
+      const isHairPlumbingAccount =
+        profileEmail === "shair@hairplumbing.com" ||
+        nextSlug === "hair-plumbing" ||
+        nextSlug === "hairplumbing" ||
+        Boolean(meta.hair_plumbing_site_seed_v)
+
       const nextSettings: BusinessPublicProfileSettings = {
         ...parsed,
         facebookUrl: parsed.facebookUrl || social.facebook,
@@ -154,22 +167,22 @@ export default function WebsiteBuilderPage() {
         showEmail: parsed.showEmail !== false,
         customDomain: parsed.customDomain || hosted.customDomain || "",
       }
-      if (!nextSettings.templateId || nextSettings.templateId === "classic") {
+      // Classic / Hair Plumbing layout is reserved for that account — everyone else keeps Showcase / other templates.
+      if (!parsed.templateId || parsed.templateId === "classic") {
+        nextSettings.templateId = isHairPlumbingAccount ? "hair_plumbing" : "showcase"
+      }
+      if (isHairPlumbingAccount && nextSettings.templateId === "showcase" && meta.hair_plumbing_site_seed_v) {
         nextSettings.templateId = "hair_plumbing"
-        if (!parsed.theme || parsed.templateId === "classic") {
-          nextSettings.theme = { ...BUSINESS_PROFILE_BRAND_PRESETS[0].theme }
-        }
       }
       if (!nextSettings.theme.accentColor) {
-        nextSettings.theme = { ...nextSettings.theme, accentColor: BUSINESS_PROFILE_BRAND_PRESETS[0].theme.accentColor }
+        nextSettings.theme = {
+          ...nextSettings.theme,
+          accentColor: isHairPlumbingAccount
+            ? BUSINESS_PROFILE_BRAND_PRESETS[0].theme.accentColor
+            : DEFAULT_BUSINESS_PROFILE_THEME.accentColor || "#b91c1c",
+        }
       }
       setSettings(nextSettings)
-
-      const name = (profile?.display_name || "").trim()
-      const nextSlug =
-        typeof profile?.business_web_profile_slug === "string" && profile.business_web_profile_slug.trim()
-          ? profile.business_web_profile_slug.trim().toLowerCase()
-          : businessWebProfileSlugFromName(name)
       setSlug(nextSlug)
 
       const channelRows = channels ?? []
@@ -1019,10 +1032,15 @@ export default function WebsiteBuilderPage() {
         <details style={sectionCard} open={dnsOpen} onToggle={(e) => setDnsOpen((e.target as HTMLDetailsElement).open)}>
           <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 900 }}>Custom domain / DNS</summary>
           <p style={{ margin: "10px 0 0", fontSize: 12, color: "#334155", lineHeight: 1.5 }}>
-            Put the <strong>customer’s public domain</strong> here (example: <code>www.hairplumbing.com</code>), not the
-            Vercel preview URL. Tradesman already hosts the site at{" "}
-            <code>/{slug || "your-slug"}</code> on tradesman-us.com. The custom domain is what homeowners type in the
-            browser after DNS is pointed at us.
+            Put the <strong>customer’s public domain</strong> here (example: <code>www.hairplumbing.com</code>).
+            Saving in this editor updates the live Tradesman-hosted site immediately — there is no separate “push to
+            Vercel” step for content.
+          </p>
+          <p style={{ margin: "8px 0 0", fontSize: 12, color: "#334155", lineHeight: 1.5 }}>
+            <strong>Important:</strong> add <code>hairplumbing.com</code> / <code>www.hairplumbing.com</code> on the{" "}
+            <strong>Tradesman</strong> Vercel project (this app — tradesman-us.com), not the old static{" "}
+            <code>hair-plumbing.vercel.app</code> project. That static project is only a leftover Design.com shell.
+            Point Squarespace DNS at the Tradesman project so visitors see what you edit here.
           </p>
           <label style={{ display: "grid", gap: 6, fontSize: 12, fontWeight: 700, marginTop: 10 }}>
             Customer domain
@@ -1033,11 +1051,6 @@ export default function WebsiteBuilderPage() {
               style={field}
             />
           </label>
-          <p style={{ margin: 0, fontSize: 11, color: "#475569", lineHeight: 1.45 }}>
-            Why we ask: so the live link, sitemap, and publish URL show their brand domain. You still add that same
-            domain in the Vercel project, and the customer (or you) still creates the DNS records below at their
-            registrar.
-          </p>
           <pre
             style={{
               margin: 0,
@@ -1049,16 +1062,21 @@ export default function WebsiteBuilderPage() {
               color: "#334155",
             }}
           >
-            {`At the customer’s DNS host (GoDaddy, Cloudflare, etc.):
+            {`At Squarespace (or their DNS host) for hairplumbing.com:
 
-A record (apex hairplumbing.com) → ${VERCEL_DNS_INSTRUCTIONS.apexA}
-CNAME (www.hairplumbing.com) → ${VERCEL_DNS_INSTRUCTIONS.wwwCname}
+A record (apex) → ${VERCEL_DNS_INSTRUCTIONS.apexA}
+CNAME www → ${VERCEL_DNS_INSTRUCTIONS.wwwCname}
+  (or CNAME www → cname.vercel-dns.com)
 
-Then in Vercel → Project → Domains: add www.hairplumbing.com (and apex if used).
+In Vercel → Tradesman project → Settings → Domains:
+  add hairplumbing.com and www.hairplumbing.com
+
 ${VERCEL_DNS_INSTRUCTIONS.note}
 
-Until DNS + Vercel domain are connected, the working public URL is:
-${slug ? businessWebProfilePublicUrl(slug, typeof window !== "undefined" ? window.location.origin : undefined) : "https://www.tradesman-us.com/{slug}"}`}
+Editor save → Supabase profile → public site.
+Custom domain only routes that same published site to their brand URL.
+
+Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== "undefined" ? window.location.origin : undefined) : "https://www.tradesman-us.com/hair-plumbing"}`}
           </pre>
         </details>
 
@@ -1165,6 +1183,7 @@ ${slug ? businessWebProfilePublicUrl(slug, typeof window !== "undefined" ? windo
           }}
         >
           <div
+            className="wb-preview-scroll"
             style={{
               width: previewWidth,
               maxWidth: "100%",

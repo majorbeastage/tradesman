@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties, type DragEvent, type FormEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react"
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type FormEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react"
 import logo from "../../assets/logo.png"
 import { PhotoLightbox } from "../../components/PhotoLightbox"
 import type {
@@ -828,6 +828,29 @@ function ShowcaseLayout({
     style: styleFor(id),
   })
   const fixedBackground = data.fixedBackground !== false
+  const shellRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!previewMode || !fixedBackground) return
+    const root = shellRef.current
+    if (!root) return
+    let scroller: HTMLElement | null = root.parentElement
+    while (scroller) {
+      const oy = getComputedStyle(scroller).overflowY
+      if (oy === "auto" || oy === "scroll") break
+      scroller = scroller.parentElement
+    }
+    if (!scroller) return
+    const apply = () => {
+      root.style.setProperty("--wb-preview-h", `${Math.max(320, scroller!.clientHeight)}px`)
+    }
+    apply()
+    scroller.scrollTop = 0
+    const ro = new ResizeObserver(apply)
+    ro.observe(scroller)
+    return () => ro.disconnect()
+  }, [previewMode, fixedBackground, data.slug, data.imageSlots?.background])
+
   const homeOrder = data.homeSectionOrder?.length ? data.homeSectionOrder : defaultWebsiteHomeSectionOrder()
   const bandRank = (bandId: string) => {
     if (bandId === "about") return homeOrder.indexOf("about_band")
@@ -1304,6 +1327,7 @@ function ShowcaseLayout({
 
   return (
     <div
+      ref={shellRef}
       className={`bp-shell bp-shell-showcase${previewMode ? " bp-shell-showcase-preview" : ""}`}
       onClick={() => {
         if (editMode) editor?.onSelectTarget?.(null)
@@ -1594,16 +1618,16 @@ export function BusinessProfilePublicSite({
           background-attachment: fixed;
           pointer-events: none;
         }
-        /* Sticky + negative margin: bg stays put while bands scroll over it inside preview overflow. */
+        /* Sticky bg inside editor overflow: height must be the scrollport (px via --wb-preview-h).
+           Percentage margin-bottom is relative to WIDTH in CSS and broke the preview scroll. */
         .bp-showcase-fixed-bg-preview {
           position: sticky;
           top: 0;
           left: 0;
           right: 0;
-          height: 100%;
-          min-height: 100%;
+          height: var(--wb-preview-h, 100%);
           width: 100%;
-          margin-bottom: -100%;
+          margin-bottom: calc(-1 * var(--wb-preview-h, 100%));
           inset: auto;
           background-attachment: scroll;
         }
@@ -1861,9 +1885,7 @@ export function BusinessProfilePublicSite({
           <SocialFollowBlock facebookUrl={data.facebookUrl} instagramUrl={data.instagramUrl} />
         </div>
       )}
-      {data.showPoweredBy === true ? <PoweredByFooter /> : null}
-      {data.showPoweredBy === true ? null : (
-        <CanvasEditable
+      <CanvasEditable
           as="div"
           targetId="footer.copyright"
           editMode={Boolean(previewMode && editor?.onSelectTarget)}
@@ -1879,7 +1901,7 @@ export function BusinessProfilePublicSite({
         >
           {data.footerCopyright?.trim() || `© ${new Date().getFullYear()} ${data.businessName}. All rights reserved.`}
         </CanvasEditable>
-      )}
+      {data.showPoweredBy === true ? <PoweredByFooter /> : null}
       {lightbox ? <PhotoLightbox src={lightbox.src} alt={lightbox.alt} onClose={() => setLightbox(null)} /> : null}
     </div>
   )

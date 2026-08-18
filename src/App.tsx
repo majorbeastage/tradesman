@@ -740,6 +740,14 @@ function App() {
   viewRef.current = view
   const rawPathname = typeof window !== "undefined" ? window.location.pathname : "/"
   const pathname = rawPathname.toLowerCase()
+  const hostname = typeof window !== "undefined" ? window.location.hostname.toLowerCase() : ""
+  const customDomainSlug = (() => {
+    const host = hostname.replace(/^www\./, "").split(":")[0] || ""
+    const map: Record<string, string> = {
+      "hairplumbing.com": "hair-plumbing",
+    }
+    return map[host] || null
+  })()
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -857,6 +865,21 @@ function App() {
   // No auto-redirect when logged in: if the user navigates to home, they stay on home and can choose to open a portal or log in as someone else.
 
   const ctaMatch = /^\/(?:cta|embed\/lead)\/([^/]+)\/?$/i.exec(pathname)
+
+  // Client domains on this Vercel project → hosted business site (not Tradesman marketing).
+  if (customDomainSlug) {
+    const subMatch = /^\/(about|contact)\/?$/i.exec(pathname)
+    if (subMatch) {
+      return (
+        <PublicBusinessWebProfilePage
+          slug={customDomainSlug}
+          page={(subMatch[1] || "about").toLowerCase() as "about" | "contact"}
+        />
+      )
+    }
+    return <PublicBusinessWebProfilePage slug={customDomainSlug} page="home" />
+  }
+
   if (ctaMatch) {
     return <EmbedLeadPage slug={decodeURIComponent(ctaMatch[1] || "")} />
   }

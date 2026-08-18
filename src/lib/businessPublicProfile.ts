@@ -537,9 +537,8 @@ export function emptyBusinessPublicProfileSettings(): BusinessPublicProfileSetti
   return {
     v: 1,
     enabled: false,
-    tagline: "HONEST WORK AT A FAIR PRICE",
-    aboutUs:
-      "As a leading plumbing company, we offer a wide range of services, including drain cleaning, water softeners, and water heater repair, and our skilled technicians are dedicated to providing efficient and reliable solutions for all your plumbing needs.",
+    tagline: "",
+    aboutUs: "",
     showPhone: true,
     showEmail: true,
     emailSource: "tradesman",
@@ -549,8 +548,8 @@ export function emptyBusinessPublicProfileSettings(): BusinessPublicProfileSetti
     profilePhotoUrl: null,
     workPhotoUrls: [],
     publishedSlug: "",
-    templateId: "hair_plumbing",
-    theme: { ...BUSINESS_PROFILE_BRAND_PRESETS[0].theme },
+    templateId: "showcase",
+    theme: { ...DEFAULT_BUSINESS_PROFILE_THEME },
     serviceAreasText: "",
     showServiceAreasList: false,
     servicesOfferedText: "",
@@ -560,19 +559,22 @@ export function emptyBusinessPublicProfileSettings(): BusinessPublicProfileSetti
     instagramUrl: "",
     showSocialLinks: true,
     imageSlots: emptyWebsiteImageSlots(),
-    scrollBands: defaultWebsiteScrollBands(),
-    heroHeadline: "Expert Plumbers\nQuality Service",
+    scrollBands: [
+      { id: "about", title: "About us", body: "", tone: "dark", enabled: true },
+      { id: "services", title: "Our services", body: "", tone: "light", enabled: true },
+    ],
+    heroHeadline: "",
     ctaLabel: "Get a Quote",
     customDomain: "",
     homeSections: emptyWebsiteHomeSections(),
     subPages: defaultWebsiteSubPages(),
-    featureCards: defaultWebsiteFeatureCards(),
-    serviceCards: defaultWebsiteServiceCards(),
+    featureCards: [],
+    serviceCards: [],
     textStyles: {},
     homeSectionOrder: defaultWebsiteHomeSectionOrder(),
     fixedBackground: true,
     footerCopyright: "",
-    showPoweredBy: false,
+    showPoweredBy: true,
   }
 }
 
@@ -620,7 +622,7 @@ export function parseBusinessProfileTemplateId(raw: unknown): BusinessProfileTem
   ) {
     return raw
   }
-  return "hair_plumbing"
+  return "showcase"
 }
 
 /** Split comma, semicolon, or newline separated lists from settings fields. */
