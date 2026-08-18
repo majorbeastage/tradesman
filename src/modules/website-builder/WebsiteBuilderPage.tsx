@@ -284,6 +284,8 @@ export default function WebsiteBuilderPage() {
       textStyles: settings.textStyles,
       homeSectionOrder: settings.homeSectionOrder,
       fixedBackground: settings.fixedBackground,
+      footerCopyright: settings.footerCopyright || undefined,
+      showPoweredBy: settings.showPoweredBy === true,
     }
   }, [settings, contact, slug])
 

@@ -21,6 +21,7 @@ export type WebsiteEditTargetId =
   | "about_page.title"
   | "about_page.body"
   | "contact_page.title"
+  | "footer.copyright"
   | "section.hero"
   | "section.about_band"
   | "section.services_band"
@@ -53,6 +54,7 @@ export const WEBSITE_EDIT_TARGET_META: Partial<Record<WebsiteEditTargetId, Websi
   "about_page.title": { id: "about_page.title", kind: "text", label: "About page title" },
   "about_page.body": { id: "about_page.body", kind: "text", label: "About page body" },
   "contact_page.title": { id: "contact_page.title", kind: "text", label: "Contact page title" },
+  "footer.copyright": { id: "footer.copyright", kind: "text", label: "Footer copyright" },
   "section.hero": { id: "section.hero", kind: "section", label: "Hero" },
   "section.about_band": { id: "section.about_band", kind: "section", label: "About bar" },
   "section.services_band": { id: "section.services_band", kind: "section", label: "Services bar" },
@@ -104,6 +106,8 @@ export function getWebsiteTextValue(settings: BusinessPublicProfileSettings, tar
       return settings.subPages.about.body || settings.aboutUs
     case "contact_page.title":
       return settings.subPages.contact.title
+    case "footer.copyright":
+      return settings.footerCopyright
     default:
       break
   }
@@ -168,6 +172,8 @@ export function setWebsiteTextValue(
         ...settings,
         subPages: { ...settings.subPages, contact: { ...settings.subPages.contact, title: value.slice(0, 80) } },
       }
+    case "footer.copyright":
+      return { ...settings, footerCopyright: value.slice(0, 200) }
     default:
       break
   }

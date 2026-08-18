@@ -525,6 +525,10 @@ export type BusinessPublicProfileSettings = {
   homeSectionOrder: WebsiteHomeSectionId[]
   /** Fixed background stays put while content scrolls (Classic). */
   fixedBackground: boolean
+  /** Footer copyright line on Classic sites. */
+  footerCopyright: string
+  /** Show Tradesman “Powered by” badge (off by default for client Classic sites). */
+  showPoweredBy: boolean
 }
 
 export function emptyBusinessPublicProfileSettings(): BusinessPublicProfileSettings {
@@ -565,6 +569,8 @@ export function emptyBusinessPublicProfileSettings(): BusinessPublicProfileSetti
     textStyles: {},
     homeSectionOrder: defaultWebsiteHomeSectionOrder(),
     fixedBackground: true,
+    footerCopyright: "",
+    showPoweredBy: false,
   }
 }
 
@@ -699,6 +705,8 @@ export function parseBusinessPublicProfileSettings(metadata: unknown): BusinessP
     textStyles: parseWebsiteTextStyles(o.textStyles),
     homeSectionOrder: parseWebsiteHomeSectionOrder(o.homeSectionOrder),
     fixedBackground: o.fixedBackground !== false,
+    footerCopyright: readNestedProfileString(o, "footerCopyright", "footer_copyright").slice(0, 200),
+    showPoweredBy: o.showPoweredBy === true,
   }
 }
 
@@ -746,6 +754,8 @@ export function mergeBusinessPublicProfileMetadata(
       textStyles: parseWebsiteTextStyles(settings.textStyles),
       homeSectionOrder: parseWebsiteHomeSectionOrder(settings.homeSectionOrder),
       fixedBackground: settings.fixedBackground !== false,
+      footerCopyright: settings.footerCopyright.trim().slice(0, 200),
+      showPoweredBy: settings.showPoweredBy === true,
     },
   }
 }

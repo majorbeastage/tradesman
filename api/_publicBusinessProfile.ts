@@ -8,6 +8,7 @@ import {
   getPrimaryEmailChannelForUser,
   resolveOutboundEmailFromAddress,
 } from "./_communications.js"
+import { bootstrapHairPlumbingWebsiteIfNeeded } from "./_seedHairPlumbingWebsite.js"
 
 const BUSINESS_PUBLIC_PROFILE_META_KEY = "business_public_profile_v1"
 const PLATFORM_EMAIL_ROOT_DOMAIN = "tradesman-us.com"
@@ -68,6 +69,8 @@ type BusinessPublicProfileSettings = {
   textStyles: Record<string, Record<string, string>>
   homeSectionOrder: string[]
   fixedBackground: boolean
+  footerCopyright: string
+  showPoweredBy: boolean
 }
 
 const DEFAULT_THEME = {
@@ -130,6 +133,7 @@ function parseListField(raw: string, maxItems = 40): string[] {
 type ProfileRow = {
   id: string
   display_name?: string | null
+  email?: string | null
   metadata?: unknown
   business_address?: string | null
   address_line_1?: string | null
@@ -144,7 +148,7 @@ type ProfileRow = {
 }
 
 const PROFILE_SELECT =
-  "id, display_name, metadata, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, service_radius_enabled, service_radius_miles, business_hours, business_web_profile_slug"
+  "id, display_name, email, metadata, business_address, address_line_1, address_line_2, address_city, address_state, address_zip, service_radius_enabled, service_radius_miles, business_hours, business_web_profile_slug"
 
 function normalizeSlug(raw: string): string {
   return raw.trim().toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 64)
@@ -212,6 +216,8 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
     textStyles: {},
     homeSectionOrder: ["hero", "about_band", "services_band", "gallery", "areas_hours", "contact_home", "sticky_cta"],
     fixedBackground: true,
+    footerCopyright: "",
+    showPoweredBy: false,
   }
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return base
   const meta = metadata as Record<string, unknown>
@@ -338,6 +344,8 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
       ? (o.homeSectionOrder.filter((x): x is string => typeof x === "string") as BusinessPublicProfileSettings["homeSectionOrder"])
       : base.homeSectionOrder,
     fixedBackground: o.fixedBackground !== false,
+    footerCopyright: readNestedProfileString(o, "footerCopyright", "footer_copyright").slice(0, 200),
+    showPoweredBy: o.showPoweredBy === true,
   }
 }
 
@@ -573,12 +581,47 @@ export async function handlePublicBusinessProfile(req: VercelRequest, res: Verce
       return
     }
 
-    const profile = await findPublishedProfileBySlug(supabase, slug)
+    let profile = await findPublishedProfileBySlug(supabase, slug)
+    if (!profile?.id && (slug === "hair-plumbing" || slug === "hairplumbing")) {
+      const { data: byEmail } = await supabase
+        .from("profiles")
+        .select(PROFILE_SELECT)
+        .ilike("email", "shair@hairplumbing.com")
+        .maybeSingle()
+      if (byEmail?.id) profile = byEmail as ProfileRow
+    }
     if (!profile?.id) {
       // Cache misses briefly so bot scanners don't re-query Supabase every hit.
       res.setHeader("Cache-Control", "public, max-age=120, s-maxage=300")
       res.status(404).json({ ok: false, error: "Business website not found. Publish it in MyT → Website Builder." })
       return
+    }
+
+    const metaRaw =
+      profile.metadata && typeof profile.metadata === "object" && !Array.isArray(profile.metadata)
+        ? (profile.metadata as Record<string, unknown>)
+        : {}
+    const email = typeof profile.email === "string" ? profile.email.toLowerCase() : ""
+    const isHairPlumbing =
+      slug === "hair-plumbing" || slug === "hairplumbing" || email === "shair@hairplumbing.com"
+    if (isHairPlumbing && !metaRaw.hair_plumbing_site_seeded_at) {
+      const proto = String(req.headers["x-forwarded-proto"] || "https")
+      const host = String(req.headers["x-forwarded-host"] || req.headers.host || "www.tradesman-us.com")
+      const publicOrigin = `${proto}://${host}`.replace(/\/+$/, "")
+      try {
+        const seeded = await bootstrapHairPlumbingWebsiteIfNeeded(supabase, {
+          userId: profile.id,
+          slug: (profile.business_web_profile_slug || "").trim() || "hair-plumbing",
+          metadata: metaRaw,
+          publicOrigin,
+        })
+        if (seeded) {
+          const { data: refreshed } = await supabase.from("profiles").select(PROFILE_SELECT).eq("id", profile.id).maybeSingle()
+          if (refreshed?.id) profile = refreshed as ProfileRow
+        }
+      } catch (seedErr) {
+        console.error("[public-business-profile] hair plumbing seed", seedErr)
+      }
     }
 
     const settings = parseSettings(profile.metadata)
@@ -639,6 +682,8 @@ export async function handlePublicBusinessProfile(req: VercelRequest, res: Verce
       textStyles: Object.keys(settings.textStyles).length ? settings.textStyles : undefined,
       homeSectionOrder: settings.homeSectionOrder,
       fixedBackground: settings.fixedBackground !== false,
+      footerCopyright: settings.footerCopyright.trim() || undefined,
+      showPoweredBy: settings.showPoweredBy === true ? true : undefined,
     })
   } catch (e) {
     console.error("[public-business-profile]", e)

@@ -57,6 +57,10 @@ export type PublicBusinessProfileData = {
   textStyles?: WebsiteTextStyles
   homeSectionOrder?: WebsiteHomeSectionId[]
   fixedBackground?: boolean
+  /** Client footer line (no Design.com / third-party watermarks). */
+  footerCopyright?: string
+  /** Opt-in Tradesman badge — off by default for Classic hosted sites. */
+  showPoweredBy?: boolean
 }
 
 export type WebsiteCanvasEditorProps = {
@@ -1745,6 +1749,16 @@ export function BusinessProfilePublicSite({
           position: absolute;
         }
         .bp-showcase-sticky .bp-showcase-btn { flex: 1; }
+        .bp-client-footer {
+          position: relative; z-index: 2;
+          padding: 28px 24px 36px;
+          text-align: center;
+          font-size: 14px;
+          color: #64748b;
+          background: #fff;
+          border-top: 1px solid #e2e8f0;
+          font-family: "Jost", system-ui, sans-serif;
+        }
         .bp-work-photos {
           grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr));
         }
@@ -1806,7 +1820,25 @@ export function BusinessProfilePublicSite({
           <SocialFollowBlock facebookUrl={data.facebookUrl} instagramUrl={data.instagramUrl} />
         </div>
       )}
-      <PoweredByFooter />
+      {data.showPoweredBy === true ? <PoweredByFooter /> : null}
+      {data.showPoweredBy === true ? null : (
+        <CanvasEditable
+          as="div"
+          targetId="footer.copyright"
+          editMode={Boolean(previewMode && editor?.onSelectTarget)}
+          selectedTargetId={editor?.selectedTargetId}
+          onSelectTarget={editor?.onSelectTarget}
+          onTargetContextMenu={editor?.onTargetContextMenu}
+          onPatchTextStyle={editor?.onPatchTextStyle}
+          enableMoveResize={Boolean(previewMode && editor?.onSelectTarget)}
+          offsetX={data.textStyles?.["footer.copyright"]?.offsetX ?? 0}
+          offsetY={data.textStyles?.["footer.copyright"]?.offsetY ?? 0}
+          className="bp-client-footer"
+          style={websiteTextStyleToCss(data.textStyles?.["footer.copyright"]) as CSSProperties}
+        >
+          {data.footerCopyright?.trim() || `© ${new Date().getFullYear()} ${data.businessName}. All rights reserved.`}
+        </CanvasEditable>
+      )}
       {lightbox ? <PhotoLightbox src={lightbox.src} alt={lightbox.alt} onClose={() => setLightbox(null)} /> : null}
     </div>
   )
