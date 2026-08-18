@@ -892,9 +892,8 @@ export default function WebsiteBuilderPage() {
             Keep background photo fixed while bars scroll over it
           </label>
           <p style={{ margin: 0, fontSize: 11, color: "#475569", lineHeight: 1.45 }}>
-            Drag a photo from the library onto the dark page background (or select “Background” in the preview). The
-            gold/brass sink photo was not in the Design.com export folder we received — only the three service photos —
-            so upload that sink image with + Photo, then drag it onto the background slot.
+            Drag a photo from the library onto the page background, or click <strong>BG</strong> on a thumbnail. Keep
+            “stationary background” checked so sections scroll over the image.
           </p>
         </div>
 
