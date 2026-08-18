@@ -601,9 +601,9 @@ export async function handlePublicBusinessProfile(req: VercelRequest, res: Verce
       profile.metadata && typeof profile.metadata === "object" && !Array.isArray(profile.metadata)
         ? (profile.metadata as Record<string, unknown>)
         : {}
-    const email = typeof profile.email === "string" ? profile.email.toLowerCase() : ""
+    const profileEmail = typeof profile.email === "string" ? profile.email.toLowerCase() : ""
     const isHairPlumbing =
-      slug === "hair-plumbing" || slug === "hairplumbing" || email === "shair@hairplumbing.com"
+      slug === "hair-plumbing" || slug === "hairplumbing" || profileEmail === "shair@hairplumbing.com"
     if (isHairPlumbing && !metaRaw.hair_plumbing_site_seeded_at) {
       const proto = String(req.headers["x-forwarded-proto"] || "https")
       const host = String(req.headers["x-forwarded-host"] || req.headers.host || "www.tradesman-us.com")
