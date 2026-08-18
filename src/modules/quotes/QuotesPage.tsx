@@ -4626,16 +4626,32 @@ export default function QuotesPage(_props: QuotesPageProps) {
       }
       const shortId = selectedQuote.id.slice(0, 8)
       const pdfFilename = `estimate-${shortId}.pdf`
-      const pdfUrl = await uploadBytesForOutbound(userId, pdfBytes, pdfFilename, "estimate-sms", "application/pdf")
-      if (!pdfUrl) throw new Error("Could not upload estimate PDF for MMS.")
-      const mediaPublicUrls: string[] = [pdfUrl]
+      // Upload under the signed-in auth user (RLS). Outbound still uses account-owner userId for Twilio/email lines.
+      const pdfUrl = await uploadBytesForOutbound(
+        authUserId || userId,
+        pdfBytes,
+        pdfFilename,
+        "estimate-sms",
+        "application/pdf",
+      )
+      if (!pdfUrl) {
+        throw new Error(
+          "Could not upload estimate PDF for SMS (storage permission). Sign in again, or try Email / Download.",
+        )
+      }
+      // Carriers often reject PDF MMS; put a download link in the body and only MMS image attachments.
+      const mediaPublicUrls: string[] = []
       if (quoteSmsAttachEntity) {
         const copyRows = entityAttachmentsForCustomerCopy(quoteEntityRows)
         for (const row of copyRows) {
           const url = row.public_url?.trim()
-          if (url && mediaPublicUrls.length < 10) mediaPublicUrls.push(url)
+          const ct = (row.content_type || "").toLowerCase()
+          const isImage = ct.startsWith("image/") || /\.(jpe?g|png|gif|webp)(\?|$)/i.test(url || "")
+          if (url && isImage && mediaPublicUrls.length < 10) mediaPublicUrls.push(url)
         }
       }
+      const bodyWithPdf =
+        pdfUrl && !body.includes(pdfUrl) ? `${body.trim()}\n\nEstimate PDF:\n${pdfUrl}` : body
       const res = await fetch("/api/outbound-messages?__channel=sms", {
         method: "POST",
         headers: {
@@ -4645,11 +4661,14 @@ export default function QuotesPage(_props: QuotesPageProps) {
         body: outboundMessagesJsonBody({
           to: phone,
           // E-sign URLs must not be sliced by the 280-char automated clamp (that mid-cuts /e/{token}).
-          body: /\/e\/[a-z0-9]+/i.test(body) ? truncateOutboundSmsHard(body) : clampAutomatedNotifyInnerText(body),
+          body:
+            /\/e\/[a-z0-9]+/i.test(bodyWithPdf) || /Estimate PDF:/i.test(bodyWithPdf)
+              ? truncateOutboundSmsHard(bodyWithPdf)
+              : clampAutomatedNotifyInnerText(bodyWithPdf),
           userId,
           conversationId: selectedQuote.conversation_id || undefined,
           customerId: selectedQuote.customer_id,
-          mediaPublicUrls,
+          ...(mediaPublicUrls.length ? { mediaPublicUrls } : {}),
         }),
       })
       const raw = await res.text()
@@ -4666,7 +4685,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
         if (!options?.skipPanelClose) setCustomerDeliveryPanel(null)
         return true
       }
-      if (!sandboxTraining && !options?.skipPanelClose) alert("Text sent with estimate PDF attached.")
+      if (!sandboxTraining && !options?.skipPanelClose) alert("Text sent with estimate PDF link.")
       if (supabase && userId && selectedQuote?.id) {
         void archiveEstimatePdfFromQuote(supabase, userId, selectedQuote.id, "manual").catch(() => undefined)
       }

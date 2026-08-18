@@ -1,5 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 
+/** Bump to re-apply Classic content (logo, copy, images) for Hair Plumbing. */
+export const HAIR_PLUMBING_SITE_SEED_VERSION = 2
+
 const CONTENT = {
   heroHeadline: "Expert Plumbers\nQuality Service",
   tagline: "HONEST WORK AT A FAIR PRICE",
@@ -38,17 +41,18 @@ const CONTENT = {
   ],
 }
 
-/** One-shot Classic site preload for Hair Plumbing (no Design.com chrome). Uses public /seed/ URLs — no storage upload. */
+/** Classic site preload for Hair Plumbing (no Design.com chrome). Uses public /seed/ URLs. */
 export async function bootstrapHairPlumbingWebsiteIfNeeded(
   service: SupabaseClient,
   opts: { userId: string; slug: string; metadata: Record<string, unknown>; publicOrigin: string },
 ): Promise<boolean> {
-  if (opts.metadata.hair_plumbing_site_seeded_at) return false
+  if (opts.metadata.hair_plumbing_site_seed_v === HAIR_PLUMBING_SITE_SEED_VERSION) return false
 
   const base = opts.publicOrigin.replace(/\/+$/, "")
   const softener = `${base}/seed/hair-plumbing/water-softener.jpg`
   const repairs = `${base}/seed/hair-plumbing/service-repairs.jpg`
   const heater = `${base}/seed/hair-plumbing/water-heater.jpg`
+  const logo = `${base}/seed/hair-plumbing/logo.png`
   const workPhotoUrls = [softener, repairs, heater]
   const imageSlots = {
     background: softener,
@@ -69,7 +73,7 @@ export async function bootstrapHairPlumbingWebsiteIfNeeded(
     showAddress: true,
     showServiceArea: false,
     showBusinessHours: true,
-    profilePhotoUrl: null,
+    profilePhotoUrl: logo,
     workPhotoUrls,
     publishedSlug: opts.slug,
     templateId: "hair_plumbing" as const,
@@ -126,6 +130,7 @@ export async function bootstrapHairPlumbingWebsiteIfNeeded(
 
   const nextMeta = {
     ...opts.metadata,
+    company_logo_url: logo,
     business_public_profile_v1: site,
     hosted_website_v1: {
       ...(typeof opts.metadata.hosted_website_v1 === "object" && opts.metadata.hosted_website_v1
@@ -136,6 +141,7 @@ export async function bootstrapHairPlumbingWebsiteIfNeeded(
       publicUrl: `${base}/${opts.slug}`,
     },
     hair_plumbing_site_seeded_at: new Date().toISOString(),
+    hair_plumbing_site_seed_v: HAIR_PLUMBING_SITE_SEED_VERSION,
   }
 
   const { error } = await service

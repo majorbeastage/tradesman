@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type CSSProperties, type DragEvent } from "react"
 import { BusinessProfilePublicSite, type PublicBusinessProfileData } from "../public/BusinessProfilePublicSite"
+import { useAuth } from "../../contexts/AuthContext"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
+import { useCustomerDataScope } from "../../hooks/useCustomerDataScope"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import {
@@ -81,7 +83,11 @@ function normalizeDomainInput(raw: string): string {
 }
 
 export default function WebsiteBuilderPage() {
-  const userId = useScopedUserId()
+  const { userId: authUserId } = useAuth()
+  const scopedUserId = useScopedUserId()
+  const { dataUserId } = useCustomerDataScope()
+  /** Hair Plumbing / org sites live on the account owner; Bhair should edit Shair's hosted site. */
+  const userId = dataUserId || scopedUserId
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -406,12 +412,17 @@ export default function WebsiteBuilderPage() {
 
   async function uploadImage(file: File, kind: "work" | "logo") {
     if (!supabase || !userId) return null
+    if (!authUserId) {
+      setError("Sign in again to upload images.")
+      return null
+    }
     if (!file.type.startsWith("image/")) {
       setError("Choose an image file.")
       return null
     }
     const ext = file.name.split(".").pop()?.toLowerCase() || "jpg"
-    const path = `${userId}/web-profile/${kind}_${Date.now()}.${ext}`
+    // Storage RLS requires the first path segment to be auth.uid() (not the org data user).
+    const path = `${authUserId}/web-profile/${kind}_${Date.now()}.${ext}`
     const { error: upErr } = await supabase.storage.from("profile-photos").upload(path, file, {
       upsert: true,
       contentType: file.type,

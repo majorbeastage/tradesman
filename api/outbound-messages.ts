@@ -85,8 +85,18 @@ async function resolveSupabaseClientForOutbound(
     auth: { persistSession: false, autoRefreshToken: false },
   })
   const { data: userData, error: authErr } = await sb.auth.getUser(token)
-  if (authErr || !userData.user?.id || userData.user.id !== userId) {
+  const jwtUserId = userData.user?.id?.trim() || ""
+  if (authErr || !jwtUserId) {
     throw new Error("Invalid or expired session for outbound email (sign in again).")
+  }
+  // Estimates / org scope often pass the account-owner userId while a managed user (or OM) is signed in.
+  if (jwtUserId !== userId) {
+    const jwtOwner = await resolveCommunicationAccountOwnerId(sb, jwtUserId)
+    const bodyOwner = await resolveCommunicationAccountOwnerId(sb, userId)
+    const allowed = jwtOwner === bodyOwner || jwtOwner === userId || jwtUserId === bodyOwner
+    if (!allowed) {
+      throw new Error("Invalid or expired session for outbound email (sign in again).")
+    }
   }
   return sb
 }
@@ -597,7 +607,7 @@ async function handleSms(req: VercelRequest, res: VercelResponse): Promise<Verce
 
   if (!to || !body) return res.status(400).json({ error: "to and body are required" })
 
-  if (supabase && userId && (await isPhoneSmsOptedOut(supabase, userId, to))) {
+  if (supabase && userId && (await isPhoneSmsOptedOut(supabase, commOwnerId, to))) {
     return res.status(403).json({
       error:
         "This phone number has opted out of SMS (STOP). Do not send until the customer texts START or you remove the opt-out in the database.",

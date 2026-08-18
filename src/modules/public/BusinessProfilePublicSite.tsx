@@ -1602,8 +1602,9 @@ export function BusinessProfilePublicSite({
           font-weight: 700; font-size: 1.35rem; color: inherit; letter-spacing: 0.02em;
         }
         .bp-showcase-topbar-logo {
-          width: 52px; height: 52px; object-fit: cover; border-radius: 999px;
-          border: 2px solid rgba(255,255,255,0.35); cursor: zoom-in; background: #fff;
+          width: 56px; height: 56px; object-fit: contain; border-radius: 999px;
+          border: 2px solid rgba(15,23,42,0.12); cursor: zoom-in; background: #fff;
+          padding: 4px; box-sizing: border-box;
         }
         .bp-showcase-topbar-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
         .bp-showcase-nav-link {

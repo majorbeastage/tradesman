@@ -28,6 +28,19 @@ export function normalizeEntityAttachmentFile(file: File): File {
  * Upload files to public comm-attachments bucket under the signed-in user's folder.
  * Returns public URLs for use with /api/outbound-messages (email attachments, MMS).
  */
+/**
+ * Storage RLS only allows uploads under auth.uid(). Account-owner / org-scoped
+ * data user ids (e.g. Bhair → Shair) must not be used as the folder prefix.
+ */
+async function resolveStorageUploadUserId(preferredUserId?: string | null): Promise<string | null> {
+  if (!supabase) return null
+  const { data } = await supabase.auth.getUser()
+  const authId = data.user?.id?.trim() || ""
+  if (authId) return authId
+  const preferred = typeof preferredUserId === "string" ? preferredUserId.trim() : ""
+  return preferred || null
+}
+
 /** Upload raw bytes to comm-attachments; returns a public HTTPS URL for outbound email/MMS. */
 export async function uploadBytesForOutbound(
   userId: string,
@@ -36,10 +49,12 @@ export async function uploadBytesForOutbound(
   subfolder: string,
   contentType = "application/octet-stream",
 ): Promise<string | null> {
-  if (!supabase || !userId || !bytes.length) return null
+  if (!supabase || !bytes.length) return null
+  const storageUserId = await resolveStorageUploadUserId(userId)
+  if (!storageUserId) return null
   const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80) || "file.bin"
   const safeSub = subfolder.replace(/[^a-zA-Z0-9/_-]/g, "").slice(0, 64) || "misc"
-  const path = `${userId}/${safeSub}/${crypto.randomUUID()}-${safeName}`
+  const path = `${storageUserId}/${safeSub}/${crypto.randomUUID()}-${safeName}`
   const buf = new ArrayBuffer(bytes.byteLength)
   new Uint8Array(buf).set(bytes)
   const blob = new Blob([buf], { type: contentType })
@@ -56,12 +71,14 @@ export async function uploadBytesForOutbound(
 }
 
 export async function uploadFilesForOutbound(userId: string, files: File[], subfolder: string): Promise<string[]> {
-  if (!supabase || !userId || !files.length) return []
+  if (!supabase || !files.length) return []
+  const storageUserId = await resolveStorageUploadUserId(userId)
+  if (!storageUserId) return []
   const safeSub = subfolder.replace(/[^a-zA-Z0-9/_-]/g, "").slice(0, 64) || "misc"
   const urls: string[] = []
   for (const f of files) {
     const name = f.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80)
-    const path = `${userId}/${safeSub}/${crypto.randomUUID()}-${name}`
+    const path = `${storageUserId}/${safeSub}/${crypto.randomUUID()}-${name}`
     const { error } = await supabase.storage.from(BUCKET).upload(path, f, {
       upsert: false,
       contentType: f.type || "application/octet-stream",

@@ -8,7 +8,7 @@ import {
   getPrimaryEmailChannelForUser,
   resolveOutboundEmailFromAddress,
 } from "./_communications.js"
-import { bootstrapHairPlumbingWebsiteIfNeeded } from "./_seedHairPlumbingWebsite.js"
+import { bootstrapHairPlumbingWebsiteIfNeeded, HAIR_PLUMBING_SITE_SEED_VERSION } from "./_seedHairPlumbingWebsite.js"
 
 const BUSINESS_PUBLIC_PROFILE_META_KEY = "business_public_profile_v1"
 const PLATFORM_EMAIL_ROOT_DOMAIN = "tradesman-us.com"
@@ -604,7 +604,7 @@ export async function handlePublicBusinessProfile(req: VercelRequest, res: Verce
     const profileEmail = typeof profile.email === "string" ? profile.email.toLowerCase() : ""
     const isHairPlumbing =
       slug === "hair-plumbing" || slug === "hairplumbing" || profileEmail === "shair@hairplumbing.com"
-    if (isHairPlumbing && !metaRaw.hair_plumbing_site_seeded_at) {
+    if (isHairPlumbing && metaRaw.hair_plumbing_site_seed_v !== HAIR_PLUMBING_SITE_SEED_VERSION) {
       const proto = String(req.headers["x-forwarded-proto"] || "https")
       const host = String(req.headers["x-forwarded-host"] || req.headers.host || "www.tradesman-us.com")
       const publicOrigin = `${proto}://${host}`.replace(/\/+$/, "")
