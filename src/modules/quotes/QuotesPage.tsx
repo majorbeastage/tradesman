@@ -2134,6 +2134,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
   async function loadQuotes() {
     if (!userId || !supabase) return
     setQuotesError("")
+    // Keep this list query light: never nest conversations→messages here (that times out on busy accounts).
+    // Thread messages load in openQuote() for the selected estimate only.
     const selectWith = `
         id,
         status,
@@ -2149,12 +2151,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
           customer_identifiers (
             type,
             value
-          )
-        ),
-        conversations (
-          messages (
-            content,
-            created_at
           )
         )
       `
@@ -2173,12 +2169,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
             type,
             value
           )
-        ),
-        conversations (
-          messages (
-            content,
-            created_at
-          )
         )
       `
     const selectWithout = `
@@ -2194,12 +2184,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
             type,
             value
           )
-        ),
-        conversations (
-          messages (
-            content,
-            created_at
-          )
         )
       `
     const listFirst = await supabase
@@ -2209,6 +2193,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
       .is("scheduled_at", null)
       .is("removed_at", null)
       .order("updated_at", { ascending: false })
+      .limit(500)
 
     let data: any[] | null = listFirst.data
     let error = listFirst.error
@@ -2221,6 +2206,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
         .is("scheduled_at", null)
         .is("removed_at", null)
         .order("updated_at", { ascending: false })
+        .limit(500)
       data = r.data
       error = r.error
       if (data) {
@@ -2234,6 +2220,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
         .select(selectWithout)
         .eq("user_id", userId)
         .order("updated_at", { ascending: false })
+        .limit(500)
       if (res.error) {
         setQuotesError(res.error.message)
         setQuotes([])
@@ -3348,12 +3335,13 @@ export default function QuotesPage(_props: QuotesPageProps) {
 
     const convId = row.conversation_id as string | null
     if (convId) {
-      const { data: msgs } = await supabase
+      const { data: msgsDesc } = await supabase
         .from("messages")
         .select("*")
         .eq("conversation_id", convId)
-        .order("created_at", { ascending: true })
-      setQuoteThreadMessages(msgs || [])
+        .order("created_at", { ascending: false })
+        .limit(100)
+      setQuoteThreadMessages([...(msgsDesc || [])].reverse())
     } else {
       setQuoteThreadMessages([])
     }
@@ -5632,7 +5620,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
             {quotesError}
             {quotesError.toLowerCase().includes("job_type_id")
               ? " Run supabase-quotes-table.sql in the Supabase SQL Editor to add quotes.job_type_id."
-              : " Create the quotes table in Supabase (run supabase-quotes-table.sql) if the table is missing."}
+              : quotesError.toLowerCase().includes("timeout") || quotesError.toLowerCase().includes("canceling statement")
+                ? " The estimates list query timed out (often from too much nested data). Refresh after the latest app update; if it persists, run supabase/quotes-list-performance-indexes.sql in the Supabase SQL Editor."
+                : " Create the quotes table in Supabase (run supabase-quotes-table.sql) if the table is missing."}
           </p>
         )}
 
