@@ -77,12 +77,34 @@ export function websiteEditTargetLabel(id: string): string {
   if (feature) return `Feature ${Number(feature[1]) + 1} ${feature[2]}`
   const service = /^service\.(\d+)\.(title|body)$/.exec(id)
   if (service) return `Service ${Number(service[1]) + 1} ${service[2]}`
+  const canvas = /^canvas\.(.+)$/.exec(id)
+  if (canvas) return "Freeform field"
   return id
+}
+
+export function getCanvasItemIdFromTarget(targetId: string): string | null {
+  const m = /^canvas\.(.+)$/.exec(targetId)
+  return m?.[1] || null
 }
 
 export function websiteEditTargetKind(id: string): WebsiteEditTargetKind {
   if (id.startsWith("section.")) return "section"
   if (id.startsWith("slot.")) return "image"
+  // canvas.* kind is resolved via canvasItems in the builder
+  return "text"
+}
+
+export function resolveWebsiteEditTargetKind(
+  id: string,
+  canvasItems: Array<{ id: string; kind: "text" | "photo" }>,
+): WebsiteEditTargetKind {
+  if (id.startsWith("section.")) return "section"
+  if (id.startsWith("slot.")) return "image"
+  const canvasId = getCanvasItemIdFromTarget(id)
+  if (canvasId) {
+    const item = canvasItems.find((c) => c.id === canvasId)
+    return item?.kind === "photo" ? "image" : "text"
+  }
   return "text"
 }
 
@@ -122,6 +144,11 @@ export function getWebsiteTextValue(settings: BusinessPublicProfileSettings, tar
     const idx = Number(service[1])
     const card = settings.serviceCards[idx]
     return service[2] === "title" ? card?.title ?? "" : card?.body ?? ""
+  }
+  const canvasId = getCanvasItemIdFromTarget(targetId)
+  if (canvasId) {
+    const item = settings.canvasItems.find((c) => c.id === canvasId)
+    return item?.kind === "text" ? item.text ?? "" : ""
   }
   return ""
 }
@@ -199,6 +226,15 @@ export function setWebsiteTextValue(
     })
     const servicesOfferedText = serviceCards.map((c) => c.title).filter(Boolean).join(", ")
     return { ...settings, serviceCards, servicesOfferedText, showServicesOffered: true }
+  }
+  const canvasId = getCanvasItemIdFromTarget(targetId)
+  if (canvasId) {
+    return {
+      ...settings,
+      canvasItems: settings.canvasItems.map((c) =>
+        c.id === canvasId && c.kind === "text" ? { ...c, text: value.slice(0, 2000) } : c,
+      ),
+    }
   }
   return settings
 }

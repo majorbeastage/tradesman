@@ -36,6 +36,7 @@ type BusinessPublicProfileSettings = {
   showServiceArea: boolean
   showBusinessHours: boolean
   profilePhotoUrl: string | null
+  faviconUrl: string | null
   workPhotoUrls: string[]
   publishedSlug: string
   templateId: "classic" | "hero" | "split" | "gallery" | "showcase" | "hair_plumbing"
@@ -56,7 +57,16 @@ type BusinessPublicProfileSettings = {
   showSocialLinks: boolean
   socialLinks: Record<string, string>
   imageSlots: Record<string, string>
-  scrollBands: Array<{ id: string; title: string; body: string; tone: "dark" | "light" | "clear"; enabled?: boolean }>
+  scrollBands: Array<{
+    id: string
+    title: string
+    body: string
+    tone: "dark" | "light" | "clear"
+    enabled?: boolean
+    backgroundColor?: string
+    texture?: string
+    overlayOpacity?: number
+  }>
   heroHeadline: string
   ctaLabel: string
   customDomain: string
@@ -66,6 +76,7 @@ type BusinessPublicProfileSettings = {
     contact: { enabled: boolean; title: string }
   }
   customPages: Array<{ id: string; enabled: boolean; title: string; body: string }>
+  canvasItems: Array<{ id: string; kind: "text" | "photo"; text?: string; imageUrl?: string | null }>
   featureCards: Array<{ id: string; title: string; body: string }>
   serviceCards: Array<{ id: string; title: string; body: string }>
   textStyles: Record<string, Record<string, string | number>>
@@ -73,6 +84,16 @@ type BusinessPublicProfileSettings = {
   fixedBackground: boolean
   footerCopyright: string
   showPoweredBy: boolean
+  navBar?: {
+    showLogo: boolean
+    showBusinessName: boolean
+    showHome: boolean
+    showAbout: boolean
+    showContact: boolean
+    showCall: boolean
+    backgroundColor?: string
+    textColor?: string
+  }
 }
 
 const DEFAULT_THEME = {
@@ -86,6 +107,35 @@ const DEFAULT_THEME = {
 function normalizeHexColor(raw: string, fallback: string): string {
   const t = raw.trim()
   return /^#[0-9a-fA-F]{6}$/.test(t) ? t.toLowerCase() : fallback
+}
+
+function defaultWebsiteNavBar(): BusinessPublicProfileSettings["navBar"] {
+  return {
+    showLogo: true,
+    showBusinessName: true,
+    showHome: true,
+    showAbout: true,
+    showContact: true,
+    showCall: true,
+  }
+}
+
+function parseWebsiteNavBar(raw: unknown): BusinessPublicProfileSettings["navBar"] {
+  const base = defaultWebsiteNavBar()
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return base
+  const o = raw as Record<string, unknown>
+  const hex = (v: unknown) =>
+    typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v.trim()) ? v.trim().toLowerCase() : undefined
+  return {
+    showLogo: o.showLogo !== false,
+    showBusinessName: o.showBusinessName !== false,
+    showHome: o.showHome !== false,
+    showAbout: o.showAbout !== false,
+    showContact: o.showContact !== false,
+    showCall: o.showCall !== false,
+    backgroundColor: hex(o.backgroundColor),
+    textColor: hex(o.textColor),
+  }
 }
 
 function parseTheme(raw: unknown): BusinessPublicProfileSettings["theme"] {
@@ -180,6 +230,7 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
     showServiceArea: false,
     showBusinessHours: true,
     profilePhotoUrl: null,
+    faviconUrl: null,
     workPhotoUrls: [],
     publishedSlug: "",
     templateId: "hair_plumbing",
@@ -215,6 +266,7 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
       contact: { enabled: true, title: "Contact Us" },
     },
     customPages: [],
+    canvasItems: [],
     featureCards: [],
     serviceCards: [],
     textStyles: {},
@@ -222,6 +274,7 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
     fixedBackground: true,
     footerCopyright: "",
     showPoweredBy: false,
+    navBar: defaultWebsiteNavBar(),
   }
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return base
   const meta = metadata as Record<string, unknown>
@@ -253,18 +306,35 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
   }
   const scrollBands: BusinessPublicProfileSettings["scrollBands"] = []
   if (Array.isArray(o.scrollBands)) {
-    for (const item of o.scrollBands.slice(0, 6)) {
+    for (const item of o.scrollBands.slice(0, 12)) {
       if (!item || typeof item !== "object" || Array.isArray(item)) continue
       const b = item as Record<string, unknown>
-      scrollBands.push({
+      const band: BusinessPublicProfileSettings["scrollBands"][number] = {
         id: typeof b.id === "string" && b.id.trim() ? b.id.trim().slice(0, 40) : `band_${scrollBands.length + 1}`,
         title: typeof b.title === "string" ? b.title.trim().slice(0, 120) : "",
         body: typeof b.body === "string" ? b.body.trim().slice(0, 2000) : "",
         tone: b.tone === "light" || b.tone === "clear" || b.tone === "dark" ? b.tone : "dark",
         enabled: b.enabled !== false,
-      })
+      }
+      if (typeof b.backgroundColor === "string" && /^#[0-9a-fA-F]{6}$/.test(b.backgroundColor.trim())) {
+        band.backgroundColor = b.backgroundColor.trim().toLowerCase()
+      }
+      if (
+        b.texture === "noise" ||
+        b.texture === "dots" ||
+        b.texture === "lines" ||
+        b.texture === "gradient" ||
+        b.texture === "none"
+      ) {
+        band.texture = b.texture
+      }
+      if (typeof b.overlayOpacity === "number" && Number.isFinite(b.overlayOpacity)) {
+        band.overlayOpacity = Math.max(0, Math.min(100, Math.round(b.overlayOpacity)))
+      }
+      scrollBands.push(band)
     }
   }
+  const navBar = parseWebsiteNavBar(o.navBar)
   const homeSections: Record<string, boolean> = {
     hero: true,
     about_band: true,
@@ -300,6 +370,7 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
     showServiceArea: o.showServiceArea === true,
     showBusinessHours: o.showBusinessHours !== false,
     profilePhotoUrl: typeof o.profilePhotoUrl === "string" && o.profilePhotoUrl.trim() ? o.profilePhotoUrl.trim() : null,
+    faviconUrl: typeof o.faviconUrl === "string" && o.faviconUrl.trim() ? o.faviconUrl.trim().slice(0, 800) : null,
     workPhotoUrls,
     publishedSlug: typeof o.publishedSlug === "string" ? normalizeSlug(o.publishedSlug) : "",
     templateId: parseTemplateId(o.templateId),
@@ -343,6 +414,7 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
       },
     },
     customPages: parseCustomPages(o.customPages),
+    canvasItems: parseCanvasItems(o.canvasItems),
     featureCards: parseContentCards(o.featureCards, 4),
     serviceCards: parseContentCards(o.serviceCards, 6),
     textStyles: parseTextStyles(o.textStyles),
@@ -352,7 +424,28 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
     fixedBackground: o.fixedBackground !== false,
     footerCopyright: readNestedProfileString(o, "footerCopyright", "footer_copyright").slice(0, 200),
     showPoweredBy: o.showPoweredBy === true,
+    navBar,
   }
+}
+
+function parseCanvasItems(raw: unknown): Array<{ id: string; kind: "text" | "photo"; text?: string; imageUrl?: string | null }> {
+  if (!Array.isArray(raw)) return []
+  const out: Array<{ id: string; kind: "text" | "photo"; text?: string; imageUrl?: string | null }> = []
+  for (const item of raw.slice(0, 24)) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue
+    const c = item as Record<string, unknown>
+    const id = typeof c.id === "string" && c.id.trim() ? c.id.trim().replace(/[^a-z0-9_-]/gi, "").slice(0, 40) : ""
+    if (!id) continue
+    const kind = c.kind === "photo" ? "photo" : c.kind === "text" ? "text" : null
+    if (!kind) continue
+    out.push({
+      id,
+      kind,
+      text: typeof c.text === "string" ? c.text.slice(0, 2000) : kind === "text" ? "New text" : undefined,
+      imageUrl: typeof c.imageUrl === "string" && c.imageUrl.trim() ? c.imageUrl.trim().slice(0, 800) : null,
+    })
+  }
+  return out
 }
 
 function parseSocialLinks(raw: unknown, facebookUrl: string, instagramUrl: string): Record<string, string> {
@@ -690,6 +783,7 @@ export async function handlePublicBusinessProfile(req: VercelRequest, res: Verce
       tagline: settings.tagline.trim() || undefined,
       aboutUs: settings.aboutUs.trim() || undefined,
       profilePhotoUrl: profilePhotoUrl || null,
+      faviconUrl: settings.faviconUrl || profilePhotoUrl || null,
       workPhotoUrls: settings.workPhotoUrls,
       phone: phone || null,
       email: email || null,
@@ -716,6 +810,7 @@ export async function handlePublicBusinessProfile(req: VercelRequest, res: Verce
       homeSections: settings.homeSections,
       subPages: settings.subPages,
       customPages: settings.customPages.length ? settings.customPages : undefined,
+      canvasItems: settings.canvasItems.length ? settings.canvasItems : undefined,
       featureCards: settings.featureCards.length ? settings.featureCards : undefined,
       serviceCards: settings.serviceCards.length ? settings.serviceCards : undefined,
       textStyles: Object.keys(settings.textStyles).length ? settings.textStyles : undefined,
@@ -723,6 +818,7 @@ export async function handlePublicBusinessProfile(req: VercelRequest, res: Verce
       fixedBackground: settings.fixedBackground !== false,
       footerCopyright: settings.footerCopyright.trim() || undefined,
       showPoweredBy: settings.showPoweredBy === true ? true : undefined,
+      navBar: settings.navBar,
     })
   } catch (e) {
     console.error("[public-business-profile]", e)

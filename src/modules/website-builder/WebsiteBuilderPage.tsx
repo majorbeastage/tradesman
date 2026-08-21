@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type CSSProperties, type DragEvent } from "react"
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type CSSProperties,
+  type DragEvent,
+  type SetStateAction,
+} from "react"
 import { BusinessProfilePublicSite, type PublicBusinessProfileData } from "../public/BusinessProfilePublicSite"
 import { useAuth } from "../../contexts/AuthContext"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
@@ -6,9 +16,10 @@ import { useCustomerDataScope } from "../../hooks/useCustomerDataScope"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import {
-  BUSINESS_PROFILE_BRAND_PRESETS,
+  BUSINESS_PUBLIC_PROFILE_META_KEY,
   BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX,
   DEFAULT_BUSINESS_PROFILE_THEME,
+  WEBSITE_BAND_TEXTURE_OPTIONS,
   WEBSITE_BUILT_IN_LINK_OPTIONS,
   WEBSITE_BUILDER_PREVIEW_STORAGE_KEY,
   WEBSITE_FONT_OPTIONS,
@@ -17,31 +28,45 @@ import {
   WEBSITE_SOCIAL_PLATFORM_OPTIONS,
   businessWebProfilePublicUrl,
   businessWebProfileSlugFromName,
+  defaultWebsiteNavBar,
   emptyBusinessPublicProfileSettings,
   mergeBusinessPublicProfileMetadata,
   parseBusinessProfileListField,
   parseBusinessPublicProfileSettings,
+  randomizeBusinessProfileTheme,
+  type BusinessProfileTemplateId,
   type BusinessPublicProfileSettings,
   type WebsiteBuiltInLinkTarget,
   type WebsiteHomeSectionId,
   type WebsiteImageSlotId,
   type WebsitePublicPageId,
+  type WebsiteSavedDraft,
+  type WebsiteScrollBand,
   type WebsiteSocialPlatformId,
   type WebsiteTextStyle,
 } from "../../lib/businessPublicProfile"
 import { mergeHostedWebsiteMetadata, parseHostedWebsiteDoc, VERCEL_DNS_INSTRUCTIONS } from "../../lib/hostedWebsite"
 import { mergeSocialPresenceIntoMetadata, readSocialPresenceFromMetadata } from "../../lib/socialPresenceSync"
 import PlatformBadge from "../../components/PlatformBadge"
+import { BusinessProfileTemplatePicker } from "../../components/BusinessProfileTemplatePicker"
 import {
+  getCanvasItemIdFromTarget,
   getWebsiteTextValue,
   hideSectionFromSettings,
   patchWebsiteTextStyle,
+  resolveWebsiteEditTargetKind,
   sectionIdFromEditTarget,
   setWebsiteTextValue,
   showSectionInSettings,
   websiteEditTargetKind,
   websiteEditTargetLabel,
 } from "../../lib/websiteBuilderEdit"
+
+const HISTORY_MAX = 40
+
+function cloneSettings(s: BusinessPublicProfileSettings): BusinessPublicProfileSettings {
+  return JSON.parse(JSON.stringify(s)) as BusinessPublicProfileSettings
+}
 
 const COMPANY_LOGO_META_KEY = "company_logo_url"
 const EDITOR_INK = "#0f172a"
@@ -98,9 +123,10 @@ export default function WebsiteBuilderPage() {
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadingLogo, setUploadingLogo] = useState(false)
+  const [uploadingFavicon, setUploadingFavicon] = useState(false)
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
-  const [settings, setSettings] = useState<BusinessPublicProfileSettings>(() => emptyBusinessPublicProfileSettings())
+  const [settings, setSettingsState] = useState<BusinessPublicProfileSettings>(() => emptyBusinessPublicProfileSettings())
   const [contact, setContact] = useState<ContactSnapshot>({
     businessName: "",
     phone: null,
@@ -114,6 +140,58 @@ export default function WebsiteBuilderPage() {
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [dnsOpen, setDnsOpen] = useState(false)
+  const [isHairPlumbingAccount, setIsHairPlumbingAccount] = useState(false)
+  const [historyTick, setHistoryTick] = useState(0)
+  const undoStackRef = useRef<BusinessPublicProfileSettings[]>([])
+  const redoStackRef = useRef<BusinessPublicProfileSettings[]>([])
+  const skipHistoryRef = useRef(false)
+
+  const canUndo = historyTick >= 0 && undoStackRef.current.length > 0
+  const canRedo = historyTick >= 0 && redoStackRef.current.length > 0
+
+  const setSettings = useCallback((updater: SetStateAction<BusinessPublicProfileSettings>) => {
+    setSettingsState((prev) => {
+      const next = typeof updater === "function" ? (updater as (p: BusinessPublicProfileSettings) => BusinessPublicProfileSettings)(prev) : updater
+      if (!skipHistoryRef.current) {
+        undoStackRef.current = [...undoStackRef.current, cloneSettings(prev)].slice(-HISTORY_MAX)
+        redoStackRef.current = []
+        queueMicrotask(() => setHistoryTick((t) => t + 1))
+      }
+      return next
+    })
+  }, [])
+
+  const setSettingsSilent = useCallback((updater: SetStateAction<BusinessPublicProfileSettings>) => {
+    skipHistoryRef.current = true
+    setSettingsState(updater)
+    queueMicrotask(() => {
+      skipHistoryRef.current = false
+    })
+  }, [])
+
+  const undo = useCallback(() => {
+    const stack = undoStackRef.current
+    if (!stack.length) return
+    const snapshot = stack[stack.length - 1]!
+    undoStackRef.current = stack.slice(0, -1)
+    setSettingsState((cur) => {
+      redoStackRef.current = [...redoStackRef.current, cloneSettings(cur)].slice(-HISTORY_MAX)
+      queueMicrotask(() => setHistoryTick((t) => t + 1))
+      return snapshot
+    })
+  }, [])
+
+  const redo = useCallback(() => {
+    const stack = redoStackRef.current
+    if (!stack.length) return
+    const snapshot = stack[stack.length - 1]!
+    redoStackRef.current = stack.slice(0, -1)
+    setSettingsState((cur) => {
+      undoStackRef.current = [...undoStackRef.current, cloneSettings(cur)].slice(-HISTORY_MAX)
+      queueMicrotask(() => setHistoryTick((t) => t + 1))
+      return snapshot
+    })
+  }, [])
 
   const publicUrl = useMemo(() => {
     if (settings.customDomain.trim()) return `https://${normalizeDomainInput(settings.customDomain)}`
@@ -183,11 +261,15 @@ export default function WebsiteBuilderPage() {
         nextSettings.theme = {
           ...nextSettings.theme,
           accentColor: isHairPlumbingAccount
-            ? BUSINESS_PROFILE_BRAND_PRESETS[0].theme.accentColor
+            ? "#c41e3a"
             : DEFAULT_BUSINESS_PROFILE_THEME.accentColor || "#b91c1c",
         }
       }
-      setSettings(nextSettings)
+      setIsHairPlumbingAccount(isHairPlumbingAccount)
+      undoStackRef.current = []
+      redoStackRef.current = []
+      setHistoryTick((t) => t + 1)
+      setSettingsSilent(nextSettings)
       setSlug(nextSlug)
 
       const channelRows = channels ?? []
@@ -263,7 +345,7 @@ export default function WebsiteBuilderPage() {
     } finally {
       setLoading(false)
     }
-  }, [userId])
+  }, [userId, setSettingsSilent])
 
   useEffect(() => {
     void load()
@@ -289,6 +371,30 @@ export default function WebsiteBuilderPage() {
     }
   }, [contextMenu])
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey
+      if (!mod) return
+      const key = e.key.toLowerCase()
+      if (key === "z" && e.shiftKey) {
+        e.preventDefault()
+        redo()
+        return
+      }
+      if (key === "z") {
+        e.preventDefault()
+        undo()
+        return
+      }
+      if (key === "y") {
+        e.preventDefault()
+        redo()
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [undo, redo])
+
   const previewData: PublicBusinessProfileData = useMemo(() => {
     const logo = settings.profilePhotoUrl || contact.companyLogoUrl
     const social = settings.socialLinks
@@ -299,6 +405,7 @@ export default function WebsiteBuilderPage() {
       tagline: settings.tagline || undefined,
       aboutUs: settings.aboutUs || undefined,
       profilePhotoUrl: logo,
+      faviconUrl: settings.faviconUrl || logo || null,
       workPhotoUrls: settings.workPhotoUrls,
       phone: settings.showPhone ? contact.phone : null,
       email: settings.showEmail ? contact.email : null,
@@ -320,6 +427,7 @@ export default function WebsiteBuilderPage() {
       homeSections: settings.homeSections,
       subPages: settings.subPages,
       customPages: settings.customPages,
+      canvasItems: settings.canvasItems,
       featureCards: settings.featureCards,
       serviceCards: settings.serviceCards,
       textStyles: settings.textStyles,
@@ -327,6 +435,7 @@ export default function WebsiteBuilderPage() {
       fixedBackground: settings.fixedBackground,
       footerCopyright: settings.footerCopyright || undefined,
       showPoweredBy: settings.showPoweredBy === true,
+      navBar: settings.navBar,
     }
   }, [settings, contact, slug])
 
@@ -445,7 +554,7 @@ export default function WebsiteBuilderPage() {
         }
         throw upErr
       }
-      setSettings({ ...next, customDomain: domain })
+      setSettingsSilent({ ...next, customDomain: domain })
       setSlug(nextSlug)
       if (opts?.logoUrl) setContact((c) => ({ ...c, companyLogoUrl: opts.logoUrl ?? c.companyLogoUrl }))
       setMessage(next.enabled ? "Website published." : "Website draft saved (not published).")
@@ -456,7 +565,7 @@ export default function WebsiteBuilderPage() {
     }
   }
 
-  async function uploadImage(file: File, kind: "work" | "logo") {
+  async function uploadImage(file: File, kind: "work" | "logo" | "favicon") {
     if (!supabase || !userId) return null
     if (!authUserId) {
       setError("Sign in again to upload images.")
@@ -518,6 +627,24 @@ export default function WebsiteBuilderPage() {
     }
   }
 
+  async function onFaviconUpload(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ""
+    if (!file) return
+    setUploadingFavicon(true)
+    setError("")
+    try {
+      const url = await uploadImage(file, "favicon")
+      if (!url) return
+      setSettings((s) => ({ ...s, faviconUrl: url }))
+      setMessage("Browser icon updated — click Save & publish to go live.")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setUploadingFavicon(false)
+    }
+  }
+
   function assignSlot(slot: WebsiteImageSlotId, url: string | null) {
     setSettings((s) => {
       const imageSlots = { ...s.imageSlots }
@@ -549,41 +676,67 @@ export default function WebsiteBuilderPage() {
     setContextMenu(null)
   }
 
+  function onDropImageOnCanvasItem(itemId: string, imageUrl: string) {
+    setSettings((s) => ({
+      ...s,
+      canvasItems: s.canvasItems.map((c) => (c.id === itemId ? { ...c, imageUrl } : c)),
+    }))
+    setSelectedTargetId(`canvas.${itemId}`)
+    setContextMenu(null)
+  }
+
   function addTextField() {
-    const idx = Math.min(settings.featureCards.length, 3)
-    setSettings((s) => {
-      const nextCards = [
-        ...s.featureCards,
-        {
-          id: `feature_${Date.now().toString(36)}`,
-          title: "New highlight",
-          body: "Add a short description…",
-        },
-      ].slice(0, 4)
-      return {
-        ...s,
-        featureCards: nextCards,
-        homeSections: { ...s.homeSections, about_band: true },
-      }
-    })
-    setSelectedTargetId(`feature.${idx}.title`)
-    setMessage("Added a text highlight — edit it in the left panel.")
+    const id = `t_${Date.now().toString(36)}`
+    const targetId = `canvas.${id}`
+    const stack = settings.canvasItems.length
+    setSettings((s) => ({
+      ...s,
+      canvasItems: [
+        ...s.canvasItems,
+        { id, kind: "text" as const, text: "New text — click to edit" },
+      ].slice(0, 24),
+      textStyles: patchWebsiteTextStyle(s.textStyles, targetId, {
+        offsetX: 0,
+        offsetY: 40 + stack * 28,
+        maxWidth: 280,
+        fontSize: "22px",
+        fontWeight: "700",
+      }),
+    }))
+    setSelectedTargetId(targetId)
+    setMessage("Text field added — drag it on the page, edit copy in the panel above.")
   }
 
   function addPhotoField() {
-    const slots: WebsiteImageSlotId[] = ["feature_1", "feature_2", "service_1", "service_2", "service_3"]
-    const empty = slots.find((id) => !settings.imageSlots[id])
-    const target = empty || "feature_1"
+    const id = `p_${Date.now().toString(36)}`
+    const targetId = `canvas.${id}`
+    const stack = settings.canvasItems.length
     setSettings((s) => ({
       ...s,
-      homeSections: {
-        ...s.homeSections,
-        about_band: target.startsWith("feature") ? true : s.homeSections.about_band,
-        services_band: target.startsWith("service") ? true : s.homeSections.services_band,
-      },
+      canvasItems: [...s.canvasItems, { id, kind: "photo" as const, imageUrl: null }].slice(0, 24),
+      textStyles: patchWebsiteTextStyle(s.textStyles, targetId, {
+        offsetX: 40 + (stack % 3) * 24,
+        offsetY: 60 + stack * 28,
+        maxWidth: 200,
+        imageSize: 150,
+      }),
     }))
-    setSelectedTargetId(`slot.${target}`)
-    setMessage(empty ? `Select a photo from the tray and drag it onto ${target.replace("_", " ")}.` : "Replace an existing photo slot — drag from the tray.")
+    setSelectedTargetId(targetId)
+    setMessage("Photo field added — drag a tray photo onto it, then move/resize on the page.")
+  }
+
+  function removeCanvasItem(itemId: string) {
+    setSettings((s) => {
+      const textStyles = { ...s.textStyles }
+      delete textStyles[`canvas.${itemId}`]
+      return {
+        ...s,
+        canvasItems: s.canvasItems.filter((c) => c.id !== itemId),
+        textStyles,
+      }
+    })
+    setSelectedTargetId(null)
+    setContextMenu(null)
   }
 
   function addSubPage() {
@@ -637,6 +790,11 @@ export default function WebsiteBuilderPage() {
 
   function removeSelected() {
     if (!selectedTargetId) return
+    const canvasId = getCanvasItemIdFromTarget(selectedTargetId)
+    if (canvasId) {
+      removeCanvasItem(canvasId)
+      return
+    }
     const sectionId = sectionIdFromEditTarget(selectedTargetId)
     if (sectionId) {
       setSettings((s) => hideSectionFromSettings(s, sectionId))
@@ -651,10 +809,113 @@ export default function WebsiteBuilderPage() {
     }
   }
 
-  const selectedKind = selectedTargetId ? websiteEditTargetKind(selectedTargetId) : null
-  const selectedText = selectedTargetId && selectedKind === "text" ? getWebsiteTextValue(settings, selectedTargetId) : ""
+  const selectedKind = selectedTargetId
+    ? resolveWebsiteEditTargetKind(selectedTargetId, settings.canvasItems)
+    : null
+  const selectedCanvasId = selectedTargetId ? getCanvasItemIdFromTarget(selectedTargetId) : null
+  const selectedCanvasItem = selectedCanvasId
+    ? settings.canvasItems.find((c) => c.id === selectedCanvasId) || null
+    : null
+  const selectedText =
+    selectedTargetId && selectedKind === "text" ? getWebsiteTextValue(settings, selectedTargetId) : ""
   const selectedStyle = selectedTargetId ? settings.textStyles[selectedTargetId] ?? {} : {}
   const hiddenSections = WEBSITE_HOME_SECTION_OPTIONS.filter((o) => settings.homeSections[o.id] === false)
+  const navBar = settings.navBar ?? defaultWebsiteNavBar()
+  const showTemplatesAtTop = !settings.enabled || !settings.publishedSlug
+  const brandSwatches: Array<{ label: string; color: string }> = [
+    { label: "Primary", color: settings.theme.primaryColor },
+    { label: "Accent", color: settings.theme.accentColor },
+    { label: "Secondary", color: settings.theme.secondaryColor },
+    ...(settings.theme.customColors ?? []).map((color, i) => ({ label: `Custom ${i + 1}`, color })),
+  ]
+
+  function applySelectedColor(hex: string) {
+    if (!selectedTargetId) return
+    if (selectedKind === "image") {
+      patchTextStyle(selectedTargetId, { tintColor: hex, tintOpacity: selectedStyle.tintOpacity ?? 40 })
+      return
+    }
+    patchTextStyle(selectedTargetId, { color: hex })
+  }
+
+  function onTemplateChange(id: BusinessProfileTemplateId) {
+    if (id === "hair_plumbing" && !isHairPlumbingAccount) {
+      setSettings((s) => ({ ...s, templateId: "showcase" }))
+      setMessage("Classic template is reserved for Hair Plumbing — Showcase selected.")
+      return
+    }
+    setSettings((s) => ({ ...s, templateId: id }))
+  }
+
+  function loadDraft(draft: WebsiteSavedDraft) {
+    const parsed = parseBusinessPublicProfileSettings({
+      [BUSINESS_PUBLIC_PROFILE_META_KEY]: draft.snapshot,
+    })
+    setSettings((s) => ({
+      ...parsed,
+      enabled: s.enabled,
+      publishedSlug: s.publishedSlug,
+      customDomain: s.customDomain,
+      savedDrafts: s.savedDrafts,
+      navBar: parsed.navBar ?? defaultWebsiteNavBar(),
+    }))
+    setSelectedTargetId(null)
+    setMessage(`Loaded draft “${draft.name}”.`)
+  }
+
+  async function saveAsDraft() {
+    const stamp = new Date()
+    const draft: WebsiteSavedDraft = {
+      id: `draft_${stamp.getTime()}`,
+      name: `Draft ${stamp.toLocaleString()}`,
+      savedAt: stamp.toISOString(),
+      snapshot: cloneSettings({ ...settings, enabled: false }) as unknown as Record<string, unknown>,
+    }
+    const next: BusinessPublicProfileSettings = {
+      ...settings,
+      enabled: false,
+      savedDrafts: [draft, ...(settings.savedDrafts ?? [])].slice(0, 20),
+    }
+    await persist(next)
+  }
+
+  function renderTemplatesCard(compact: boolean) {
+    return (
+      <div style={{ ...sectionCard, ...(compact ? { padding: 10, gap: 8 } : null) }}>
+        <div style={{ fontSize: 12, fontWeight: 900 }}>{compact ? "Templates" : "Choose a template"}</div>
+        {!compact ? (
+          <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+            Pick a layout before you publish. Saved drafts appear here too.
+          </p>
+        ) : null}
+        <BusinessProfileTemplatePicker value={settings.templateId} onChange={onTemplateChange} theme={settings.theme} />
+        {(settings.savedDrafts ?? []).length ? (
+          <div style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: "#475569" }}>Saved drafts</div>
+            {(settings.savedDrafts ?? []).map((d) => (
+              <button
+                key={d.id}
+                type="button"
+                onClick={() => loadDraft(d)}
+                style={{
+                  textAlign: "left",
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: `1px solid ${theme.border}`,
+                  background: "#f8fafc",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                {d.name}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    )
+  }
 
   if (loading) {
     return <p style={{ margin: 24, color: "#64748b" }}>Loading website builder…</p>
@@ -694,64 +955,59 @@ export default function WebsiteBuilderPage() {
         <div>
           <h1 style={{ margin: "0 0 4px", fontSize: 20, fontWeight: 900 }}>Website Builder</h1>
           <p style={{ margin: 0, fontSize: 12, color: "#475569", lineHeight: 1.45 }}>
-            Click anything in the preview to edit. Right-click to remove. Drag photos onto image slots.
+            Use Quick add for freeform text/photos, then drag them on the page. Click anything to edit it here at the top.
           </p>
         </div>
 
-        <div style={sectionCard}>
-          <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, fontWeight: 800 }}>
-            <input
-              type="checkbox"
-              checked={settings.enabled}
-              onChange={(e) => setSettings((s) => ({ ...s, enabled: e.target.checked }))}
-            />
-            Publish live
-          </label>
-          <div style={{ fontSize: 11, color: "#0f766e", fontWeight: 700, wordBreak: "break-all" }}>
-            {publicUrl || "Set business name in Account for a public URL"}
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        <div style={{ ...sectionCard, padding: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 900, marginBottom: 6 }}>History</div>
+          <div style={{ display: "flex", gap: 8 }}>
             <button
               type="button"
-              disabled={saving}
-              onClick={() => void persist(settings)}
+              disabled={!canUndo}
+              onClick={undo}
               style={{
-                padding: "10px 14px",
-                borderRadius: 8,
-                border: "none",
-                background: theme.primary,
-                color: "#fff",
-                fontWeight: 800,
-                cursor: saving ? "wait" : "pointer",
-              }}
-            >
-              {saving ? "Saving…" : "Save & publish"}
-            </button>
-            <button
-              type="button"
-              onClick={openPopoutPreview}
-              style={{
-                padding: "10px 14px",
+                flex: 1,
+                padding: "8px 10px",
                 borderRadius: 8,
                 border: `1px solid ${theme.border}`,
-                background: "#fff",
-                color: EDITOR_INK,
+                background: canUndo ? "#fff" : "#f1f5f9",
                 fontWeight: 800,
-                cursor: "pointer",
+                cursor: canUndo ? "pointer" : "not-allowed",
+                opacity: canUndo ? 1 : 0.55,
               }}
             >
-              Pop-out preview
+              Undo
+            </button>
+            <button
+              type="button"
+              disabled={!canRedo}
+              onClick={redo}
+              style={{
+                flex: 1,
+                padding: "8px 10px",
+                borderRadius: 8,
+                border: `1px solid ${theme.border}`,
+                background: canRedo ? "#fff" : "#f1f5f9",
+                fontWeight: 800,
+                cursor: canRedo ? "pointer" : "not-allowed",
+                opacity: canRedo ? 1 : 0.55,
+              }}
+            >
+              Redo
             </button>
           </div>
-          {message ? <p style={{ margin: 0, fontSize: 12, color: "#0f766e", fontWeight: 800 }}>{message}</p> : null}
-          {error ? <p style={{ margin: 0, fontSize: 12, color: "#b91c1c", fontWeight: 800 }}>{error}</p> : null}
         </div>
+
+        {showTemplatesAtTop ? renderTemplatesCard(false) : null}
 
         {selectedTargetId && selectedKind === "text" ? (
           <div style={{ ...sectionCard, borderColor: "#2563eb", boxShadow: "0 0 0 1px rgba(37,99,235,0.2)" }}>
-            <div style={{ fontSize: 12, fontWeight: 900 }}>{websiteEditTargetLabel(selectedTargetId)}</div>
+            <div style={{ fontSize: 12, fontWeight: 900 }}>
+              {selectedCanvasItem ? "Custom text field" : websiteEditTargetLabel(selectedTargetId)}
+            </div>
             <textarea
-              rows={selectedTargetId.includes("body") || selectedTargetId === "hero.headline" ? 5 : 2}
+              rows={selectedTargetId.includes("body") || selectedTargetId === "hero.headline" || selectedCanvasItem ? 4 : 2}
               value={selectedText}
               onChange={(e) => setSettings((s) => setWebsiteTextValue(s, selectedTargetId, e.target.value))}
               style={{ ...field, resize: "vertical", fontSize: 13 }}
@@ -794,20 +1050,45 @@ export default function WebsiteBuilderPage() {
                 </select>
               </label>
             </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {brandSwatches.map((sw) => (
+                <button
+                  key={sw.label}
+                  type="button"
+                  title={sw.label}
+                  onClick={() => applySelectedColor(sw.color)}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "4px 8px",
+                    borderRadius: 8,
+                    border: `1px solid ${theme.border}`,
+                    background: "#fff",
+                    fontSize: 10,
+                    fontWeight: 800,
+                    cursor: "pointer",
+                  }}
+                >
+                  <span style={{ width: 12, height: 12, borderRadius: 999, background: sw.color, border: "1px solid #cbd5e1" }} />
+                  {sw.label}
+                </button>
+              ))}
+            </div>
             <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
               Font
               <select
-                value={selectedStyle.fontFamily || ""}
-                onChange={(e) =>
-                  setSettings((s) => ({
-                    ...s,
-                    textStyles: patchWebsiteTextStyle(s.textStyles, selectedTargetId, {
-                      fontFamily: e.target.value || undefined,
-                    }),
-                  }))
-                }
-                style={field}
-              >
+                  value={selectedStyle.fontFamily || ""}
+                  onChange={(e) =>
+                    setSettings((s) => ({
+                      ...s,
+                      textStyles: patchWebsiteTextStyle(s.textStyles, selectedTargetId, {
+                        fontFamily: e.target.value || undefined,
+                      }),
+                    }))
+                  }
+                  style={field}
+                >
                 <option value="">Default</option>
                 {WEBSITE_FONT_OPTIONS.map((font) => (
                   <option key={font.id} value={font.stack}>
@@ -860,6 +1141,23 @@ export default function WebsiteBuilderPage() {
               >
                 Italic
               </button>
+              {selectedCanvasItem ? (
+                <button
+                  type="button"
+                  onClick={() => removeCanvasItem(selectedCanvasItem.id)}
+                  style={{
+                    padding: "6px 10px",
+                    borderRadius: 8,
+                    border: "1px solid #fecaca",
+                    background: "#fff1f2",
+                    color: "#b91c1c",
+                    fontWeight: 800,
+                    cursor: "pointer",
+                  }}
+                >
+                  Remove field
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() => setSelectedTargetId(null)}
@@ -899,7 +1197,7 @@ export default function WebsiteBuilderPage() {
               </select>
             </label>
             <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
-              Built-in destinations only (home, about, contact, call, email). Quote button uses this by default.
+              Drag the field on the preview to move it. Corner handle resizes width.
             </p>
           </div>
         ) : selectedTargetId && selectedKind === "section" ? (
@@ -923,34 +1221,158 @@ export default function WebsiteBuilderPage() {
             </button>
           </div>
         ) : selectedTargetId && selectedKind === "image" ? (
-          <div style={{ ...sectionCard, borderColor: "#2563eb" }}>
-            <div style={{ fontSize: 12, fontWeight: 900 }}>{websiteEditTargetLabel(selectedTargetId)}</div>
+          <div style={{ ...sectionCard, borderColor: "#2563eb", boxShadow: "0 0 0 1px rgba(37,99,235,0.2)" }}>
+            <div style={{ fontSize: 12, fontWeight: 900 }}>
+              {selectedCanvasItem ? "Custom photo field" : websiteEditTargetLabel(selectedTargetId)}
+            </div>
             <p style={{ margin: 0, fontSize: 12, color: "#475569" }}>
-              Drag a photo from the tray below onto this slot, or clear it.
+              {selectedCanvasItem
+                ? "Drag a photo from the tray onto this field on the page. Drag to move; corner handle to resize."
+                : "Drag a photo from the tray below onto this slot, or clear it."}
             </p>
-            {(selectedTargetId === "slot.feature_1" || selectedTargetId === "slot.feature_2") && (
+            <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
+              Scale mode
+              <select
+                value={selectedStyle.scaleMode || "fixed"}
+                onChange={(e) =>
+                  patchTextStyle(selectedTargetId, {
+                    scaleMode: e.target.value === "free" ? "free" : "fixed",
+                  })
+                }
+                style={field}
+              >
+                <option value="fixed">Fixed scale</option>
+                <option value="free">Free scale</option>
+              </select>
+            </label>
+            <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
+              Size ({selectedStyle.imageSize ?? selectedStyle.maxWidth ?? 120}px)
+              <input
+                type="range"
+                min={40}
+                max={640}
+                value={selectedStyle.imageSize ?? selectedStyle.maxWidth ?? (selectedCanvasItem ? 200 : 120)}
+                onChange={(e) => {
+                  const n = Number(e.target.value)
+                  patchTextStyle(selectedTargetId, {
+                    imageSize: n,
+                    maxWidth: n,
+                  })
+                }}
+              />
+            </label>
+            {(selectedStyle.scaleMode === "free" || selectedCanvasItem) && (
               <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
-                Thumbnail size ({selectedStyle.imageSize ?? 56}px)
+                Height ({selectedStyle.imageSize ?? 150}px)
                 <input
                   type="range"
                   min={40}
-                  max={140}
-                  value={selectedStyle.imageSize ?? 56}
-                  onChange={(e) =>
-                    setSettings((s) => ({
-                      ...s,
-                      textStyles: patchWebsiteTextStyle(s.textStyles, selectedTargetId, {
-                        imageSize: Number(e.target.value),
-                      }),
-                    }))
-                  }
+                  max={640}
+                  value={selectedStyle.imageSize ?? 150}
+                  onChange={(e) => patchTextStyle(selectedTargetId, { imageSize: Number(e.target.value) })}
                 />
               </label>
             )}
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 11, fontWeight: 800 }}>Tint</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {brandSwatches.map((sw) => (
+                  <button
+                    key={`tint-${sw.label}`}
+                    type="button"
+                    title={sw.label}
+                    onClick={() =>
+                      patchTextStyle(selectedTargetId, {
+                        tintColor: sw.color,
+                        tintOpacity: selectedStyle.tintOpacity ?? 35,
+                      })
+                    }
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "4px 8px",
+                      borderRadius: 8,
+                      border: `1px solid ${theme.border}`,
+                      background: "#fff",
+                      fontSize: 10,
+                      fontWeight: 800,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <span style={{ width: 12, height: 12, borderRadius: 999, background: sw.color }} />
+                    {sw.label}
+                  </button>
+                ))}
+              </div>
+              <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
+                Tint color
+                <input
+                  type="color"
+                  value={selectedStyle.tintColor || settings.theme.primaryColor}
+                  onChange={(e) => patchTextStyle(selectedTargetId, { tintColor: e.target.value })}
+                  style={{ width: "100%", height: 34, borderRadius: 8, border: `1px solid ${theme.border}` }}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
+                Tint strength ({selectedStyle.tintOpacity ?? 0}%)
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={selectedStyle.tintOpacity ?? 0}
+                  onChange={(e) => patchTextStyle(selectedTargetId, { tintOpacity: Number(e.target.value) })}
+                />
+              </label>
+            </div>
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 11, fontWeight: 800 }}>Crop</div>
+              <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
+                Focus X ({selectedStyle.cropX ?? 50}%)
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={selectedStyle.cropX ?? 50}
+                  onChange={(e) => patchTextStyle(selectedTargetId, { cropX: Number(e.target.value) })}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
+                Focus Y ({selectedStyle.cropY ?? 50}%)
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={selectedStyle.cropY ?? 50}
+                  onChange={(e) => patchTextStyle(selectedTargetId, { cropY: Number(e.target.value) })}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
+                Zoom ({selectedStyle.cropZoom ?? 100}%)
+                <input
+                  type="range"
+                  min={100}
+                  max={300}
+                  value={selectedStyle.cropZoom ?? 100}
+                  onChange={(e) => patchTextStyle(selectedTargetId, { cropZoom: Number(e.target.value) })}
+                />
+              </label>
+            </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button
                 type="button"
-                onClick={removeSelected}
+                onClick={() => {
+                  if (selectedCanvasItem) {
+                    setSettings((s) => ({
+                      ...s,
+                      canvasItems: s.canvasItems.map((c) =>
+                        c.id === selectedCanvasItem.id ? { ...c, imageUrl: null } : c,
+                      ),
+                    }))
+                  } else {
+                    removeSelected()
+                  }
+                }}
                 style={{
                   padding: "8px 12px",
                   borderRadius: 8,
@@ -962,6 +1384,23 @@ export default function WebsiteBuilderPage() {
               >
                 Clear image
               </button>
+              {selectedCanvasItem ? (
+                <button
+                  type="button"
+                  onClick={() => removeCanvasItem(selectedCanvasItem.id)}
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: 8,
+                    border: "1px solid #fecaca",
+                    background: "#fff1f2",
+                    color: "#b91c1c",
+                    fontWeight: 800,
+                    cursor: "pointer",
+                  }}
+                >
+                  Remove field
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() => setSelectedTargetId(null)}
@@ -982,10 +1421,75 @@ export default function WebsiteBuilderPage() {
           <div style={sectionCard}>
             <div style={{ fontSize: 12, fontWeight: 900 }}>Nothing selected</div>
             <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-              Click a headline, paragraph, button, photo slot, or whole section in the preview.
+              Click a field in the preview, or use Quick add to place a new text/photo field you can drag anywhere.
             </p>
           </div>
         )}
+
+        <div style={sectionCard}>
+          <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, fontWeight: 800 }}>
+            <input
+              type="checkbox"
+              checked={settings.enabled}
+              onChange={(e) => setSettings((s) => ({ ...s, enabled: e.target.checked }))}
+            />
+            Publish live
+          </label>
+          <div style={{ fontSize: 11, color: "#0f766e", fontWeight: 700, wordBreak: "break-all" }}>
+            {publicUrl || "Set business name in Account for a public URL"}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void persist({ ...settings, enabled: true })}
+              style={{
+                padding: "10px 14px",
+                borderRadius: 8,
+                border: "none",
+                background: theme.primary,
+                color: "#fff",
+                fontWeight: 800,
+                cursor: saving ? "wait" : "pointer",
+              }}
+            >
+              {saving ? "Saving…" : "Save & publish"}
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void saveAsDraft()}
+              style={{
+                padding: "10px 14px",
+                borderRadius: 8,
+                border: `1px solid ${theme.border}`,
+                background: "#fff",
+                color: EDITOR_INK,
+                fontWeight: 800,
+                cursor: saving ? "wait" : "pointer",
+              }}
+            >
+              Save as draft
+            </button>
+            <button
+              type="button"
+              onClick={openPopoutPreview}
+              style={{
+                padding: "10px 14px",
+                borderRadius: 8,
+                border: `1px solid ${theme.border}`,
+                background: "#fff",
+                color: EDITOR_INK,
+                fontWeight: 800,
+                cursor: "pointer",
+              }}
+            >
+              Pop-out preview
+            </button>
+          </div>
+          {message ? <p style={{ margin: 0, fontSize: 12, color: "#0f766e", fontWeight: 800 }}>{message}</p> : null}
+          {error ? <p style={{ margin: 0, fontSize: 12, color: "#b91c1c", fontWeight: 800 }}>{error}</p> : null}
+        </div>
 
         <div style={sectionCard}>
           <div style={{ fontSize: 12, fontWeight: 900 }}>Quick add</div>
@@ -1119,6 +1623,235 @@ export default function WebsiteBuilderPage() {
         </div>
 
         <div style={sectionCard}>
+          <div style={{ fontSize: 12, fontWeight: 900 }}>Top navigation bar</div>
+          <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+            Show or hide each piece of the top bar. Turn everything off to hide the bar.
+          </p>
+          {(
+            [
+              ["showLogo", "Logo"],
+              ["showBusinessName", "Company name"],
+              ["showHome", "Home"],
+              ["showAbout", "About Us"],
+              ["showContact", "Contact"],
+              ["showCall", "Call button"],
+            ] as const
+          ).map(([key, label]) => (
+            <label key={key} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, fontWeight: 700 }}>
+              <input
+                type="checkbox"
+                checked={navBar[key] !== false}
+                onChange={(e) =>
+                  setSettings((s) => ({
+                    ...s,
+                    navBar: { ...(s.navBar ?? defaultWebsiteNavBar()), [key]: e.target.checked },
+                  }))
+                }
+              />
+              {label}
+            </label>
+          ))}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
+              Bar background
+              <input
+                type="color"
+                value={navBar.backgroundColor || "#ffffff"}
+                onChange={(e) =>
+                  setSettings((s) => ({
+                    ...s,
+                    navBar: { ...(s.navBar ?? defaultWebsiteNavBar()), backgroundColor: e.target.value },
+                  }))
+                }
+                style={{ width: "100%", height: 32, borderRadius: 8, border: `1px solid ${theme.border}` }}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
+              Bar text
+              <input
+                type="color"
+                value={navBar.textColor || "#0f172a"}
+                onChange={(e) =>
+                  setSettings((s) => ({
+                    ...s,
+                    navBar: { ...(s.navBar ?? defaultWebsiteNavBar()), textColor: e.target.value },
+                  }))
+                }
+                style={{ width: "100%", height: 32, borderRadius: 8, border: `1px solid ${theme.border}` }}
+              />
+            </label>
+          </div>
+        </div>
+
+        <div style={sectionCard}>
+          <div style={{ fontSize: 12, fontWeight: 900 }}>Scroll bands</div>
+          <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+            Dark/light bars that scroll over the fixed background. Add, remove, recolor, or texture them.
+          </p>
+          {settings.scrollBands.map((band, idx) => (
+            <div key={band.id} style={{ display: "grid", gap: 6, padding: 8, borderRadius: 8, border: `1px solid ${theme.border}` }}>
+              <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, fontWeight: 700 }}>
+                <input
+                  type="checkbox"
+                  checked={band.enabled !== false}
+                  onChange={(e) =>
+                    setSettings((s) => ({
+                      ...s,
+                      scrollBands: s.scrollBands.map((b, i) => (i === idx ? { ...b, enabled: e.target.checked } : b)),
+                    }))
+                  }
+                />
+                Visible
+              </label>
+              <input
+                value={band.title}
+                onChange={(e) =>
+                  setSettings((s) => ({
+                    ...s,
+                    scrollBands: s.scrollBands.map((b, i) => (i === idx ? { ...b, title: e.target.value } : b)),
+                  }))
+                }
+                placeholder="Band title"
+                style={field}
+              />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <label style={{ display: "grid", gap: 4, fontSize: 10, fontWeight: 700 }}>
+                  Tone
+                  <select
+                    value={band.tone}
+                    onChange={(e) =>
+                      setSettings((s) => ({
+                        ...s,
+                        scrollBands: s.scrollBands.map((b, i) =>
+                          i === idx
+                            ? { ...b, tone: e.target.value as WebsiteScrollBand["tone"] }
+                            : b,
+                        ),
+                      }))
+                    }
+                    style={field}
+                  >
+                    <option value="dark">Dark</option>
+                    <option value="light">Light</option>
+                    <option value="clear">Clear</option>
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: 4, fontSize: 10, fontWeight: 700 }}>
+                  Color
+                  <input
+                    type="color"
+                    value={band.backgroundColor || (band.tone === "light" ? "#ffffff" : "#000000")}
+                    onChange={(e) =>
+                      setSettings((s) => ({
+                        ...s,
+                        scrollBands: s.scrollBands.map((b, i) =>
+                          i === idx ? { ...b, backgroundColor: e.target.value } : b,
+                        ),
+                      }))
+                    }
+                    style={{ width: "100%", height: 32, borderRadius: 8, border: `1px solid ${theme.border}` }}
+                  />
+                </label>
+              </div>
+              <label style={{ display: "grid", gap: 4, fontSize: 10, fontWeight: 700 }}>
+                Texture
+                <select
+                  value={band.texture || "none"}
+                  onChange={(e) =>
+                    setSettings((s) => ({
+                      ...s,
+                      scrollBands: s.scrollBands.map((b, i) =>
+                        i === idx
+                          ? {
+                              ...b,
+                              texture: e.target.value === "none" ? undefined : (e.target.value as WebsiteScrollBand["texture"]),
+                            }
+                          : b,
+                      ),
+                    }))
+                  }
+                  style={field}
+                >
+                  {WEBSITE_BAND_TEXTURE_OPTIONS.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 10, fontWeight: 700 }}>
+                Overlay ({band.overlayOpacity ?? 85}%)
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={band.overlayOpacity ?? 85}
+                  onChange={(e) =>
+                    setSettings((s) => ({
+                      ...s,
+                      scrollBands: s.scrollBands.map((b, i) =>
+                        i === idx ? { ...b, overlayOpacity: Number(e.target.value) } : b,
+                      ),
+                    }))
+                  }
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() =>
+                  setSettings((s) => ({
+                    ...s,
+                    scrollBands: s.scrollBands.filter((_, i) => i !== idx),
+                  }))
+                }
+                style={{
+                  justifySelf: "start",
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #fecaca",
+                  background: "#fff1f2",
+                  color: "#b91c1c",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  fontSize: 11,
+                }}
+              >
+                Remove band
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            disabled={settings.scrollBands.length >= 12}
+            onClick={() =>
+              setSettings((s) => ({
+                ...s,
+                scrollBands: [
+                  ...s.scrollBands,
+                  {
+                    id: `band_${Date.now()}`,
+                    title: "New band",
+                    body: "",
+                    tone: "dark",
+                    enabled: true,
+                  },
+                ],
+              }))
+            }
+            style={{
+              padding: "8px 10px",
+              borderRadius: 8,
+              border: `1px solid ${theme.border}`,
+              background: "#f8fafc",
+              fontWeight: 800,
+              cursor: settings.scrollBands.length >= 12 ? "not-allowed" : "pointer",
+            }}
+          >
+            + Add scroll band
+          </button>
+        </div>
+
+        <div style={sectionCard}>
           <div style={{ fontSize: 12, fontWeight: 900 }}>Photos</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             <label
@@ -1149,7 +1882,57 @@ export default function WebsiteBuilderPage() {
               {uploadingLogo ? "Uploading…" : "Logo"}
               <input type="file" accept="image/*" hidden onChange={(e) => void onLogoUpload(e)} disabled={uploadingLogo} />
             </label>
+            <label
+              style={{
+                padding: "8px 10px",
+                borderRadius: 8,
+                border: `1px dashed ${theme.border}`,
+                background: "#fff",
+                fontSize: 12,
+                fontWeight: 800,
+                cursor: "pointer",
+              }}
+              title="Browser tab icon (favicon)"
+            >
+              {uploadingFavicon ? "Uploading…" : "Browser icon"}
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/svg+xml,image/x-icon,.ico"
+                hidden
+                onChange={(e) => void onFaviconUpload(e)}
+                disabled={uploadingFavicon}
+              />
+            </label>
           </div>
+          {settings.faviconUrl || settings.profilePhotoUrl || contact.companyLogoUrl ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: "#475569" }}>
+              <img
+                src={settings.faviconUrl || settings.profilePhotoUrl || contact.companyLogoUrl || ""}
+                alt=""
+                style={{ width: 28, height: 28, objectFit: "contain", borderRadius: 6, border: `1px solid ${theme.border}`, background: "#fff" }}
+              />
+              <span style={{ flex: 1 }}>
+                Browser tab icon {settings.faviconUrl ? "(custom)" : "(uses logo until you upload one)"}
+              </span>
+              {settings.faviconUrl ? (
+                <button
+                  type="button"
+                  onClick={() => setSettings((s) => ({ ...s, faviconUrl: null }))}
+                  style={{
+                    padding: "4px 8px",
+                    borderRadius: 6,
+                    border: `1px solid ${theme.border}`,
+                    background: "#fff",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  Clear
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {settings.workPhotoUrls.map((url) => (
               <div key={url} style={{ position: "relative" }}>
@@ -1292,30 +2075,15 @@ export default function WebsiteBuilderPage() {
 
         <div style={sectionCard}>
           <div style={{ fontSize: 12, fontWeight: 900 }}>Brand colors</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {BUSINESS_PROFILE_BRAND_PRESETS.slice(0, 4).map((preset) => (
-              <button
-                key={preset.id}
-                type="button"
-                onClick={() => setSettings((s) => ({ ...s, theme: { ...preset.theme } }))}
-                title={preset.label}
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: "50%",
-                  border: `2px solid ${theme.border}`,
-                  background: `linear-gradient(135deg, ${preset.theme.primaryColor}, ${preset.theme.accentColor})`,
-                  cursor: "pointer",
-                }}
-              />
-            ))}
-          </div>
+          <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+            Primary, Accent, and Secondary appear on selected text/images. Add extra colors, or randomize.
+          </p>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
             {(
               [
                 ["primaryColor", "Primary"],
                 ["accentColor", "Accent"],
-                ["fontColor", "Text"],
+                ["secondaryColor", "Secondary"],
               ] as const
             ).map(([key, name]) => (
               <label key={key} style={{ display: "grid", gap: 4, fontSize: 10, fontWeight: 700 }}>
@@ -1329,7 +2097,98 @@ export default function WebsiteBuilderPage() {
               </label>
             ))}
           </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <label style={{ display: "grid", gap: 4, fontSize: 10, fontWeight: 700 }}>
+              Field background
+              <input
+                type="color"
+                value={settings.theme.fieldBackgroundColor}
+                onChange={(e) =>
+                  setSettings((s) => ({ ...s, theme: { ...s.theme, fieldBackgroundColor: e.target.value } }))
+                }
+                style={{ width: "100%", height: 32, borderRadius: 8, border: `1px solid ${theme.border}` }}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 4, fontSize: 10, fontWeight: 700 }}>
+              Default text
+              <input
+                type="color"
+                value={settings.theme.fontColor}
+                onChange={(e) => setSettings((s) => ({ ...s, theme: { ...s.theme, fontColor: e.target.value } }))}
+                style={{ width: "100%", height: 32, borderRadius: 8, border: `1px solid ${theme.border}` }}
+              />
+            </label>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+            {(settings.theme.customColors ?? []).map((c, i) => (
+              <button
+                key={`${c}-${i}`}
+                type="button"
+                title="Remove custom color"
+                onClick={() =>
+                  setSettings((s) => ({
+                    ...s,
+                    theme: {
+                      ...s.theme,
+                      customColors: (s.theme.customColors ?? []).filter((_, idx) => idx !== i),
+                    },
+                  }))
+                }
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: "50%",
+                  border: `2px solid ${theme.border}`,
+                  background: c,
+                  cursor: "pointer",
+                }}
+              />
+            ))}
+            <button
+              type="button"
+              onClick={() => {
+                const hex = `#${Math.floor(Math.random() * 0xffffff)
+                  .toString(16)
+                  .padStart(6, "0")}`
+                setSettings((s) => ({
+                  ...s,
+                  theme: {
+                    ...s.theme,
+                    customColors: [...(s.theme.customColors ?? []), hex].slice(0, 12),
+                  },
+                }))
+              }}
+              style={{
+                padding: "6px 10px",
+                borderRadius: 8,
+                border: `1px solid ${theme.border}`,
+                background: "#fff",
+                fontSize: 11,
+                fontWeight: 800,
+                cursor: "pointer",
+              }}
+            >
+              + Add color
+            </button>
+            <button
+              type="button"
+              onClick={() => setSettings((s) => ({ ...s, theme: randomizeBusinessProfileTheme(s.theme) }))}
+              style={{
+                padding: "6px 10px",
+                borderRadius: 8,
+                border: `1px solid ${theme.border}`,
+                background: "#f8fafc",
+                fontSize: 11,
+                fontWeight: 800,
+                cursor: "pointer",
+              }}
+            >
+              Randomize
+            </button>
+          </div>
         </div>
+
+        {!showTemplatesAtTop ? renderTemplatesCard(true) : null}
 
         <details style={sectionCard} open={dnsOpen} onToggle={(e) => setDnsOpen((e.target as HTMLDetailsElement).open)}>
           <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 900 }}>Custom domain / DNS</summary>
@@ -1530,6 +2389,7 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                 onSelectTarget,
                 onTargetContextMenu,
                 onDropImageOnSlot,
+                onDropImageOnCanvasItem,
                 onPatchTextStyle: patchTextStyle,
               }}
             />
@@ -1577,7 +2437,8 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
             >
               Edit “{websiteEditTargetLabel(contextMenu.targetId)}”
             </button>
-            {websiteEditTargetKind(contextMenu.targetId) === "text" ? (
+            {websiteEditTargetKind(contextMenu.targetId) === "text" ||
+            resolveWebsiteEditTargetKind(contextMenu.targetId, settings.canvasItems) === "text" ? (
               <>
                 <button
                   type="button"
@@ -1652,8 +2513,133 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                 </button>
               </>
             ) : null}
-            {(websiteEditTargetKind(contextMenu.targetId) === "section" ||
-              websiteEditTargetKind(contextMenu.targetId) === "image") && (
+            {resolveWebsiteEditTargetKind(contextMenu.targetId, settings.canvasItems) === "image" ? (
+              <>
+                <button
+                  type="button"
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "8px 10px",
+                    border: "none",
+                    background: "transparent",
+                    borderRadius: 6,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    color: "#0f172a",
+                  }}
+                  onClick={() => {
+                    const id = contextMenu.targetId
+                    const cur = settings.textStyles[id]?.scaleMode || "fixed"
+                    patchTextStyle(id, { scaleMode: cur === "free" ? "fixed" : "free" })
+                    setSelectedTargetId(id)
+                    setContextMenu(null)
+                  }}
+                >
+                  {(settings.textStyles[contextMenu.targetId]?.scaleMode || "fixed") === "free"
+                    ? "Use fixed scale"
+                    : "Use free scale"}
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "8px 10px",
+                    border: "none",
+                    background: "transparent",
+                    borderRadius: 6,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    color: "#0f172a",
+                  }}
+                  onClick={() => {
+                    const id = contextMenu.targetId
+                    const cur = settings.textStyles[id]?.imageSize ?? settings.textStyles[id]?.maxWidth ?? 120
+                    patchTextStyle(id, { imageSize: Math.min(640, cur + 24), maxWidth: Math.min(640, cur + 24) })
+                    setContextMenu(null)
+                  }}
+                >
+                  Larger image
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "8px 10px",
+                    border: "none",
+                    background: "transparent",
+                    borderRadius: 6,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    color: "#0f172a",
+                  }}
+                  onClick={() => {
+                    const id = contextMenu.targetId
+                    const cur = settings.textStyles[id]?.imageSize ?? settings.textStyles[id]?.maxWidth ?? 120
+                    patchTextStyle(id, { imageSize: Math.max(40, cur - 24), maxWidth: Math.max(40, cur - 24) })
+                    setContextMenu(null)
+                  }}
+                >
+                  Smaller image
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "8px 10px",
+                    border: "none",
+                    background: "transparent",
+                    borderRadius: 6,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    color: "#0f172a",
+                  }}
+                  onClick={() => {
+                    setSelectedTargetId(contextMenu.targetId)
+                    setContextMenu(null)
+                    setMessage("Adjust crop focus and zoom in the left inspector.")
+                  }}
+                >
+                  Crop…
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "8px 10px",
+                    border: "none",
+                    background: "transparent",
+                    borderRadius: 6,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    color: "#0f172a",
+                  }}
+                  onClick={() => {
+                    const id = contextMenu.targetId
+                    patchTextStyle(id, {
+                      tintColor: settings.theme.primaryColor,
+                      tintOpacity: Math.min(100, (settings.textStyles[id]?.tintOpacity ?? 0) + 20 || 35),
+                    })
+                    setSelectedTargetId(id)
+                    setContextMenu(null)
+                  }}
+                >
+                  Tint…
+                </button>
+              </>
+            ) : null}
+            {(resolveWebsiteEditTargetKind(contextMenu.targetId, settings.canvasItems) === "section" ||
+              resolveWebsiteEditTargetKind(contextMenu.targetId, settings.canvasItems) === "image" ||
+              getCanvasItemIdFromTarget(contextMenu.targetId)) && (
               <button
                 type="button"
                 style={{
@@ -1671,6 +2657,11 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                 onClick={() => {
                   const tid = contextMenu.targetId
                   setContextMenu(null)
+                  const canvasId = getCanvasItemIdFromTarget(tid)
+                  if (canvasId) {
+                    removeCanvasItem(canvasId)
+                    return
+                  }
                   const sectionId = sectionIdFromEditTarget(tid)
                   if (sectionId) {
                     setSettings((s) => hideSectionFromSettings(s, sectionId))
@@ -1683,7 +2674,11 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                   }
                 }}
               >
-                {websiteEditTargetKind(contextMenu.targetId) === "image" ? "Clear image" : "Remove section"}
+                {getCanvasItemIdFromTarget(contextMenu.targetId)
+                  ? "Remove field"
+                  : resolveWebsiteEditTargetKind(contextMenu.targetId, settings.canvasItems) === "image"
+                    ? "Clear image"
+                    : "Remove section"}
               </button>
             )}
           </div>

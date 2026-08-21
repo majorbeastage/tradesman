@@ -6,11 +6,13 @@ import type {
   BusinessProfileTemplateId,
   BusinessProfileTheme,
   WebsiteBuiltInLinkTarget,
+  WebsiteCanvasItem,
   WebsiteContentCard,
   WebsiteCustomPage,
   WebsiteHomeSectionId,
   WebsiteHomeSections,
   WebsiteImageSlots,
+  WebsiteNavBarSettings,
   WebsitePublicPageId,
   WebsiteScrollBand,
   WebsiteSocialLinks,
@@ -22,6 +24,7 @@ import {
   DEFAULT_BUSINESS_PROFILE_THEME,
   defaultWebsiteFeatureCards,
   defaultWebsiteHomeSectionOrder,
+  defaultWebsiteNavBar,
   defaultWebsiteServiceCards,
   defaultWebsiteSubPages,
   emptyWebsiteHomeSections,
@@ -37,6 +40,7 @@ export type PublicBusinessProfileData = {
   tagline?: string
   aboutUs?: string
   profilePhotoUrl?: string | null
+  faviconUrl?: string | null
   workPhotoUrls?: string[]
   phone?: string | null
   email?: string | null
@@ -59,6 +63,7 @@ export type PublicBusinessProfileData = {
   homeSections?: WebsiteHomeSections
   subPages?: WebsiteSubPages
   customPages?: WebsiteCustomPage[]
+  canvasItems?: WebsiteCanvasItem[]
   featureCards?: WebsiteContentCard[]
   serviceCards?: WebsiteContentCard[]
   textStyles?: WebsiteTextStyles
@@ -68,6 +73,7 @@ export type PublicBusinessProfileData = {
   footerCopyright?: string
   /** Opt-in Tradesman badge — off by default for Classic hosted sites. */
   showPoweredBy?: boolean
+  navBar?: WebsiteNavBarSettings
 }
 
 export type WebsiteCanvasEditorProps = {
@@ -77,6 +83,8 @@ export type WebsiteCanvasEditorProps = {
   onDropImageOnSlot?: (slotId: string, imageUrl: string) => void
   onPatchTextStyle?: (targetId: string, patch: Partial<WebsiteTextStyle>) => void
   onReorderHomeSection?: (fromId: string, toId: string) => void
+  /** Assign image URL onto a freeform canvas photo item. */
+  onDropImageOnCanvasItem?: (itemId: string, imageUrl: string) => void
 }
 
 type ContactFormProps = {
@@ -93,6 +101,71 @@ function themeVars(theme: BusinessProfileTheme): CSSProperties {
     ["--bp-font" as string]: theme.fontColor,
     ["--bp-accent" as string]: theme.accentColor || "#b91c1c",
   }
+}
+
+function bandSurfaceStyle(band: WebsiteScrollBand): CSSProperties {
+  const style: CSSProperties = {}
+  if (band.backgroundColor) {
+    const opacity = typeof band.overlayOpacity === "number" ? band.overlayOpacity / 100 : band.tone === "clear" ? 0 : 0.85
+    const hex = band.backgroundColor.replace("#", "")
+    const r = parseInt(hex.slice(0, 2), 16)
+    const g = parseInt(hex.slice(2, 4), 16)
+    const b = parseInt(hex.slice(4, 6), 16)
+    style.backgroundColor = `rgba(${r}, ${g}, ${b}, ${opacity})`
+    style.color = band.tone === "light" ? "#0f172a" : "#fff"
+  }
+  if (band.texture === "noise") {
+    style.backgroundImage =
+      "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.35'/%3E%3C/svg%3E\")"
+  } else if (band.texture === "dots") {
+    style.backgroundImage = "radial-gradient(rgba(255,255,255,0.18) 1px, transparent 1px)"
+    style.backgroundSize = "14px 14px"
+  } else if (band.texture === "lines") {
+    style.backgroundImage = "repeating-linear-gradient(-45deg, rgba(255,255,255,0.08) 0 2px, transparent 2px 10px)"
+  } else if (band.texture === "gradient") {
+    style.backgroundImage = "linear-gradient(135deg, rgba(255,255,255,0.12), transparent 55%)"
+  }
+  return style
+}
+
+function imageSlotVisualStyle(style: WebsiteTextStyle | undefined): {
+  wrap: CSSProperties
+  img: CSSProperties
+  tint: CSSProperties | null
+} {
+  const size = style?.imageSize ?? 120
+  const free = style?.scaleMode === "free"
+  const zoom = (style?.cropZoom ?? 100) / 100
+  const posX = style?.cropX ?? 50
+  const posY = style?.cropY ?? 50
+  const wrap: CSSProperties = {
+    position: "relative",
+    overflow: "hidden",
+    width: free ? size : size,
+    height: free ? Math.round(size * 0.75) : size,
+    maxWidth: style?.maxWidth,
+  }
+  const img: CSSProperties = {
+    width: "100%",
+    height: "100%",
+    objectFit: "cover",
+    objectPosition: `${posX}% ${posY}%`,
+    transform: zoom !== 1 ? `scale(${zoom})` : undefined,
+    transformOrigin: `${posX}% ${posY}%`,
+    display: "block",
+  }
+  const tintOpacity = style?.tintOpacity ?? 0
+  const tint =
+    style?.tintColor && tintOpacity > 0
+      ? {
+          position: "absolute" as const,
+          inset: 0,
+          background: style.tintColor,
+          opacity: tintOpacity / 100,
+          pointerEvents: "none" as const,
+        }
+      : null
+  return { wrap, img, tint }
 }
 
 function SocialFollowBlock({
@@ -755,6 +828,227 @@ function CanvasEditable({
   )
 }
 
+function FreeformCanvasLayer({
+  items,
+  textStyles,
+  editMode,
+  editor,
+  onPhotoClick,
+}: {
+  items: WebsiteCanvasItem[]
+  textStyles: WebsiteTextStyles
+  editMode: boolean
+  editor?: WebsiteCanvasEditorProps
+  onPhotoClick: (url: string) => void
+}) {
+  if (!items.length && !editMode) return null
+  return (
+    <div className="bp-freeform-layer">
+      {items.map((item) => {
+        const targetId = `canvas.${item.id}`
+        const st = textStyles[targetId] ?? {}
+        const ox = st.offsetX ?? 0
+        const oy = st.offsetY ?? 0
+        const width = st.maxWidth ?? (item.kind === "photo" ? 200 : 280)
+        const height = st.imageSize ?? (item.kind === "photo" ? 150 : undefined)
+        const selected = editor?.selectedTargetId === targetId
+        const css = websiteTextStyleToCss(st)
+
+        if (item.kind === "photo") {
+          const url = item.imageUrl?.trim() || ""
+          if (!url && !editMode) return null
+          return (
+            <div
+              key={item.id}
+              className={`bp-freeform-item${editMode ? " bp-edit-target" : ""}${selected ? " bp-edit-selected" : ""}`}
+              data-edit-target={targetId}
+              style={{
+                width,
+                height: height || 150,
+                transform: `translate(${ox}px, ${oy}px)`,
+                left: "50%",
+                marginLeft: -width / 2,
+                top: 140,
+              }}
+              onClick={(e) => {
+                if (!editMode) return
+                e.preventDefault()
+                e.stopPropagation()
+                editor?.onSelectTarget?.(targetId)
+              }}
+              onContextMenu={(e) => {
+                if (!editMode) return
+                e.preventDefault()
+                e.stopPropagation()
+                editor?.onSelectTarget?.(targetId)
+                editor?.onTargetContextMenu?.(targetId, e.clientX, e.clientY)
+              }}
+              onPointerDown={(e) => {
+                if (!editMode || !editor?.onPatchTextStyle || e.button !== 0) return
+                if ((e.target as HTMLElement).closest?.("[data-resize-handle]")) return
+                e.preventDefault()
+                e.stopPropagation()
+                editor.onSelectTarget?.(targetId)
+                const startX = e.clientX
+                const startY = e.clientY
+                const ox0 = ox
+                const oy0 = oy
+                const el = e.currentTarget as HTMLElement
+                try {
+                  el.setPointerCapture(e.pointerId)
+                } catch {
+                  /* ignore */
+                }
+                const onMove = (ev: PointerEvent) => {
+                  const nextX = Math.max(-700, Math.min(700, Math.round(ox0 + (ev.clientX - startX))))
+                  const nextY = Math.max(-200, Math.min(2400, Math.round(oy0 + (ev.clientY - startY))))
+                  el.style.transform = `translate(${nextX}px, ${nextY}px)`
+                  el.dataset.dragX = String(nextX)
+                  el.dataset.dragY = String(nextY)
+                }
+                const onUp = (ev: PointerEvent) => {
+                  el.removeEventListener("pointermove", onMove)
+                  el.removeEventListener("pointerup", onUp)
+                  el.removeEventListener("pointercancel", onUp)
+                  try {
+                    el.releasePointerCapture(ev.pointerId)
+                  } catch {
+                    /* ignore */
+                  }
+                  editor.onPatchTextStyle?.(targetId, {
+                    offsetX: Number(el.dataset.dragX ?? ox0),
+                    offsetY: Number(el.dataset.dragY ?? oy0),
+                  })
+                }
+                el.addEventListener("pointermove", onMove)
+                el.addEventListener("pointerup", onUp)
+                el.addEventListener("pointercancel", onUp)
+              }}
+              onDragOver={(e) => editMode && e.preventDefault()}
+              onDrop={(e) => {
+                if (!editMode) return
+                e.preventDefault()
+                e.stopPropagation()
+                const dropUrl = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain")
+                if (dropUrl?.startsWith("http")) editor?.onDropImageOnCanvasItem?.(item.id, dropUrl.trim())
+              }}
+            >
+              {url ? (
+                <button
+                  type="button"
+                  className="bp-freeform-photo"
+                  style={{ position: "relative", overflow: "hidden", width: "100%", height: "100%" }}
+                  onClick={() => {
+                    if (editMode) editor?.onSelectTarget?.(targetId)
+                    else onPhotoClick(url)
+                  }}
+                >
+                  <img
+                    src={url}
+                    alt=""
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                      objectPosition: `${st.cropX ?? 50}% ${st.cropY ?? 50}%`,
+                      transform: st.cropZoom && st.cropZoom !== 100 ? `scale(${st.cropZoom / 100})` : undefined,
+                      transformOrigin: `${st.cropX ?? 50}% ${st.cropY ?? 50}%`,
+                      display: "block",
+                    }}
+                  />
+                  {st.tintColor && (st.tintOpacity ?? 0) > 0 ? (
+                    <span
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        background: st.tintColor,
+                        opacity: (st.tintOpacity ?? 0) / 100,
+                        pointerEvents: "none",
+                      }}
+                    />
+                  ) : null}
+                </button>
+              ) : (
+                <div className="bp-freeform-photo bp-freeform-photo-empty">Drop photo</div>
+              )}
+              {editMode && selected ? (
+                <span
+                  data-resize-handle
+                  className="bp-edit-resize"
+                  title="Drag to resize"
+                  onPointerDown={(e) => {
+                    if (!editor?.onPatchTextStyle) return
+                    e.preventDefault()
+                    e.stopPropagation()
+                    const startX = e.clientX
+                    const startY = e.clientY
+                    const startW = width
+                    const startH = height || 150
+                    const parent = (e.currentTarget as HTMLElement).parentElement
+                    const onMove = (ev: PointerEvent) => {
+                      const w = Math.max(60, Math.round(startW + (ev.clientX - startX)))
+                      const h = Math.max(60, Math.round(startH + (ev.clientY - startY)))
+                      if (parent) {
+                        parent.style.width = `${w}px`
+                        parent.style.height = `${h}px`
+                        parent.style.marginLeft = `${-w / 2}px`
+                      }
+                      ;(e.currentTarget as HTMLElement).dataset.rw = String(w)
+                      ;(e.currentTarget as HTMLElement).dataset.rh = String(h)
+                    }
+                    const onUp = () => {
+                      window.removeEventListener("pointermove", onMove)
+                      window.removeEventListener("pointerup", onUp)
+                      editor.onPatchTextStyle?.(targetId, {
+                        maxWidth: Number((e.currentTarget as HTMLElement).dataset.rw ?? startW),
+                        imageSize: Number((e.currentTarget as HTMLElement).dataset.rh ?? startH),
+                      })
+                    }
+                    window.addEventListener("pointermove", onMove)
+                    window.addEventListener("pointerup", onUp)
+                  }}
+                />
+              ) : null}
+            </div>
+          )
+        }
+
+        const text = (item.text || "").trim() || (editMode ? "New text" : "")
+        if (!text && !editMode) return null
+        return (
+          <CanvasEditable
+            key={item.id}
+            as="p"
+            targetId={targetId}
+            className="bp-freeform-item bp-freeform-text"
+            editMode={editMode}
+            selectedTargetId={editor?.selectedTargetId}
+            onSelectTarget={editor?.onSelectTarget}
+            onTargetContextMenu={editor?.onTargetContextMenu}
+            onPatchTextStyle={editor?.onPatchTextStyle}
+            enableMoveResize={editMode}
+            offsetX={ox}
+            offsetY={oy}
+            style={{
+              ...css,
+              left: "50%",
+              marginLeft: -width / 2,
+              top: 140,
+              width,
+              maxWidth: width,
+              position: "absolute",
+              marginTop: 0,
+              zIndex: 5,
+            }}
+          >
+            {text}
+          </CanvasEditable>
+        )
+      })}
+    </div>
+  )
+}
+
 function ShowcaseLayout({
   data,
   theme,
@@ -908,27 +1202,44 @@ function ShowcaseLayout({
   const bgStyle = background
     ? { backgroundImage: `url(${background})` }
     : { background: `linear-gradient(135deg, ${theme.secondaryColor}, ${theme.primaryColor})` }
+  const navBar = { ...defaultWebsiteNavBar(), ...(data.navBar ?? {}) }
+  const bgSlotStyle = textStyles["slot.background"]
+  const bgTintOpacity = bgSlotStyle?.tintOpacity ?? 0
 
-  const nav = (
-    <header className="bp-showcase-topbar bp-showcase-topbar-light">
+  const nav = navBar.showLogo || navBar.showBusinessName || navBar.showHome || navBar.showAbout || navBar.showContact || navBar.showCall || customPages.length ? (
+    <header
+      className="bp-showcase-topbar bp-showcase-topbar-light"
+      style={{
+        ...(navBar.backgroundColor ? { background: navBar.backgroundColor } : null),
+        ...(navBar.textColor ? { color: navBar.textColor } : null),
+      }}
+    >
       <div className="bp-showcase-topbar-inner">
-        <div className="bp-showcase-topbar-brand">
-          {logoUrl ? (
-            <img src={logoUrl} alt="" className="bp-showcase-topbar-logo" onClick={() => onPhotoClick(logoUrl)} />
-          ) : null}
-          <a href={hrefFor("home")} onClick={(e) => go("home", e)} style={{ color: "inherit", textDecoration: "none" }}>
-            {data.businessName}
-          </a>
-        </div>
+        {navBar.showLogo || navBar.showBusinessName ? (
+          <div className="bp-showcase-topbar-brand">
+            {navBar.showLogo && logoUrl ? (
+              <img src={logoUrl} alt="" className="bp-showcase-topbar-logo" onClick={() => onPhotoClick(logoUrl)} />
+            ) : null}
+            {navBar.showBusinessName ? (
+              <a href={hrefFor("home")} onClick={(e) => go("home", e)} style={{ color: "inherit", textDecoration: "none" }}>
+                {data.businessName}
+              </a>
+            ) : null}
+          </div>
+        ) : (
+          <div />
+        )}
         <nav className="bp-showcase-topbar-actions">
-          <a
-            href={hrefFor("home")}
-            onClick={(e) => go("home", e)}
-            className={`bp-showcase-nav-link bp-showcase-nav-link-dark${activePage === "home" ? " bp-showcase-nav-link-active-dark" : ""}`}
-          >
-            Home
-          </a>
-          {subPages.about.enabled ? (
+          {navBar.showHome ? (
+            <a
+              href={hrefFor("home")}
+              onClick={(e) => go("home", e)}
+              className={`bp-showcase-nav-link bp-showcase-nav-link-dark${activePage === "home" ? " bp-showcase-nav-link-active-dark" : ""}`}
+            >
+              Home
+            </a>
+          ) : null}
+          {navBar.showAbout && subPages.about.enabled ? (
             <a
               href={hrefFor("about")}
               onClick={(e) => go("about", e)}
@@ -937,7 +1248,7 @@ function ShowcaseLayout({
               {subPages.about.title || "About Us"}
             </a>
           ) : null}
-          {subPages.contact.enabled ? (
+          {navBar.showContact && subPages.contact.enabled ? (
             <a
               href={hrefFor("contact")}
               onClick={(e) => go("contact", e)}
@@ -959,7 +1270,7 @@ function ShowcaseLayout({
               </a>
             )
           })}
-          {telHref ? (
+          {navBar.showCall && telHref ? (
             <a href={telHref} className="bp-showcase-btn bp-showcase-btn-dark bp-showcase-btn-sm">
               Call {data.phone}
             </a>
@@ -967,7 +1278,7 @@ function ShowcaseLayout({
         </nav>
       </div>
     </header>
-  )
+  ) : null
 
   const contactBlock = (
     <div className="bp-showcase-band-inner">
@@ -1100,6 +1411,7 @@ function ShowcaseLayout({
               onSelectTarget={editor?.onSelectTarget}
               onTargetContextMenu={editor?.onTargetContextMenu}
               className={`bp-showcase-band bp-showcase-band-${band.tone}`}
+              style={bandSurfaceStyle(band)}
             >
               <div className="bp-showcase-band-inner">
                 <CanvasEditable
@@ -1114,14 +1426,21 @@ function ShowcaseLayout({
                   {title}
                 </CanvasEditable>
                 <div className="bp-showcase-service-trio">
-                  {serviceCards.slice(0, 3).map((card, i) => (
+                  {serviceCards.slice(0, 3).map((card, i) => {
+                    const slotTarget = `slot.service_${i + 1}`
+                    const vis = imageSlotVisualStyle({
+                      imageSize: textStyles[slotTarget]?.imageSize ?? 220,
+                      ...textStyles[slotTarget],
+                    })
+                    return (
                     <article key={card.id || i} className="bp-showcase-service-photo-card">
                       {serviceImgs[i] ? (
                         <button
                           type="button"
                           className={`bp-showcase-service-photo${editMode ? " bp-edit-target" : ""}`}
+                          style={{ ...vis.wrap, width: "100%", height: vis.wrap.height || 160 }}
                           onClick={() => {
-                            if (editMode) editor?.onSelectTarget?.(`slot.service_${i + 1}`)
+                            if (editMode) editor?.onSelectTarget?.(slotTarget)
                             else onPhotoClick(serviceImgs[i]!)
                           }}
                           onDragOver={(e) => editMode && e.preventDefault()}
@@ -1129,18 +1448,19 @@ function ShowcaseLayout({
                           onContextMenu={(e) => {
                             if (!editMode) return
                             e.preventDefault()
-                            editor?.onSelectTarget?.(`slot.service_${i + 1}`)
-                            editor?.onTargetContextMenu?.(`slot.service_${i + 1}`, e.clientX, e.clientY)
+                            editor?.onSelectTarget?.(slotTarget)
+                            editor?.onTargetContextMenu?.(slotTarget, e.clientX, e.clientY)
                           }}
                         >
-                          <img src={serviceImgs[i]!} alt="" />
+                          <img src={serviceImgs[i]!} alt="" style={vis.img} />
+                          {vis.tint ? <span style={vis.tint} /> : null}
                         </button>
                       ) : (
                         <div
                           className={`bp-showcase-service-photo bp-showcase-service-photo-empty${editMode ? " bp-edit-target" : ""}`}
                           onDragOver={(e) => editMode && e.preventDefault()}
                           onDrop={(e) => onSlotDrop(`service_${i + 1}`, e)}
-                          onClick={() => editMode && editor?.onSelectTarget?.(`slot.service_${i + 1}`)}
+                          onClick={() => editMode && editor?.onSelectTarget?.(slotTarget)}
                         >
                           {editMode ? "Drop photo" : null}
                         </div>
@@ -1168,7 +1488,7 @@ function ShowcaseLayout({
                         {card.body || "Add a short description…"}
                       </CanvasEditable>
                     </article>
-                  ))}
+                  )})}
                 </div>
               </div>
             </CanvasEditable>
@@ -1184,6 +1504,7 @@ function ShowcaseLayout({
             onSelectTarget={editor?.onSelectTarget}
             onTargetContextMenu={editor?.onTargetContextMenu}
             className={`bp-showcase-band bp-showcase-band-${band.tone}`}
+            style={bandSurfaceStyle(band)}
           >
             <div className="bp-showcase-band-inner">
               <CanvasEditable
@@ -1215,7 +1536,7 @@ function ShowcaseLayout({
                     const url = idx === 0 ? feature1 : feature2
                     const slotId = idx === 0 ? "feature_1" : "feature_2"
                     const slotTarget = `slot.${slotId}`
-                    const thumbSize = textStyles[slotTarget]?.imageSize ?? 56
+                    const vis = imageSlotVisualStyle(textStyles[slotTarget])
                     return (
                       <div key={card.id || idx} className="bp-showcase-feature-item">
                         {url ? (
@@ -1224,7 +1545,7 @@ function ShowcaseLayout({
                             className={`bp-showcase-feature-thumb${editMode ? " bp-edit-target" : ""}${
                               editor?.selectedTargetId === slotTarget ? " bp-edit-selected" : ""
                             }`}
-                            style={{ width: thumbSize, height: thumbSize }}
+                            style={vis.wrap}
                             onClick={() => {
                               if (editMode) editor?.onSelectTarget?.(slotTarget)
                               else onPhotoClick(url)
@@ -1239,14 +1560,15 @@ function ShowcaseLayout({
                               editor?.onTargetContextMenu?.(slotTarget, e.clientX, e.clientY)
                             }}
                           >
-                            <img src={url} alt="" />
+                            <img src={url} alt="" style={vis.img} />
+                            {vis.tint ? <span style={vis.tint} /> : null}
                           </button>
                         ) : editMode ? (
                           <div
                             className={`bp-showcase-feature-thumb bp-edit-target${
                               editor?.selectedTargetId === slotTarget ? " bp-edit-selected" : ""
                             }`}
-                            style={{ display: "grid", placeItems: "center", fontSize: 10, width: thumbSize, height: thumbSize }}
+                            style={{ display: "grid", placeItems: "center", fontSize: 10, ...vis.wrap }}
                             onDragOver={(e) => e.preventDefault()}
                             onDrop={(e) => onSlotDrop(slotId, e)}
                             onClick={() => editor?.onSelectTarget?.(slotTarget)}
@@ -1443,10 +1765,35 @@ function ShowcaseLayout({
           e.stopPropagation()
           editor?.onSelectTarget?.("slot.background")
         }}
-      />
+        onContextMenu={(e) => {
+          if (!editMode) return
+          e.preventDefault()
+          editor?.onSelectTarget?.("slot.background")
+          editor?.onTargetContextMenu?.("slot.background", e.clientX, e.clientY)
+        }}
+      >
+        {bgSlotStyle?.tintColor && bgTintOpacity > 0 ? (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: bgSlotStyle.tintColor,
+              opacity: bgTintOpacity / 100,
+              pointerEvents: "none",
+            }}
+          />
+        ) : null}
+      </div>
       <div className="bp-showcase-scroll-layer">
         {nav}
         {pageContent}
+        <FreeformCanvasLayer
+          items={data.canvasItems ?? []}
+          textStyles={textStyles}
+          editMode={editMode}
+          editor={editor}
+          onPhotoClick={onPhotoClick}
+        />
       </div>
     </div>
   )
@@ -1584,6 +1931,31 @@ export function BusinessProfilePublicSite({
   const theme = useMemo(() => ({ ...DEFAULT_BUSINESS_PROFILE_THEME, ...(data.theme ?? {}) }), [data.theme])
   const templateId = data.templateId ?? "hair_plumbing"
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null)
+
+  useEffect(() => {
+    if (previewMode || typeof document === "undefined") return
+    const prevTitle = document.title
+    if (data.businessName?.trim()) document.title = data.businessName.trim()
+    const href = (data.faviconUrl || data.profilePhotoUrl || "").trim()
+    if (!href) return
+    const existing = document.querySelectorAll("link[data-bp-favicon]")
+    existing.forEach((n) => n.remove())
+    const link = document.createElement("link")
+    link.rel = "icon"
+    link.type = href.toLowerCase().includes(".svg") ? "image/svg+xml" : "image/png"
+    link.href = href
+    link.setAttribute("data-bp-favicon", "1")
+    document.head.appendChild(link)
+    const apple = document.createElement("link")
+    apple.rel = "apple-touch-icon"
+    apple.href = href
+    apple.setAttribute("data-bp-favicon", "1")
+    document.head.appendChild(apple)
+    return () => {
+      document.title = prevTitle
+      document.querySelectorAll("link[data-bp-favicon]").forEach((n) => n.remove())
+    }
+  }, [previewMode, data.businessName, data.faviconUrl, data.profilePhotoUrl])
 
   const openPhoto = (url: string, alt = "Work photo") => {
     if (editor?.onSelectTarget) return
@@ -1729,6 +2101,55 @@ export function BusinessProfilePublicSite({
         .bp-showcase-scroll-layer {
           position: relative;
           z-index: 1;
+        }
+        .bp-freeform-layer {
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: 0;
+          bottom: 0;
+          pointer-events: none;
+          z-index: 8;
+        }
+        .bp-freeform-item {
+          position: absolute;
+          pointer-events: auto;
+          box-sizing: border-box;
+          cursor: grab;
+        }
+        .bp-freeform-text {
+          margin: 0;
+          padding: 6px 8px;
+          background: rgba(255,255,255,0.88);
+          border-radius: 8px;
+          line-height: 1.35;
+          font-weight: 700;
+        }
+        .bp-freeform-photo {
+          display: block;
+          width: 100%;
+          height: 100%;
+          padding: 0;
+          border: 0;
+          border-radius: 12px;
+          overflow: hidden;
+          background: #e2e8f0;
+          cursor: inherit;
+        }
+        .bp-freeform-photo img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          display: block;
+        }
+        .bp-freeform-photo-empty {
+          display: grid;
+          place-items: center;
+          font-size: 12px;
+          font-weight: 800;
+          color: #64748b;
+          border: 2px dashed rgba(15,23,42,0.25);
+          background: rgba(255,255,255,0.85);
         }
         .bp-showcase-fixed-bg::after,
         .bp-showcase-fixed-bg-preview::after {

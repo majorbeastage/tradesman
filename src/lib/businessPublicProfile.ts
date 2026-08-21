@@ -15,6 +15,80 @@ export type BusinessProfileTheme = {
   fontColor: string
   /** Accent line (e.g. red “honest work” tag on Hair Plumbing). */
   accentColor: string
+  /** Extra brand colors the customer can name/use in the editor. */
+  customColors?: string[]
+}
+
+export type WebsiteNavBarSettings = {
+  showLogo: boolean
+  showBusinessName: boolean
+  showHome: boolean
+  showAbout: boolean
+  showContact: boolean
+  showCall: boolean
+  /** Optional bar background override. */
+  backgroundColor?: string
+  textColor?: string
+}
+
+export function defaultWebsiteNavBar(): WebsiteNavBarSettings {
+  return {
+    showLogo: true,
+    showBusinessName: true,
+    showHome: true,
+    showAbout: true,
+    showContact: true,
+    showCall: true,
+  }
+}
+
+export function parseWebsiteNavBar(raw: unknown): WebsiteNavBarSettings {
+  const base = defaultWebsiteNavBar()
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return base
+  const o = raw as Record<string, unknown>
+  return {
+    showLogo: o.showLogo !== false,
+    showBusinessName: o.showBusinessName !== false,
+    showHome: o.showHome !== false,
+    showAbout: o.showAbout !== false,
+    showContact: o.showContact !== false,
+    showCall: o.showCall !== false,
+    backgroundColor:
+      typeof o.backgroundColor === "string" && /^#[0-9a-fA-F]{6}$/.test(o.backgroundColor.trim())
+        ? o.backgroundColor.trim().toLowerCase()
+        : undefined,
+    textColor:
+      typeof o.textColor === "string" && /^#[0-9a-fA-F]{6}$/.test(o.textColor.trim())
+        ? o.textColor.trim().toLowerCase()
+        : undefined,
+  }
+}
+
+export type WebsiteBandTexture = "none" | "noise" | "dots" | "lines" | "gradient"
+
+export type WebsiteScrollBandTone = "dark" | "light" | "clear"
+
+export type WebsiteScrollBand = {
+  id: string
+  title: string
+  body: string
+  tone: WebsiteScrollBandTone
+  /** When false, band is hidden on the home page. */
+  enabled?: boolean
+  /** Optional solid/override background. */
+  backgroundColor?: string
+  texture?: WebsiteBandTexture
+  /** 0–100 overlay strength when texture/tint applied. */
+  overlayOpacity?: number
+}
+
+/** Saved draft snapshots selectable from the Templates menu. */
+export type WebsiteSavedDraft = {
+  id: string
+  name: string
+  savedAt: string
+  /** Partial settings snapshot (template + content). */
+  snapshot: Record<string, unknown>
 }
 
 /** Where uploaded photos can be placed on Hair Plumbing–style layouts. */
@@ -31,17 +105,6 @@ export const WEBSITE_IMAGE_SLOT_OPTIONS = [
 export type WebsiteImageSlotId = (typeof WEBSITE_IMAGE_SLOT_OPTIONS)[number]["id"]
 
 export type WebsiteImageSlots = Partial<Record<WebsiteImageSlotId, string>>
-
-export type WebsiteScrollBandTone = "dark" | "light" | "clear"
-
-export type WebsiteScrollBand = {
-  id: string
-  title: string
-  body: string
-  tone: WebsiteScrollBandTone
-  /** When false, band is hidden on the home page. */
-  enabled?: boolean
-}
 
 /** Title + body cards used in Classic feature strip / service trio (editable in preview). */
 export type WebsiteContentCard = {
@@ -77,6 +140,40 @@ export type WebsiteSocialPlatformId = (typeof WEBSITE_SOCIAL_PLATFORM_OPTIONS)[n
 
 export type WebsiteSocialLinks = Partial<Record<WebsiteSocialPlatformId, string>>
 
+/** Freeform photo/text blocks clients can place anywhere on Classic / Showcase. */
+export type WebsiteCanvasItem = {
+  id: string
+  kind: "text" | "photo"
+  /** Text content when kind === "text". */
+  text?: string
+  /** Image URL when kind === "photo". */
+  imageUrl?: string | null
+}
+
+export function parseWebsiteCanvasItems(raw: unknown): WebsiteCanvasItem[] {
+  if (!Array.isArray(raw)) return []
+  const out: WebsiteCanvasItem[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue
+    const o = item as Record<string, unknown>
+    const id =
+      typeof o.id === "string" && o.id.trim()
+        ? o.id.trim().replace(/[^a-z0-9_-]/gi, "").slice(0, 40)
+        : ""
+    if (!id) continue
+    const kind = o.kind === "photo" ? "photo" : o.kind === "text" ? "text" : null
+    if (!kind) continue
+    out.push({
+      id,
+      kind,
+      text: typeof o.text === "string" ? o.text.slice(0, 2000) : kind === "text" ? "New text" : undefined,
+      imageUrl: typeof o.imageUrl === "string" && o.imageUrl.trim() ? o.imageUrl.trim().slice(0, 800) : null,
+    })
+    if (out.length >= 24) break
+  }
+  return out
+}
+
 /** Extra About-style pages beyond About / Contact. */
 export type WebsiteCustomPage = {
   id: string
@@ -103,6 +200,16 @@ export type WebsiteTextStyle = {
   linkTarget?: WebsiteBuiltInLinkTarget
   /** Image slot display size (feature thumbs, etc.). */
   imageSize?: number
+  /** Image tint overlay color. */
+  tintColor?: string
+  /** Tint strength 0–100. */
+  tintOpacity?: number
+  /** fixed = lock aspect via one size; free = independent width/height. */
+  scaleMode?: "fixed" | "free"
+  /** Simple crop: focus % and zoom. */
+  cropX?: number
+  cropY?: number
+  cropZoom?: number
 }
 
 export type WebsiteTextStyles = Partial<Record<string, WebsiteTextStyle>>
@@ -289,80 +396,40 @@ export const DEFAULT_BUSINESS_PROFILE_THEME: BusinessProfileTheme = {
   fieldBackgroundColor: "#f8fafc",
   fontColor: "#0f172a",
   accentColor: "#b91c1c",
+  customColors: [],
 }
 
-/** One-click brand packs customers can apply, then fine-tune. */
+/** @deprecated Prefer custom brand colors + randomize in the builder. Kept for parse compatibility. */
 export const BUSINESS_PROFILE_BRAND_PRESETS: Array<{
   id: string
   label: string
   theme: BusinessProfileTheme
-}> = [
-  {
-    id: "classic_bw",
-    label: "Classic B&W",
-    theme: {
-      primaryColor: "#111111",
-      secondaryColor: "#000000",
-      fieldBackgroundColor: "#ffffff",
-      fontColor: "#0f172a",
-      accentColor: "#c41e3a",
-    },
-  },
-  {
-    id: "plumbing_teal",
-    label: "Plumbing teal",
-    theme: {
-      primaryColor: "#0e7490",
-      secondaryColor: "#164e63",
-      fieldBackgroundColor: "#ecfeff",
-      fontColor: "#0f172a",
-      accentColor: "#b91c1c",
-    },
-  },
-  {
-    id: "construction_amber",
-    label: "Construction amber",
-    theme: {
-      primaryColor: "#c2410c",
-      secondaryColor: "#1c1917",
-      fieldBackgroundColor: "#fff7ed",
-      fontColor: "#1c1917",
-      accentColor: "#ea580c",
-    },
-  },
-  {
-    id: "landscape_green",
-    label: "Landscape green",
-    theme: {
-      primaryColor: "#15803d",
-      secondaryColor: "#14532d",
-      fieldBackgroundColor: "#f0fdf4",
-      fontColor: "#14532d",
-      accentColor: "#ca8a04",
-    },
-  },
-  {
-    id: "roofing_navy",
-    label: "Roofing navy",
-    theme: {
-      primaryColor: "#1d4ed8",
-      secondaryColor: "#0f172a",
-      fieldBackgroundColor: "#eff6ff",
-      fontColor: "#0f172a",
-      accentColor: "#dc2626",
-    },
-  },
-  {
-    id: "clean_charcoal",
-    label: "Clean charcoal",
-    theme: {
-      primaryColor: "#334155",
-      secondaryColor: "#0f172a",
-      fieldBackgroundColor: "#f8fafc",
-      fontColor: "#0f172a",
-      accentColor: "#b91c1c",
-    },
-  },
+}> = []
+
+export function randomizeBusinessProfileTheme(prev?: BusinessProfileTheme): BusinessProfileTheme {
+  const pick = () =>
+    `#${Math.floor(Math.random() * 0xffffff)
+      .toString(16)
+      .padStart(6, "0")}`
+  const primary = pick()
+  const secondary = pick()
+  const accent = pick()
+  return {
+    primaryColor: primary,
+    secondaryColor: secondary,
+    fieldBackgroundColor: prev?.fieldBackgroundColor || "#f8fafc",
+    fontColor: prev?.fontColor || "#0f172a",
+    accentColor: accent,
+    customColors: prev?.customColors?.length ? [...prev.customColors] : [],
+  }
+}
+
+export const WEBSITE_BAND_TEXTURE_OPTIONS: Array<{ id: WebsiteBandTexture; label: string }> = [
+  { id: "none", label: "Solid / default" },
+  { id: "noise", label: "Noise" },
+  { id: "dots", label: "Dots" },
+  { id: "lines", label: "Lines" },
+  { id: "gradient", label: "Gradient wash" },
 ]
 
 export function emptyWebsiteImageSlots(): WebsiteImageSlots {
@@ -460,7 +527,19 @@ export function parseWebsiteTextStyles(raw: unknown): WebsiteTextStyles {
     if (typeof o.maxWidth === "number" && Number.isFinite(o.maxWidth)) style.maxWidth = Math.max(80, Math.min(1200, Math.round(o.maxWidth)))
     if (isWebsiteBuiltInLinkTarget(o.linkTarget) && o.linkTarget !== "none") style.linkTarget = o.linkTarget
     if (typeof o.imageSize === "number" && Number.isFinite(o.imageSize)) {
-      style.imageSize = Math.max(32, Math.min(280, Math.round(o.imageSize)))
+      style.imageSize = Math.max(32, Math.min(640, Math.round(o.imageSize)))
+    }
+    if (typeof o.tintColor === "string" && HEX_COLOR_RE.test(o.tintColor.trim())) {
+      style.tintColor = o.tintColor.trim().toLowerCase()
+    }
+    if (typeof o.tintOpacity === "number" && Number.isFinite(o.tintOpacity)) {
+      style.tintOpacity = Math.max(0, Math.min(100, Math.round(o.tintOpacity)))
+    }
+    if (o.scaleMode === "fixed" || o.scaleMode === "free") style.scaleMode = o.scaleMode
+    if (typeof o.cropX === "number" && Number.isFinite(o.cropX)) style.cropX = Math.max(0, Math.min(100, Math.round(o.cropX)))
+    if (typeof o.cropY === "number" && Number.isFinite(o.cropY)) style.cropY = Math.max(0, Math.min(100, Math.round(o.cropY)))
+    if (typeof o.cropZoom === "number" && Number.isFinite(o.cropZoom)) {
+      style.cropZoom = Math.max(100, Math.min(300, Math.round(o.cropZoom)))
     }
     if (Object.keys(style).length) out[key.trim().slice(0, 80)] = style
   }
@@ -527,21 +606,52 @@ export function parseWebsiteScrollBands(raw: unknown): WebsiteScrollBand[] {
   const base = defaultWebsiteScrollBands()
   if (!Array.isArray(raw) || raw.length === 0) return base
   const out: WebsiteScrollBand[] = []
-  for (const item of raw.slice(0, 6)) {
+  for (const item of raw.slice(0, 12)) {
     if (!item || typeof item !== "object" || Array.isArray(item)) continue
     const o = item as Record<string, unknown>
     const id = typeof o.id === "string" && o.id.trim() ? o.id.trim().slice(0, 40) : `band_${out.length + 1}`
     const tone: WebsiteScrollBandTone =
       o.tone === "light" || o.tone === "clear" || o.tone === "dark" ? o.tone : "dark"
-    out.push({
+    const texture: WebsiteBandTexture | undefined =
+      o.texture === "noise" || o.texture === "dots" || o.texture === "lines" || o.texture === "gradient" || o.texture === "none"
+        ? o.texture
+        : undefined
+    const band: WebsiteScrollBand = {
       id,
       title: typeof o.title === "string" ? o.title.trim().slice(0, 120) : "",
       body: typeof o.body === "string" ? o.body.trim().slice(0, 2000) : "",
       tone,
       enabled: o.enabled !== false,
-    })
+    }
+    if (typeof o.backgroundColor === "string" && HEX_COLOR_RE.test(o.backgroundColor.trim())) {
+      band.backgroundColor = o.backgroundColor.trim().toLowerCase()
+    }
+    if (texture && texture !== "none") band.texture = texture
+    if (typeof o.overlayOpacity === "number" && Number.isFinite(o.overlayOpacity)) {
+      band.overlayOpacity = Math.max(0, Math.min(100, Math.round(o.overlayOpacity)))
+    }
+    out.push(band)
   }
   return out.length ? out : base
+}
+
+export function parseWebsiteSavedDrafts(raw: unknown): WebsiteSavedDraft[] {
+  if (!Array.isArray(raw)) return []
+  const out: WebsiteSavedDraft[] = []
+  for (const item of raw.slice(0, 20)) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue
+    const o = item as Record<string, unknown>
+    const id = typeof o.id === "string" && o.id.trim() ? o.id.trim().slice(0, 40) : ""
+    const name = typeof o.name === "string" ? o.name.trim().slice(0, 80) : ""
+    const savedAt = typeof o.savedAt === "string" ? o.savedAt : ""
+    const snapshot =
+      o.snapshot && typeof o.snapshot === "object" && !Array.isArray(o.snapshot)
+        ? (o.snapshot as Record<string, unknown>)
+        : null
+    if (!id || !name || !snapshot) continue
+    out.push({ id, name, savedAt: savedAt || new Date().toISOString(), snapshot })
+  }
+  return out
 }
 
 /** Resolve a slot image, falling back through common aliases. */
@@ -580,6 +690,8 @@ export type BusinessPublicProfileSettings = {
   showBusinessHours: boolean
   /** Corporate profile image for the public page header. */
   profilePhotoUrl: string | null
+  /** Browser tab favicon (falls back to profile/logo photo when empty). */
+  faviconUrl: string | null
   workPhotoUrls: string[]
   /** Saved public URL slug when published. */
   publishedSlug: string
@@ -614,6 +726,8 @@ export type BusinessPublicProfileSettings = {
   subPages: WebsiteSubPages
   /** Extra client-defined sub-pages. */
   customPages: WebsiteCustomPage[]
+  /** Freeform drag/resize text & photo fields on the Classic canvas. */
+  canvasItems: WebsiteCanvasItem[]
   /** Feature highlight cards under the about band. */
   featureCards: WebsiteContentCard[]
   /** Specialty / service cards (title + body + image slot). */
@@ -628,6 +742,10 @@ export type BusinessPublicProfileSettings = {
   footerCopyright: string
   /** Show Tradesman “Powered by” badge (off by default for client Classic sites). */
   showPoweredBy: boolean
+  /** Top navigation bar visibility / colors. */
+  navBar: WebsiteNavBarSettings
+  /** Local drafts selectable from the Templates menu. */
+  savedDrafts: WebsiteSavedDraft[]
 }
 
 export function emptyBusinessPublicProfileSettings(): BusinessPublicProfileSettings {
@@ -643,6 +761,7 @@ export function emptyBusinessPublicProfileSettings(): BusinessPublicProfileSetti
     showServiceArea: false,
     showBusinessHours: true,
     profilePhotoUrl: null,
+    faviconUrl: null,
     workPhotoUrls: [],
     publishedSlug: "",
     templateId: "showcase",
@@ -667,6 +786,7 @@ export function emptyBusinessPublicProfileSettings(): BusinessPublicProfileSetti
     homeSections: emptyWebsiteHomeSections(),
     subPages: defaultWebsiteSubPages(),
     customPages: [],
+    canvasItems: [],
     featureCards: [],
     serviceCards: [],
     textStyles: {},
@@ -674,6 +794,8 @@ export function emptyBusinessPublicProfileSettings(): BusinessPublicProfileSetti
     fixedBackground: true,
     footerCopyright: "",
     showPoweredBy: true,
+    navBar: defaultWebsiteNavBar(),
+    savedDrafts: [],
   }
 }
 
@@ -686,9 +808,17 @@ export function normalizeBusinessProfileHexColor(raw: string, fallback: string):
 }
 
 export function parseBusinessProfileTheme(raw: unknown): BusinessProfileTheme {
-  const base = { ...DEFAULT_BUSINESS_PROFILE_THEME }
+  const base = { ...DEFAULT_BUSINESS_PROFILE_THEME, customColors: [] as string[] }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return base
   const o = raw as Record<string, unknown>
+  const customColors: string[] = []
+  if (Array.isArray(o.customColors)) {
+    for (const c of o.customColors.slice(0, 12)) {
+      if (typeof c !== "string") continue
+      const hex = normalizeBusinessProfileHexColor(c, "")
+      if (hex && !customColors.includes(hex)) customColors.push(hex)
+    }
+  }
   return {
     primaryColor: normalizeBusinessProfileHexColor(
       typeof o.primaryColor === "string" ? o.primaryColor : "",
@@ -707,6 +837,7 @@ export function parseBusinessProfileTheme(raw: unknown): BusinessProfileTheme {
       typeof o.accentColor === "string" ? o.accentColor : "",
       base.accentColor,
     ),
+    customColors,
   }
 }
 
@@ -780,6 +911,7 @@ export function parseBusinessPublicProfileSettings(metadata: unknown): BusinessP
     showServiceArea: o.showServiceArea === true,
     showBusinessHours: o.showBusinessHours !== false,
     profilePhotoUrl: typeof o.profilePhotoUrl === "string" && o.profilePhotoUrl.trim() ? o.profilePhotoUrl.trim() : null,
+    faviconUrl: typeof o.faviconUrl === "string" && o.faviconUrl.trim() ? o.faviconUrl.trim().slice(0, 800) : null,
     workPhotoUrls,
     publishedSlug: typeof o.publishedSlug === "string" ? normalizePlatformEmailSlug(o.publishedSlug) : "",
     templateId: parseBusinessProfileTemplateId(o.templateId),
@@ -809,6 +941,7 @@ export function parseBusinessPublicProfileSettings(metadata: unknown): BusinessP
     homeSections: parseWebsiteHomeSections(o.homeSections),
     subPages: parseWebsiteSubPages(o.subPages),
     customPages: parseWebsiteCustomPages(o.customPages),
+    canvasItems: parseWebsiteCanvasItems(o.canvasItems),
     featureCards: parseWebsiteContentCards(o.featureCards, defaultWebsiteFeatureCards(), 4),
     serviceCards: parseWebsiteContentCards(o.serviceCards, defaultWebsiteServiceCards(), 6),
     textStyles: parseWebsiteTextStyles(o.textStyles),
@@ -816,6 +949,8 @@ export function parseBusinessPublicProfileSettings(metadata: unknown): BusinessP
     fixedBackground: o.fixedBackground !== false,
     footerCopyright: readNestedProfileString(o, "footerCopyright", "footer_copyright").slice(0, 200),
     showPoweredBy: o.showPoweredBy === true,
+    navBar: parseWebsiteNavBar(o.navBar),
+    savedDrafts: parseWebsiteSavedDrafts(o.savedDrafts),
   }
 }
 
@@ -851,6 +986,11 @@ export function mergeBusinessPublicProfileMetadata(
         settings.socialLinks.facebook || settings.facebookUrl,
         settings.socialLinks.instagram || settings.instagramUrl,
       ),
+      profilePhotoUrl: settings.profilePhotoUrl,
+      faviconUrl:
+        typeof settings.faviconUrl === "string" && settings.faviconUrl.trim()
+          ? settings.faviconUrl.trim().slice(0, 800)
+          : null,
       imageSlots: parseWebsiteImageSlots(settings.imageSlots),
       scrollBands: parseWebsiteScrollBands(settings.scrollBands),
       heroHeadline: settings.heroHeadline.trim().slice(0, 160),
@@ -864,6 +1004,7 @@ export function mergeBusinessPublicProfileMetadata(
       homeSections: parseWebsiteHomeSections(settings.homeSections),
       subPages: parseWebsiteSubPages(settings.subPages),
       customPages: parseWebsiteCustomPages(settings.customPages),
+      canvasItems: parseWebsiteCanvasItems(settings.canvasItems),
       featureCards: parseWebsiteContentCards(settings.featureCards, defaultWebsiteFeatureCards(), 4),
       serviceCards: parseWebsiteContentCards(settings.serviceCards, defaultWebsiteServiceCards(), 6),
       textStyles: parseWebsiteTextStyles(settings.textStyles),
@@ -871,6 +1012,8 @@ export function mergeBusinessPublicProfileMetadata(
       fixedBackground: settings.fixedBackground !== false,
       footerCopyright: settings.footerCopyright.trim().slice(0, 200),
       showPoweredBy: settings.showPoweredBy === true,
+      navBar: parseWebsiteNavBar(settings.navBar),
+      savedDrafts: parseWebsiteSavedDrafts(settings.savedDrafts),
     },
   }
 }
