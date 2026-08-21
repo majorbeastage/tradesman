@@ -701,6 +701,7 @@ export default function WebsiteBuilderPage() {
         maxWidth: 280,
         fontSize: "22px",
         fontWeight: "700",
+        showFieldBackground: false,
       }),
     }))
     setSelectedTargetId(targetId)
@@ -953,10 +954,7 @@ export default function WebsiteBuilderPage() {
         }}
       >
         <div>
-          <h1 style={{ margin: "0 0 4px", fontSize: 20, fontWeight: 900 }}>Website Builder</h1>
-          <p style={{ margin: 0, fontSize: 12, color: "#475569", lineHeight: 1.45 }}>
-            Use Quick add for freeform text/photos, then drag them on the page. Click anything to edit it here at the top.
-          </p>
+          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 900 }}>Website Builder</h1>
         </div>
 
         <div style={{ ...sectionCard, padding: 10 }}>
@@ -1096,6 +1094,44 @@ export default function WebsiteBuilderPage() {
                   </option>
                 ))}
               </select>
+            </label>
+            {selectedCanvasItem ? (
+              <div style={{ display: "grid", gap: 8 }}>
+                <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, fontWeight: 700 }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedStyle.showFieldBackground === true}
+                    onChange={(e) =>
+                      patchTextStyle(selectedTargetId, {
+                        showFieldBackground: e.target.checked,
+                        ...(e.target.checked && !selectedStyle.fieldBackgroundColor
+                          ? { fieldBackgroundColor: "#ffffff" }
+                          : {}),
+                      })
+                    }
+                  />
+                  Text background panel
+                </label>
+                {selectedStyle.showFieldBackground ? (
+                  <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
+                    Background color
+                    <input
+                      type="color"
+                      value={selectedStyle.fieldBackgroundColor || "#ffffff"}
+                      onChange={(e) => patchTextStyle(selectedTargetId, { fieldBackgroundColor: e.target.value })}
+                      style={{ width: "100%", height: 34, borderRadius: 8, border: `1px solid ${theme.border}` }}
+                    />
+                  </label>
+                ) : null}
+              </div>
+            ) : null}
+            <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, fontWeight: 700 }}>
+              <input
+                type="checkbox"
+                checked={selectedStyle.scrollFixed === true}
+                onChange={(e) => patchTextStyle(selectedTargetId, { scrollFixed: e.target.checked })}
+              />
+              Fixed while scrolling
             </label>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button
@@ -1358,6 +1394,14 @@ export default function WebsiteBuilderPage() {
                 />
               </label>
             </div>
+            <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, fontWeight: 700 }}>
+              <input
+                type="checkbox"
+                checked={selectedStyle.scrollFixed === true}
+                onChange={(e) => patchTextStyle(selectedTargetId, { scrollFixed: e.target.checked })}
+              />
+              Fixed while scrolling
+            </label>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button
                 type="button"
@@ -1491,11 +1535,8 @@ export default function WebsiteBuilderPage() {
           {error ? <p style={{ margin: 0, fontSize: 12, color: "#b91c1c", fontWeight: 800 }}>{error}</p> : null}
         </div>
 
-        <div style={sectionCard}>
-          <div style={{ fontSize: 12, fontWeight: 900 }}>Quick add</div>
-          <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
-            Legend for common edits — then click the new item in the preview to polish it.
-          </p>
+        <details style={sectionCard}>
+          <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 900 }}>Quick add</summary>
           <div style={{ display: "grid", gap: 6 }}>
             {(
               [
@@ -1620,7 +1661,7 @@ export default function WebsiteBuilderPage() {
               ))}
             </div>
           ) : null}
-        </div>
+        </details>
 
         <div style={sectionCard}>
           <div style={{ fontSize: 12, fontWeight: 900 }}>Top navigation bar</div>
@@ -1851,8 +1892,8 @@ export default function WebsiteBuilderPage() {
           </button>
         </div>
 
-        <div style={sectionCard}>
-          <div style={{ fontSize: 12, fontWeight: 900 }}>Photos</div>
+        <details style={sectionCard}>
+          <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 900 }}>Photos</summary>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             <label
               style={{
@@ -1977,10 +2018,7 @@ export default function WebsiteBuilderPage() {
               </div>
             ))}
           </div>
-        </div>
-
-        <div style={sectionCard}>
-          <div style={{ fontSize: 12, fontWeight: 900, color: EDITOR_INK }}>Stationary background</div>
+          <div style={{ fontSize: 12, fontWeight: 900, color: EDITOR_INK, marginTop: 8 }}>Stationary background</div>
           <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, fontWeight: 700, color: EDITOR_INK }}>
             <input
               type="checkbox"
@@ -1993,10 +2031,10 @@ export default function WebsiteBuilderPage() {
             Drag a photo from the library onto the page background, or click <strong>BG</strong> on a thumbnail. Keep
             “stationary background” checked so sections scroll over the image.
           </p>
-        </div>
+        </details>
 
-        <div style={sectionCard}>
-          <div style={{ fontSize: 12, fontWeight: 900, color: EDITOR_INK }}>Section order (drag)</div>
+        <details style={sectionCard}>
+          <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 900, color: EDITOR_INK }}>Section order (drag)</summary>
           <div style={{ display: "grid", gap: 6 }}>
             {settings.homeSectionOrder.map((id) => {
               const opt = WEBSITE_HOME_SECTION_OPTIONS.find((o) => o.id === id)
@@ -2043,7 +2081,7 @@ export default function WebsiteBuilderPage() {
               )
             })}
           </div>
-        </div>
+        </details>
 
         <div style={sectionCard}>
           <div style={{ fontSize: 12, fontWeight: 900, color: EDITOR_INK }}>Add / restore sections</div>
@@ -2073,8 +2111,8 @@ export default function WebsiteBuilderPage() {
           )}
         </div>
 
-        <div style={sectionCard}>
-          <div style={{ fontSize: 12, fontWeight: 900 }}>Brand colors</div>
+        <details style={sectionCard}>
+          <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 900 }}>Brand colors</summary>
           <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
             Primary, Accent, and Secondary appear on selected text/images. Add extra colors, or randomize.
           </p>
@@ -2186,7 +2224,7 @@ export default function WebsiteBuilderPage() {
               Randomize
             </button>
           </div>
-        </div>
+        </details>
 
         {!showTemplatesAtTop ? renderTemplatesCard(true) : null}
 
@@ -2241,9 +2279,6 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
           </pre>
         </details>
 
-        <div style={{ fontSize: 11, color: "#64748b", lineHeight: 1.45 }}>
-          Contact phone / email / address come from this account’s profile &amp; Communications channels.
-        </div>
       </aside>
 
       <main className="wb-preview" style={{ background: "#0f172a", position: "relative" }}>
@@ -2511,6 +2546,31 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                 >
                   Reset position
                 </button>
+                <button
+                  type="button"
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "8px 10px",
+                    border: "none",
+                    background: "transparent",
+                    borderRadius: 6,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    color: "#0f172a",
+                  }}
+                  onClick={() => {
+                    const id = contextMenu.targetId
+                    const on = settings.textStyles[id]?.scrollFixed === true
+                    patchTextStyle(id, { scrollFixed: !on })
+                    setContextMenu(null)
+                  }}
+                >
+                  {settings.textStyles[contextMenu.targetId]?.scrollFixed
+                    ? "Unpin (scroll with page)"
+                    : "Pin (fixed while scrolling)"}
+                </button>
               </>
             ) : null}
             {resolveWebsiteEditTargetKind(contextMenu.targetId, settings.canvasItems) === "image" ? (
@@ -2634,6 +2694,32 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                   }}
                 >
                   Tint…
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "8px 10px",
+                    border: "none",
+                    background: "transparent",
+                    borderRadius: 6,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    color: "#0f172a",
+                  }}
+                  onClick={() => {
+                    const id = contextMenu.targetId
+                    const on = settings.textStyles[id]?.scrollFixed === true
+                    patchTextStyle(id, { scrollFixed: !on })
+                    setSelectedTargetId(id)
+                    setContextMenu(null)
+                  }}
+                >
+                  {settings.textStyles[contextMenu.targetId]?.scrollFixed
+                    ? "Unpin (scroll with page)"
+                    : "Pin (fixed while scrolling)"}
                 </button>
               </>
             ) : null}

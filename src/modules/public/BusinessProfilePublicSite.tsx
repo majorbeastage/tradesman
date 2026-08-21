@@ -834,17 +834,24 @@ function FreeformCanvasLayer({
   editMode,
   editor,
   onPhotoClick,
+  pinnedOnly = false,
 }: {
   items: WebsiteCanvasItem[]
   textStyles: WebsiteTextStyles
   editMode: boolean
   editor?: WebsiteCanvasEditorProps
   onPhotoClick: (url: string) => void
+  /** When true, only scroll-fixed items; when false, skip pinned items. */
+  pinnedOnly?: boolean
 }) {
-  if (!items.length && !editMode) return null
+  const filtered = items.filter((item) => {
+    const pinned = Boolean(textStyles[`canvas.${item.id}`]?.scrollFixed)
+    return pinnedOnly ? pinned : !pinned
+  })
+  if (!filtered.length) return null
   return (
-    <div className="bp-freeform-layer">
-      {items.map((item) => {
+    <div className={`bp-freeform-layer${pinnedOnly ? " bp-freeform-layer-pinned" : ""}`}>
+      {filtered.map((item) => {
         const targetId = `canvas.${item.id}`
         const st = textStyles[targetId] ?? {}
         const ox = st.offsetX ?? 0
@@ -853,6 +860,7 @@ function FreeformCanvasLayer({
         const height = st.imageSize ?? (item.kind === "photo" ? 150 : undefined)
         const selected = editor?.selectedTargetId === targetId
         const css = websiteTextStyleToCss(st)
+        const pinnedClass = st.scrollFixed ? " bp-freeform-item-pinned" : ""
 
         if (item.kind === "photo") {
           const url = item.imageUrl?.trim() || ""
@@ -860,7 +868,7 @@ function FreeformCanvasLayer({
           return (
             <div
               key={item.id}
-              className={`bp-freeform-item${editMode ? " bp-edit-target" : ""}${selected ? " bp-edit-selected" : ""}`}
+              className={`bp-freeform-item${editMode ? " bp-edit-target" : ""}${selected ? " bp-edit-selected" : ""}${pinnedClass}`}
               data-edit-target={targetId}
               style={{
                 width,
@@ -868,7 +876,7 @@ function FreeformCanvasLayer({
                 transform: `translate(${ox}px, ${oy}px)`,
                 left: "50%",
                 marginLeft: -width / 2,
-                top: 140,
+                top: pinnedOnly ? 120 : 140,
               }}
               onClick={(e) => {
                 if (!editMode) return
@@ -1015,12 +1023,13 @@ function FreeformCanvasLayer({
 
         const text = (item.text || "").trim() || (editMode ? "New text" : "")
         if (!text && !editMode) return null
+        const bgClass = st.showFieldBackground ? " bp-freeform-text-bg" : ""
         return (
           <CanvasEditable
             key={item.id}
             as="p"
             targetId={targetId}
-            className="bp-freeform-item bp-freeform-text"
+            className={`bp-freeform-item bp-freeform-text${bgClass}${pinnedClass}`}
             editMode={editMode}
             selectedTargetId={editor?.selectedTargetId}
             onSelectTarget={editor?.onSelectTarget}
@@ -1033,12 +1042,17 @@ function FreeformCanvasLayer({
               ...css,
               left: "50%",
               marginLeft: -width / 2,
-              top: 140,
+              top: pinnedOnly ? 120 : 140,
               width,
               maxWidth: width,
-              position: "absolute",
+              position: st.scrollFixed ? "fixed" : "absolute",
               marginTop: 0,
-              zIndex: 5,
+              zIndex: st.scrollFixed ? 45 : 5,
+              background: st.showFieldBackground
+                ? st.fieldBackgroundColor || "rgba(255,255,255,0.88)"
+                : "transparent",
+              padding: st.showFieldBackground ? "6px 8px" : 0,
+              borderRadius: st.showFieldBackground ? 8 : 0,
             }}
           >
             {text}
@@ -1793,8 +1807,17 @@ function ShowcaseLayout({
           editMode={editMode}
           editor={editor}
           onPhotoClick={onPhotoClick}
+          pinnedOnly={false}
         />
       </div>
+      <FreeformCanvasLayer
+        items={data.canvasItems ?? []}
+        textStyles={textStyles}
+        editMode={editMode}
+        editor={editor}
+        onPhotoClick={onPhotoClick}
+        pinnedOnly
+      />
     </div>
   )
 }
@@ -2111,6 +2134,15 @@ export function BusinessProfilePublicSite({
           pointer-events: none;
           z-index: 8;
         }
+        .bp-freeform-layer-pinned {
+          position: fixed;
+          inset: 0;
+          z-index: 45;
+          pointer-events: none;
+        }
+        .bp-shell-showcase-preview .bp-freeform-layer-pinned {
+          position: absolute;
+        }
         .bp-freeform-item {
           position: absolute;
           pointer-events: auto;
@@ -2119,11 +2151,23 @@ export function BusinessProfilePublicSite({
         }
         .bp-freeform-text {
           margin: 0;
+          padding: 0;
+          background: transparent;
+          border-radius: 0;
+          line-height: 1.35;
+          font-weight: 700;
+        }
+        .bp-freeform-text.bp-freeform-text-bg {
           padding: 6px 8px;
           background: rgba(255,255,255,0.88);
           border-radius: 8px;
-          line-height: 1.35;
-          font-weight: 700;
+        }
+        .bp-freeform-item-pinned {
+          position: fixed !important;
+          z-index: 45;
+        }
+        .bp-shell-showcase-preview .bp-freeform-item-pinned {
+          position: absolute !important;
         }
         .bp-freeform-photo {
           display: block;

@@ -210,6 +210,12 @@ export type WebsiteTextStyle = {
   cropX?: number
   cropY?: number
   cropZoom?: number
+  /** Optional solid/panel behind freeform (and other) text — off by default. */
+  showFieldBackground?: boolean
+  /** Background fill when showFieldBackground is on. */
+  fieldBackgroundColor?: string
+  /** Keep this element fixed on screen while the page scrolls. */
+  scrollFixed?: boolean
 }
 
 export type WebsiteTextStyles = Partial<Record<string, WebsiteTextStyle>>
@@ -541,6 +547,11 @@ export function parseWebsiteTextStyles(raw: unknown): WebsiteTextStyles {
     if (typeof o.cropZoom === "number" && Number.isFinite(o.cropZoom)) {
       style.cropZoom = Math.max(100, Math.min(300, Math.round(o.cropZoom)))
     }
+    if (o.showFieldBackground === true) style.showFieldBackground = true
+    if (typeof o.fieldBackgroundColor === "string" && HEX_COLOR_RE.test(o.fieldBackgroundColor.trim())) {
+      style.fieldBackgroundColor = o.fieldBackgroundColor.trim().toLowerCase()
+    }
+    if (o.scrollFixed === true) style.scrollFixed = true
     if (Object.keys(style).length) out[key.trim().slice(0, 80)] = style
   }
   return out
@@ -556,8 +567,12 @@ export function websiteTextStyleToCss(style: WebsiteTextStyle | undefined): {
   textTransform?: "none" | "uppercase" | "capitalize"
   transform?: string
   maxWidth?: number | string
-  position?: "relative"
+  position?: "relative" | "fixed"
   display?: "inline-block"
+  background?: string
+  padding?: string
+  borderRadius?: string
+  zIndex?: number
 } {
   if (!style) return {}
   const css: {
@@ -570,8 +585,12 @@ export function websiteTextStyleToCss(style: WebsiteTextStyle | undefined): {
     textTransform?: "none" | "uppercase" | "capitalize"
     transform?: string
     maxWidth?: number | string
-    position?: "relative"
+    position?: "relative" | "fixed"
     display?: "inline-block"
+    background?: string
+    padding?: string
+    borderRadius?: string
+    zIndex?: number
   } = {}
   if (style.color) css.color = style.color
   if (style.fontSize) css.fontSize = style.fontSize
@@ -588,6 +607,16 @@ export function websiteTextStyleToCss(style: WebsiteTextStyle | undefined): {
     css.display = "inline-block"
   }
   if (typeof style.maxWidth === "number") css.maxWidth = style.maxWidth
+  if (style.showFieldBackground) {
+    css.background = style.fieldBackgroundColor || "rgba(255,255,255,0.88)"
+    css.padding = "6px 8px"
+    css.borderRadius = "8px"
+  }
+  if (style.scrollFixed) {
+    css.position = "fixed"
+    css.zIndex = 45
+    css.display = "inline-block"
+  }
   return css
 }
 
