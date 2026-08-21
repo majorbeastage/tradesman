@@ -789,7 +789,8 @@ function CanvasEditable({
     ...styleWithoutTransform,
     cursor: enableMoveResize ? (selected ? "grab" : "pointer") : "pointer",
     position: styleWithoutTransform.position ?? (enableMoveResize ? "relative" : undefined),
-    display: styleWithoutTransform.display ?? (enableMoveResize ? "inline-block" : undefined),
+    // Prefer caller display (e.g. freeform block width) over inline-block shrink-wrap.
+    display: styleWithoutTransform.display ?? (enableMoveResize && !styleWithoutTransform.width ? "inline-block" : styleWithoutTransform.display),
     transform: enableMoveResize ? `translate(${ox}px, ${oy}px)` : _styleTransform,
     touchAction: enableMoveResize ? "none" : undefined,
     userSelect: enableMoveResize ? "none" : undefined,
@@ -876,7 +877,7 @@ function FreeformCanvasLayer({
                 transform: `translate(${ox}px, ${oy}px)`,
                 left: "50%",
                 marginLeft: -width / 2,
-                top: pinnedOnly ? 120 : 140,
+                top: 140,
               }}
               onClick={(e) => {
                 if (!editMode) return
@@ -1024,6 +1025,14 @@ function FreeformCanvasLayer({
         const text = (item.text || "").trim() || (editMode ? "New text" : "")
         if (!text && !editMode) return null
         const bgClass = st.showFieldBackground ? " bp-freeform-text-bg" : ""
+        const {
+          position: _cssPos,
+          display: _cssDisplay,
+          zIndex: _cssZ,
+          transform: _cssTransform,
+          maxWidth: _cssMaxW,
+          ...textCss
+        } = css
         return (
           <CanvasEditable
             key={item.id}
@@ -1039,13 +1048,16 @@ function FreeformCanvasLayer({
             offsetX={ox}
             offsetY={oy}
             style={{
-              ...css,
+              ...textCss,
+              boxSizing: "border-box",
               left: "50%",
               marginLeft: -width / 2,
-              top: pinnedOnly ? 120 : 140,
+              top: 140,
               width,
               maxWidth: width,
+              minWidth: width,
               position: st.scrollFixed ? "fixed" : "absolute",
+              display: "block",
               marginTop: 0,
               zIndex: st.scrollFixed ? 45 : 5,
               background: st.showFieldBackground
@@ -1442,17 +1454,39 @@ function ShowcaseLayout({
                 <div className="bp-showcase-service-trio">
                   {serviceCards.slice(0, 3).map((card, i) => {
                     const slotTarget = `slot.service_${i + 1}`
+                    const st = textStyles[slotTarget] ?? {}
                     const vis = imageSlotVisualStyle({
-                      imageSize: textStyles[slotTarget]?.imageSize ?? 220,
-                      ...textStyles[slotTarget],
+                      imageSize: st.imageSize ?? 180,
+                      ...st,
                     })
+                    const photoH =
+                      typeof st.imageSize === "number"
+                        ? st.imageSize
+                        : st.scaleMode === "free"
+                          ? Math.round((st.maxWidth ?? 220) * 0.75)
+                          : undefined
                     return (
                     <article key={card.id || i} className="bp-showcase-service-photo-card">
                       {serviceImgs[i] ? (
                         <button
                           type="button"
-                          className={`bp-showcase-service-photo${editMode ? " bp-edit-target" : ""}`}
-                          style={{ ...vis.wrap, width: "100%", height: vis.wrap.height || 160 }}
+                          className={`bp-showcase-service-photo${editMode ? " bp-edit-target" : ""}${
+                            editor?.selectedTargetId === slotTarget ? " bp-edit-selected" : ""
+                          }`}
+                          style={{
+                            position: "relative",
+                            overflow: "hidden",
+                            width: st.scaleMode === "free" && st.maxWidth ? st.maxWidth : "100%",
+                            maxWidth: "100%",
+                            height: photoH,
+                            aspectRatio: photoH ? "auto" : "4 / 3",
+                            borderRadius: 18,
+                            padding: 0,
+                            border: 0,
+                            display: "block",
+                            background: "#e2e8f0",
+                            cursor: editMode ? "pointer" : "zoom-in",
+                          }}
                           onClick={() => {
                             if (editMode) editor?.onSelectTarget?.(slotTarget)
                             else onPhotoClick(serviceImgs[i]!)
@@ -1462,6 +1496,7 @@ function ShowcaseLayout({
                           onContextMenu={(e) => {
                             if (!editMode) return
                             e.preventDefault()
+                            e.stopPropagation()
                             editor?.onSelectTarget?.(slotTarget)
                             editor?.onTargetContextMenu?.(slotTarget, e.clientX, e.clientY)
                           }}
@@ -1471,10 +1506,24 @@ function ShowcaseLayout({
                         </button>
                       ) : (
                         <div
-                          className={`bp-showcase-service-photo bp-showcase-service-photo-empty${editMode ? " bp-edit-target" : ""}`}
+                          className={`bp-showcase-service-photo bp-showcase-service-photo-empty${editMode ? " bp-edit-target" : ""}${
+                            editor?.selectedTargetId === slotTarget ? " bp-edit-selected" : ""
+                          }`}
+                          style={{
+                            width: "100%",
+                            aspectRatio: "4 / 3",
+                            borderRadius: 18,
+                          }}
                           onDragOver={(e) => editMode && e.preventDefault()}
                           onDrop={(e) => onSlotDrop(`service_${i + 1}`, e)}
                           onClick={() => editMode && editor?.onSelectTarget?.(slotTarget)}
+                          onContextMenu={(e) => {
+                            if (!editMode) return
+                            e.preventDefault()
+                            e.stopPropagation()
+                            editor?.onSelectTarget?.(slotTarget)
+                            editor?.onTargetContextMenu?.(slotTarget, e.clientX, e.clientY)
+                          }}
                         >
                           {editMode ? "Drop photo" : null}
                         </div>
@@ -2377,6 +2426,10 @@ export function BusinessProfilePublicSite({
         .bp-showcase-service-photo {
           display: block; width: 100%; aspect-ratio: 4/3; padding: 0; border: 0; border-radius: 18px; overflow: hidden;
           background: #e2e8f0; cursor: zoom-in;
+        }
+        .bp-showcase-service-photo.bp-edit-selected {
+          outline: 2px solid #2563eb;
+          outline-offset: 2px;
         }
         .bp-showcase-service-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
         .bp-showcase-service-photo-empty { cursor: default; }

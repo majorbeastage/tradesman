@@ -882,8 +882,10 @@ export default function WebsiteBuilderPage() {
 
   function renderTemplatesCard(compact: boolean) {
     return (
-      <div style={{ ...sectionCard, ...(compact ? { padding: 10, gap: 8 } : null) }}>
-        <div style={{ fontSize: 12, fontWeight: 900 }}>{compact ? "Templates" : "Choose a template"}</div>
+      <details style={{ ...sectionCard, ...(compact ? { padding: 10, gap: 8 } : null) }}>
+        <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 900 }}>
+          {compact ? "Templates" : "Choose a template"}
+        </summary>
         {!compact ? (
           <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
             Pick a layout before you publish. Saved drafts appear here too.
@@ -914,7 +916,7 @@ export default function WebsiteBuilderPage() {
             ))}
           </div>
         ) : null}
-      </div>
+      </details>
     )
   }
 
@@ -930,14 +932,38 @@ export default function WebsiteBuilderPage() {
         .wb-root {
           display: grid;
           grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
-          gap: 0;
-          min-height: calc(100vh - 64px);
+          height: calc(100vh - 64px);
+          max-height: calc(100vh - 64px);
+          overflow: hidden;
         }
-        .wb-editor { color: ${EDITOR_INK}; }
+        .wb-editor {
+          color: ${EDITOR_INK};
+          min-height: 0;
+          height: 100%;
+          overflow: auto;
+        }
         .wb-editor input, .wb-editor textarea, .wb-editor select, .wb-editor button { color: ${EDITOR_INK}; }
+        .wb-preview {
+          min-height: 0;
+          height: 100%;
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+        }
+        .wb-preview-scroll {
+          flex: 1;
+          min-height: 0;
+          overflow: auto;
+        }
         @media (max-width: 960px) {
-          .wb-root { grid-template-columns: 1fr; min-height: auto; }
-          .wb-preview { min-height: 70vh; }
+          .wb-root {
+            grid-template-columns: 1fr;
+            height: auto;
+            max-height: none;
+            overflow: visible;
+          }
+          .wb-editor { height: auto; max-height: 50vh; }
+          .wb-preview { min-height: 70vh; height: auto; }
         }
       `}</style>
 
@@ -946,7 +972,6 @@ export default function WebsiteBuilderPage() {
         style={{
           borderRight: `1px solid ${theme.border}`,
           background: "#f8fafc",
-          overflow: "auto",
           padding: 14,
           display: "grid",
           gap: 12,
@@ -1663,8 +1688,8 @@ export default function WebsiteBuilderPage() {
           ) : null}
         </details>
 
-        <div style={sectionCard}>
-          <div style={{ fontSize: 12, fontWeight: 900 }}>Top navigation bar</div>
+        <details style={sectionCard}>
+          <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 900 }}>Top navigation bar</summary>
           <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
             Show or hide each piece of the top bar. Turn everything off to hide the bar.
           </p>
@@ -1722,10 +1747,10 @@ export default function WebsiteBuilderPage() {
               />
             </label>
           </div>
-        </div>
+        </details>
 
-        <div style={sectionCard}>
-          <div style={{ fontSize: 12, fontWeight: 900 }}>Scroll bands</div>
+        <details style={sectionCard}>
+          <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 900 }}>Scroll bands</summary>
           <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
             Dark/light bars that scroll over the fixed background. Add, remove, recolor, or texture them.
           </p>
@@ -1890,7 +1915,7 @@ export default function WebsiteBuilderPage() {
           >
             + Add scroll band
           </button>
-        </div>
+        </details>
 
         <details style={sectionCard}>
           <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 900 }}>Photos</summary>
@@ -2081,10 +2106,7 @@ export default function WebsiteBuilderPage() {
               )
             })}
           </div>
-        </details>
-
-        <div style={sectionCard}>
-          <div style={{ fontSize: 12, fontWeight: 900, color: EDITOR_INK }}>Add / restore sections</div>
+          <div style={{ fontSize: 12, fontWeight: 900, color: EDITOR_INK, marginTop: 10 }}>Add / restore sections</div>
           {hiddenSections.length === 0 ? (
             <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>All sections are on the page.</p>
           ) : (
@@ -2109,7 +2131,7 @@ export default function WebsiteBuilderPage() {
               ))}
             </div>
           )}
-        </div>
+        </details>
 
         <details style={sectionCard}>
           <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 900 }}>Brand colors</summary>
@@ -2281,7 +2303,7 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
 
       </aside>
 
-      <main className="wb-preview" style={{ background: "#0f172a", position: "relative" }}>
+      <main className="wb-preview" style={{ background: "#0f172a" }}>
         <div
           style={{
             display: "flex",
@@ -2291,8 +2313,7 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
             justifyContent: "space-between",
             padding: "10px 14px",
             borderBottom: "1px solid rgba(255,255,255,0.12)",
-            position: "sticky",
-            top: 0,
+            flexShrink: 0,
             zIndex: 5,
             background: "rgba(15,23,42,0.96)",
           }}
@@ -2395,8 +2416,8 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
             padding: previewDevice === "mobile" ? "16px 0 32px" : 0,
             display: "flex",
             justifyContent: "center",
-            height: "calc(100vh - 120px)",
-            minHeight: 480,
+            flex: 1,
+            minHeight: 0,
             boxSizing: "border-box",
           }}
         >
