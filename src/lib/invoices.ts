@@ -95,6 +95,12 @@ import {
 export function generateInvoiceNumber(meta?: Record<string, unknown> | null): string {
   if (meta && typeof meta === "object") {
     const settings = parseDocumentNumberSettings(meta, "invoice")
+    if (settings.enabled === false) {
+      const d = new Date()
+      const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`
+      const suffix = Math.random().toString(36).slice(2, 6).toUpperCase()
+      return `INV-${ymd}-${suffix}`
+    }
     return formatDocumentNumber(settings)
   }
   const d = new Date()

@@ -1369,7 +1369,10 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     const orgUserIds = filterRealUserIds(
       Array.from(new Set((scopeCtx?.clients ?? []).map((c) => c.userId).filter(Boolean))),
     )
-    const canViewOrgEvents = showAllOrgEvents && orgUserIds.length > 0
+    // Viewing As = one account snapshot. Never mix other clients into that view.
+    // "Show all org events" only when no Viewing As target is selected.
+    const canViewOrgEvents =
+      showAllOrgEvents && orgUserIds.length > 0 && !scopeCtx?.selectedUserId
     const scopedCalendarUserIds =
       orgUserIds.length > 0 ? orgUserIds : calendarDbUserId ? [calendarDbUserId] : []
     setLoadError("")

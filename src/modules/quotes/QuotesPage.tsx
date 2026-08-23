@@ -146,11 +146,17 @@ import {
   parseEstimateDocSectionOrder,
   type EstimateDocSectionId,
 } from "../../lib/estimateDocSectionOrder"
+import { AdminSortableRow } from "../../components/admin/AdminSortableRow"
+import { reorderByIndex } from "../../lib/reorderArray"
 import {
   DEFAULT_ESTIMATE_NUMBER_FORMAT,
-  DEFAULT_INVOICE_NUMBER_FORMAT,
+  DOCUMENT_NUMBER_DIGIT_OPTIONS,
+  applyDocumentNumberSettingsToMeta,
+  buildDocumentNumberFormat,
+  clampDocumentNumberDigits,
   formatDocumentNumber,
   parseDocumentNumberSettings,
+  type DocumentNumberDigitCount,
 } from "../../lib/documentNumberFormat"
 import { buildQuoteHtmlDocument, downloadQuoteHtmlFile } from "../../lib/documentQuoteHtml"
 import { findLatestQuoteIdForCustomer } from "../../lib/quoteCustomerNavigation"
@@ -611,7 +617,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
   ])
   const [estimateNumberFormat, setEstimateNumberFormat] = useState(DEFAULT_ESTIMATE_NUMBER_FORMAT)
   const [estimateNumberPrefix, setEstimateNumberPrefix] = useState("EST")
+  const [estimateNumberDigits, setEstimateNumberDigits] = useState<DocumentNumberDigitCount>(4)
+  const [estimateNumberEnabled, setEstimateNumberEnabled] = useState(false)
   const [estimateNumberPreviewSeq, setEstimateNumberPreviewSeq] = useState(1)
+  const [invoiceNumberPreviewSeq, setInvoiceNumberPreviewSeq] = useState(1)
   const [esignLinkUrl, setEsignLinkUrl] = useState<string | null>(null)
   const [esignLinkBusy, setEsignLinkBusy] = useState(false)
   const [esignLinkError, setEsignLinkError] = useState<string | null>(null)
@@ -1499,6 +1508,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
         const estNum = parseDocumentNumberSettings(meta, "estimate")
         setEstimateNumberFormat(estNum.format)
         setEstimateNumberPrefix(estNum.prefix)
+        setEstimateNumberDigits(estNum.sequenceDigits)
+        setEstimateNumberEnabled(estNum.enabled === true)
         setEstimateNumberPreviewSeq(estNum.nextSequence)
       }
       const laborMeta = meta.estimate_default_labor_rate
@@ -1601,14 +1612,17 @@ export default function QuotesPage(_props: QuotesPageProps) {
         estimate_template_job_description_label: jobDescriptionLabel,
         estimate_template_include_internal_notes: "unchecked",
         estimate_template_output_format: exportFormatToDropdown(metaToExportFormat(meta.estimate_template_output_format)),
-        estimate_number_format: estNum.format,
         estimate_number_prefix: estNum.prefix,
-        invoice_number_format: invNum.format,
+        estimate_number_digits: String(estNum.sequenceDigits),
+        estimate_number_enabled: estNum.enabled ? "checked" : "unchecked",
         invoice_number_prefix: invNum.prefix,
+        invoice_number_digits: String(invNum.sequenceDigits),
+        invoice_number_enabled: invNum.enabled ? "checked" : "unchecked",
       }
       setJobDetailsDefault(detailsDefault)
       setEstimateDocSectionOrder(parseEstimateDocSectionOrder(meta.estimate_template_section_order))
       setEstimateNumberPreviewSeq(estNum.nextSequence)
+      setInvoiceNumberPreviewSeq(invNum.nextSequence)
       for (const item of estimateTemplateItems) {
         if (item.id === "estimate_template_notes") next[item.id] = notes
         else if (item.id === "estimate_template_footer") next[item.id] = footer
@@ -1744,16 +1758,30 @@ export default function QuotesPage(_props: QuotesPageProps) {
     prevMeta.estimate_template_output_format = dropdownToExportFormat(
       estimateTemplateFormValues.estimate_template_output_format ?? ESTIMATE_FMT_PDF,
     )
-    const estFmt = (estimateTemplateFormValues.estimate_number_format ?? "").trim() || DEFAULT_ESTIMATE_NUMBER_FORMAT
     const estPrefix = (estimateTemplateFormValues.estimate_number_prefix ?? "").trim() || "EST"
-    const invFmt = (estimateTemplateFormValues.invoice_number_format ?? "").trim() || DEFAULT_INVOICE_NUMBER_FORMAT
+    const estDigits = clampDocumentNumberDigits(estimateTemplateFormValues.estimate_number_digits, 4)
     const invPrefix = (estimateTemplateFormValues.invoice_number_prefix ?? "").trim() || "INV"
-    prevMeta.estimate_number_format = estFmt
-    prevMeta.estimate_number_prefix = estPrefix
-    prevMeta.invoice_number_format = invFmt
-    prevMeta.invoice_number_prefix = invPrefix
-    if (typeof prevMeta.estimate_number_next !== "number") prevMeta.estimate_number_next = 1
-    if (typeof prevMeta.invoice_number_next !== "number") prevMeta.invoice_number_next = 1
+    const invDigits = clampDocumentNumberDigits(estimateTemplateFormValues.invoice_number_digits, 4)
+    Object.assign(
+      prevMeta,
+      applyDocumentNumberSettingsToMeta(prevMeta, "estimate", {
+        prefix: estPrefix,
+        sequenceDigits: estDigits,
+        enabled: estimateTemplateFormValues.estimate_number_enabled === "checked",
+      }),
+    )
+    Object.assign(
+      prevMeta,
+      applyDocumentNumberSettingsToMeta(prevMeta, "invoice", {
+        prefix: invPrefix,
+        sequenceDigits: invDigits,
+        enabled: estimateTemplateFormValues.invoice_number_enabled === "checked",
+      }),
+    )
+    setEstimateNumberPrefix(estPrefix)
+    setEstimateNumberDigits(estDigits)
+    setEstimateNumberEnabled(estimateTemplateFormValues.estimate_number_enabled === "checked")
+    setEstimateNumberFormat(buildDocumentNumberFormat(estPrefix, estDigits))
     const { error } = await supabase
       .from("profiles")
       .update({
@@ -1803,8 +1831,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
     setJobDetailsDefault(detailsDefault)
     setQuoteJobDescriptionLabel(jobDescLabelRaw || "Job description")
     setQuoteExportFormat(dropdownToExportFormat(estimateTemplateFormValues.estimate_template_output_format ?? ESTIMATE_FMT_PDF))
-    setEstimateNumberFormat(estFmt)
-    setEstimateNumberPrefix(estPrefix)
     setShowEstimateTemplateModal(false)
   }
 
@@ -4116,11 +4142,14 @@ export default function QuotesPage(_props: QuotesPageProps) {
           hasPhotos: quoteCustomerCopyAttachmentsPayload(quoteEntityRows).length > 0,
         }),
       ),
-      documentNumber: formatDocumentNumber({
-        format: estimateNumberFormat,
-        prefix: estimateNumberPrefix,
-        nextSequence: estimateNumberPreviewSeq,
-      }),
+      documentNumber: estimateNumberEnabled
+        ? formatDocumentNumber({
+            format: estimateNumberFormat,
+            prefix: estimateNumberPrefix,
+            sequenceDigits: estimateNumberDigits,
+            nextSequence: estimateNumberPreviewSeq,
+          })
+        : null,
     }
   }
 
@@ -5598,12 +5627,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
                     <div>
                       <p style={{ margin: "0 0 8px", fontWeight: 700, fontSize: 13, color: theme.text }}>Custom item sorting</p>
                       <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b", lineHeight: 1.4 }}>
-                        Use arrows to set top-to-bottom order on the customer estimate (sections you have enabled).
+                        Drag the handle to set top-to-bottom order on the customer estimate (sections you have enabled).
                       </p>
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        {orderedEstimateDocSections(
-                          estimateDocSectionOrder,
-                          estimateDocSectionsForTemplate({
+                        {(() => {
+                          const available = estimateDocSectionsForTemplate({
                             includeJobDescription:
                               (estimateTemplateFormValues.estimate_template_job_details_default ?? "internal") ===
                               "customer",
@@ -5611,131 +5639,197 @@ export default function QuotesPage(_props: QuotesPageProps) {
                             hasFooter: Boolean((estimateTemplateFormValues.estimate_template_footer ?? "").trim()),
                             includeLegal: estimateTemplateFormValues.estimate_template_include_legal === "checked",
                             hasPhotos: true,
-                          }),
-                        ).map((id, idx, arr) => (
-                          <div
-                            key={id}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 8,
-                              padding: "8px 10px",
-                              borderRadius: 8,
-                              border: `1px solid ${theme.border}`,
-                              background: "#fff",
-                            }}
-                          >
-                            <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: theme.text }}>
-                              {ESTIMATE_DOC_SECTION_LABELS[id]}
-                            </span>
-                            <button
-                              type="button"
-                              disabled={idx === 0}
-                              onClick={() => {
+                          })
+                          const ordered = orderedEstimateDocSections(estimateDocSectionOrder, available)
+                          return ordered.map((id, idx) => (
+                            <AdminSortableRow
+                              key={id}
+                              scope="estimate-doc-section-order"
+                              index={idx}
+                              onReorder={(from, to) => {
                                 setEstimateDocSectionOrder((prev) => {
-                                  const next = [...orderedEstimateDocSections(prev, arr)]
-                                  if (idx <= 0) return next
-                                  ;[next[idx - 1], next[idx]] = [next[idx], next[idx - 1]]
-                                  return parseEstimateDocSectionOrder(next)
+                                  const current = orderedEstimateDocSections(prev, available)
+                                  return parseEstimateDocSectionOrder(reorderByIndex(current, from, to))
                                 })
                               }}
-                              style={{
-                                border: "none",
-                                background: "transparent",
-                                cursor: idx === 0 ? "default" : "pointer",
-                                opacity: idx === 0 ? 0.35 : 1,
+                              rowStyle={{
+                                padding: "8px 10px",
+                                borderRadius: 8,
+                                border: `1px solid ${theme.border}`,
+                                background: "#fff",
                               }}
                             >
-                              ↑
-                            </button>
-                            <button
-                              type="button"
-                              disabled={idx === arr.length - 1}
-                              onClick={() => {
-                                setEstimateDocSectionOrder((prev) => {
-                                  const next = [...orderedEstimateDocSections(prev, arr)]
-                                  if (idx >= next.length - 1) return next
-                                  ;[next[idx], next[idx + 1]] = [next[idx + 1], next[idx]]
-                                  return parseEstimateDocSectionOrder(next)
-                                })
-                              }}
-                              style={{
-                                border: "none",
-                                background: "transparent",
-                                cursor: idx === arr.length - 1 ? "default" : "pointer",
-                                opacity: idx === arr.length - 1 ? 0.35 : 1,
-                              }}
-                            >
-                              ↓
-                            </button>
-                          </div>
-                        ))}
+                              <div style={{ display: "flex", alignItems: "center", minHeight: 32 }}>
+                                <span style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>
+                                  {idx + 1}. {ESTIMATE_DOC_SECTION_LABELS[id]}
+                                </span>
+                              </div>
+                            </AdminSortableRow>
+                          ))
+                        })()}
                       </div>
                     </div>
                     <div>
                       <p style={{ margin: "0 0 8px", fontWeight: 700, fontSize: 13, color: theme.text }}>Custom numbering</p>
-                      <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-                        Tokens: {"{PREFIX}"} {"{YYYY}"} {"{YY}"} {"{MM}"} {"{DD}"} {"{####}"} {"{###}"} {"{SEQ}"}. Example: EST-
-                        {"{YYYY}"}-{"{####}"}
+                      <p style={{ margin: "0 0 12px", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                        Set a short prefix and how many digits the running number should use. Same pattern will cover work
+                        orders and inventory later.
                       </p>
-                      <div style={{ display: "grid", gap: 10 }}>
-                        <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
-                          Estimate format
-                          <input
-                            value={estimateTemplateFormValues.estimate_number_format ?? ""}
-                            onChange={(e) =>
-                              setEstimateTemplateFormValues((prev) => ({ ...prev, estimate_number_format: e.target.value }))
-                            }
-                            placeholder={DEFAULT_ESTIMATE_NUMBER_FORMAT}
-                            style={theme.formInput}
-                          />
-                        </label>
-                        <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
-                          Estimate prefix (for {"{PREFIX}"})
-                          <input
-                            value={estimateTemplateFormValues.estimate_number_prefix ?? ""}
-                            onChange={(e) =>
-                              setEstimateTemplateFormValues((prev) => ({ ...prev, estimate_number_prefix: e.target.value }))
-                            }
-                            placeholder="EST"
-                            style={theme.formInput}
-                          />
-                        </label>
-                        <p style={{ margin: 0, fontSize: 12, color: "#475569" }}>
-                          Preview:{" "}
-                          <strong>
-                            {formatDocumentNumber(
-                              {
-                                format: estimateTemplateFormValues.estimate_number_format || DEFAULT_ESTIMATE_NUMBER_FORMAT,
-                                prefix: estimateTemplateFormValues.estimate_number_prefix || "EST",
+                      <div style={{ display: "grid", gap: 14 }}>
+                        <div
+                          style={{
+                            display: "grid",
+                            gap: 10,
+                            padding: 12,
+                            borderRadius: 8,
+                            border: `1px solid ${theme.border}`,
+                            background: "#fff",
+                          }}
+                        >
+                          <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: theme.text }}>Estimates</p>
+                          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600 }}>
+                            <input
+                              type="checkbox"
+                              checked={estimateTemplateFormValues.estimate_number_enabled === "checked"}
+                              onChange={(e) =>
+                                setEstimateTemplateFormValues((prev) => ({
+                                  ...prev,
+                                  estimate_number_enabled: e.target.checked ? "checked" : "unchecked",
+                                }))
+                              }
+                            />
+                            Apply this numbering on estimates
+                          </label>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                            <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600, color: theme.text }}>
+                              Prefix
+                              <input
+                                value={estimateTemplateFormValues.estimate_number_prefix ?? ""}
+                                onChange={(e) =>
+                                  setEstimateTemplateFormValues((prev) => ({
+                                    ...prev,
+                                    estimate_number_prefix: e.target.value.slice(0, 24),
+                                  }))
+                                }
+                                placeholder="EST"
+                                style={theme.formInput}
+                              />
+                            </label>
+                            <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600, color: theme.text }}>
+                              Number digits
+                              <select
+                                value={estimateTemplateFormValues.estimate_number_digits ?? "4"}
+                                onChange={(e) =>
+                                  setEstimateTemplateFormValues((prev) => ({
+                                    ...prev,
+                                    estimate_number_digits: e.target.value,
+                                  }))
+                                }
+                                style={theme.formInput}
+                              >
+                                {DOCUMENT_NUMBER_DIGIT_OPTIONS.map((d) => (
+                                  <option key={d} value={String(d)}>
+                                    {d} digits
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+                          <p style={{ margin: 0, fontSize: 12, color: "#475569" }}>
+                            Preview:{" "}
+                            <strong style={{ color: theme.text, fontSize: 14, letterSpacing: 0.3 }}>
+                              {formatDocumentNumber({
+                                format: buildDocumentNumberFormat(
+                                  (estimateTemplateFormValues.estimate_number_prefix ?? "").trim() || "EST",
+                                  clampDocumentNumberDigits(estimateTemplateFormValues.estimate_number_digits, 4),
+                                ),
+                                prefix: (estimateTemplateFormValues.estimate_number_prefix ?? "").trim() || "EST",
+                                sequenceDigits: clampDocumentNumberDigits(
+                                  estimateTemplateFormValues.estimate_number_digits,
+                                  4,
+                                ),
                                 nextSequence: estimateNumberPreviewSeq,
-                              },
-                              new Date(),
-                            )}
-                          </strong>
-                        </p>
-                        <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
-                          Invoice format
-                          <input
-                            value={estimateTemplateFormValues.invoice_number_format ?? ""}
-                            onChange={(e) =>
-                              setEstimateTemplateFormValues((prev) => ({ ...prev, invoice_number_format: e.target.value }))
-                            }
-                            placeholder={DEFAULT_INVOICE_NUMBER_FORMAT}
-                            style={theme.formInput}
-                          />
-                        </label>
-                        <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
-                          Invoice prefix (for {"{PREFIX}"})
-                          <input
-                            value={estimateTemplateFormValues.invoice_number_prefix ?? ""}
-                            onChange={(e) =>
-                              setEstimateTemplateFormValues((prev) => ({ ...prev, invoice_number_prefix: e.target.value }))
-                            }
-                            placeholder="INV"
-                            style={theme.formInput}
-                          />
-                        </label>
+                              })}
+                            </strong>
+                          </p>
+                        </div>
+                        <div
+                          style={{
+                            display: "grid",
+                            gap: 10,
+                            padding: 12,
+                            borderRadius: 8,
+                            border: `1px solid ${theme.border}`,
+                            background: "#fff",
+                          }}
+                        >
+                          <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: theme.text }}>Invoices</p>
+                          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600 }}>
+                            <input
+                              type="checkbox"
+                              checked={estimateTemplateFormValues.invoice_number_enabled === "checked"}
+                              onChange={(e) =>
+                                setEstimateTemplateFormValues((prev) => ({
+                                  ...prev,
+                                  invoice_number_enabled: e.target.checked ? "checked" : "unchecked",
+                                }))
+                              }
+                            />
+                            Apply this numbering on invoices
+                          </label>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                            <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600, color: theme.text }}>
+                              Prefix
+                              <input
+                                value={estimateTemplateFormValues.invoice_number_prefix ?? ""}
+                                onChange={(e) =>
+                                  setEstimateTemplateFormValues((prev) => ({
+                                    ...prev,
+                                    invoice_number_prefix: e.target.value.slice(0, 24),
+                                  }))
+                                }
+                                placeholder="INV"
+                                style={theme.formInput}
+                              />
+                            </label>
+                            <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600, color: theme.text }}>
+                              Number digits
+                              <select
+                                value={estimateTemplateFormValues.invoice_number_digits ?? "4"}
+                                onChange={(e) =>
+                                  setEstimateTemplateFormValues((prev) => ({
+                                    ...prev,
+                                    invoice_number_digits: e.target.value,
+                                  }))
+                                }
+                                style={theme.formInput}
+                              >
+                                {DOCUMENT_NUMBER_DIGIT_OPTIONS.map((d) => (
+                                  <option key={d} value={String(d)}>
+                                    {d} digits
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+                          <p style={{ margin: 0, fontSize: 12, color: "#475569" }}>
+                            Preview:{" "}
+                            <strong style={{ color: theme.text, fontSize: 14, letterSpacing: 0.3 }}>
+                              {formatDocumentNumber({
+                                format: buildDocumentNumberFormat(
+                                  (estimateTemplateFormValues.invoice_number_prefix ?? "").trim() || "INV",
+                                  clampDocumentNumberDigits(estimateTemplateFormValues.invoice_number_digits, 4),
+                                ),
+                                prefix: (estimateTemplateFormValues.invoice_number_prefix ?? "").trim() || "INV",
+                                sequenceDigits: clampDocumentNumberDigits(
+                                  estimateTemplateFormValues.invoice_number_digits,
+                                  4,
+                                ),
+                                nextSequence: invoiceNumberPreviewSeq,
+                              })}
+                            </strong>
+                          </p>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -7361,9 +7455,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
                             >
                               <summary style={ESTIMATE_WORKFLOW_SUMMARY_STYLE}>
                                 Job details
-                                <span style={{ fontWeight: 600, fontSize: 12, color: jobDetailsDefault === "customer" ? "#0369a1" : "#64748b" }}>
-                                  {jobDetailsDefault === "customer" ? "(customer view)" : "(internal only)"}
-                                </span>
                                 <EstimateGuideStatusMarker
                                   show={showEstimateWizardMarkers}
                                   variant={jobDetailsText.trim() ? "done" : estimateGuideFlags.jobDetailsSkipped ? "skipped" : "none"}
@@ -7517,46 +7608,81 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                   </div>
                                 </details>
                               </div>
+                              <div style={{ marginTop: 4 }}>
+                                {!quoteSecondaryNotesFoldOpen && !secondaryNotesText.trim() ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setQuoteSecondaryNotesFoldOpen(true)}
+                                    style={{
+                                      border: "none",
+                                      background: "transparent",
+                                      padding: 0,
+                                      color: "#0369a1",
+                                      fontSize: 13,
+                                      fontWeight: 700,
+                                      cursor: "pointer",
+                                      textDecoration: "underline",
+                                    }}
+                                  >
+                                    {jobDetailsDefault === "customer"
+                                      ? "Leave Internal Notes"
+                                      : "Leave Note for Customer to see"}
+                                  </button>
+                                ) : (
+                                  <div
+                                    style={{
+                                      display: "grid",
+                                      gap: 8,
+                                      padding: "10px 12px",
+                                      borderRadius: 8,
+                                      border: `1px solid ${theme.border}`,
+                                      background: "#fff",
+                                    }}
+                                  >
+                                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                                      <span style={{ fontSize: 13, fontWeight: 700, color: theme.text }}>
+                                        {jobDetailsDefault === "customer" ? "Internal notes" : "Note for customer"}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => setQuoteSecondaryNotesFoldOpen(false)}
+                                        style={{
+                                          border: "none",
+                                          background: "transparent",
+                                          color: "#64748b",
+                                          fontSize: 12,
+                                          cursor: "pointer",
+                                        }}
+                                      >
+                                        Hide
+                                      </button>
+                                    </div>
+                                    <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                                      {jobDetailsDefault === "customer"
+                                        ? "Staff-only notes — not shown on the customer estimate."
+                                        : "Shown on the customer estimate when filled."}
+                                    </p>
+                                    <textarea
+                                      id="estimate-secondary-notes"
+                                      aria-label={
+                                        jobDetailsDefault === "customer" ? "Internal notes" : "Notes for customer"
+                                      }
+                                      rows={4}
+                                      placeholder={
+                                        jobDetailsDefault === "customer"
+                                          ? "Internal notes for your team…"
+                                          : "Describe the work for the customer estimate…"
+                                      }
+                                      value={secondaryNotesText}
+                                      onChange={(e) => setSecondaryNotesText(e.target.value)}
+                                      style={{ ...theme.formInput, resize: "vertical" }}
+                                    />
+                                  </div>
+                                )}
+                              </div>
                             </details>
 
                             {quoteIncludeJobDescription ? null : null}
-                            <details
-                              open={quoteSecondaryNotesFoldOpen}
-                              onToggle={(e) => setQuoteSecondaryNotesFoldOpen((e.target as HTMLDetailsElement).open)}
-                              style={{ ...ESTIMATE_WORKFLOW_SECTION_BASE, background: "#fff" }}
-                            >
-                              <summary style={ESTIMATE_WORKFLOW_SUMMARY_STYLE}>
-                                {quoteSecondaryNotesFoldOpen || secondaryNotesText.trim()
-                                  ? jobDetailsDefault === "customer"
-                                    ? "Internal notes"
-                                    : "Customer view notes"
-                                  : jobDetailsDefault === "customer"
-                                    ? "Add Internal Notes"
-                                    : "Add notes for customer view"}
-                              </summary>
-                              <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
-                                <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-                                  {jobDetailsDefault === "customer"
-                                    ? "Staff-only notes — not shown on the customer estimate. Both note types are copied to the calendar event."
-                                    : "Shown on the customer estimate when filled. Both note types are copied to the calendar event."}
-                                </p>
-                                <textarea
-                                  id="estimate-secondary-notes"
-                                  aria-label={
-                                    jobDetailsDefault === "customer" ? "Internal notes" : "Notes for customer view"
-                                  }
-                                  rows={4}
-                                  placeholder={
-                                    jobDetailsDefault === "customer"
-                                      ? "Internal notes for your team…"
-                                      : "Describe the work for the customer estimate…"
-                                  }
-                                  value={secondaryNotesText}
-                                  onChange={(e) => setSecondaryNotesText(e.target.value)}
-                                  style={{ ...theme.formInput, resize: "vertical" }}
-                                />
-                              </div>
-                            </details>
 
               <details
                 ref={quoteItemsSectionRef}

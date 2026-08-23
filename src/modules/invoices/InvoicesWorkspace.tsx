@@ -26,6 +26,17 @@ import {
 } from "../../lib/invoices"
 import { buildInvoicePdfBytes, loadInvoiceTemplateSettings } from "../../lib/invoicePdfExport"
 import { consumeInvoicesPrefill } from "../../lib/workflowNavigation"
+import { formatDisplayText } from "../../lib/formatDisplayText"
+import {
+  DOCUMENT_NUMBER_DIGIT_OPTIONS,
+  applyDocumentNumberSettingsToMeta,
+  buildDocumentNumberFormat,
+  clampDocumentNumberDigits,
+  formatDocumentNumber,
+  parseDocumentNumberSettings,
+} from "../../lib/documentNumberFormat"
+import { AdminSortableRow } from "../../components/admin/AdminSortableRow"
+import { reorderByIndex } from "../../lib/reorderArray"
 
 type Props = {
   supabase: SupabaseClient | null
@@ -64,6 +75,53 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
   const [newDesc, setNewDesc] = useState("")
   const [newQty, setNewQty] = useState("1")
   const [newUnit, setNewUnit] = useState("0")
+  const [showInvoiceSettings, setShowInvoiceSettings] = useState(false)
+  const [invoiceNumberEnabled, setInvoiceNumberEnabled] = useState(false)
+  const [invoiceNumberPrefix, setInvoiceNumberPrefix] = useState("INV")
+  const [invoiceNumberDigits, setInvoiceNumberDigits] = useState("4")
+  const [invoiceTplIncludePreparedDate, setInvoiceTplIncludePreparedDate] = useState(true)
+  const [invoiceTplIncludeDueDate, setInvoiceTplIncludeDueDate] = useState(true)
+  const [invoiceTplIncludePhotos, setInvoiceTplIncludePhotos] = useState(true)
+  const [invoiceDueIntervalUnit, setInvoiceDueIntervalUnit] = useState<"days" | "weeks" | "months">("days")
+  const [invoiceDueIntervalValue, setInvoiceDueIntervalValue] = useState("14")
+  const [invoiceCustomDescriptionTemplate, setInvoiceCustomDescriptionTemplate] = useState("")
+  const [invoiceSectionOrder, setInvoiceSectionOrder] = useState<string[]>([
+    "description",
+    "line_items",
+    "photos",
+    "due_date",
+  ])
+
+  useEffect(() => {
+    if (!showInvoiceSettings || !supabase || !userId) return
+    void (async () => {
+      const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+      const meta =
+        data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+          ? (data.metadata as Record<string, unknown>)
+          : {}
+      const inv = parseDocumentNumberSettings(meta, "invoice")
+      setInvoiceNumberEnabled(inv.enabled === true)
+      setInvoiceNumberPrefix(inv.prefix)
+      setInvoiceNumberDigits(String(inv.sequenceDigits))
+      setInvoiceTplIncludePreparedDate(meta.invoice_template_include_prepared_date !== false)
+      setInvoiceTplIncludeDueDate(meta.invoice_template_include_due_date !== false)
+      setInvoiceTplIncludePhotos(meta.invoice_template_include_photos !== false)
+      const unit = meta.invoice_template_due_interval_unit
+      if (unit === "days" || unit === "weeks" || unit === "months") setInvoiceDueIntervalUnit(unit)
+      if (typeof meta.invoice_template_due_interval_value === "number") {
+        setInvoiceDueIntervalValue(String(meta.invoice_template_due_interval_value))
+      }
+      if (typeof meta.invoice_template_description === "string") {
+        setInvoiceCustomDescriptionTemplate(meta.invoice_template_description)
+      }
+      if (Array.isArray(meta.invoice_template_section_order)) {
+        setInvoiceSectionOrder(
+          meta.invoice_template_section_order.filter((x): x is string => typeof x === "string"),
+        )
+      }
+    })()
+  }, [showInvoiceSettings, supabase, userId])
 
   const subtotal = useMemo(() => invoiceSubtotal(form.lineItems), [form.lineItems])
 
@@ -337,14 +395,11 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
     <div style={{ display: "grid", gap: 16, maxWidth: 960 }}>
       <div>
         <h2 style={{ margin: "0 0 6px", fontSize: 18, color: theme.text }}>Custom invoices</h2>
-        <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
-          Build itemized invoices from estimates, attach photos and files, and send by email or text. Payment links can be included automatically.
-        </p>
       </div>
 
       {notice ? (
         <p style={{ margin: 0, fontSize: 13, color: notice.includes("sent") || notice.includes("saved") || notice.includes("Loaded") ? "#047857" : "#b45309" }}>
-          {notice}
+          {typeof notice === "string" ? notice : "Something went wrong."}
         </p>
       ) : null}
 
@@ -357,6 +412,13 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
             Payment collection
           </button>
         ) : null}
+        <button
+          type="button"
+          onClick={() => setShowInvoiceSettings(true)}
+          style={secondaryBtn}
+        >
+          Invoice settings
+        </button>
         {savedInvoices.length > 0 ? (
           <select
             value=""
@@ -406,7 +468,7 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
               <option value="">Choose estimate to load…</option>
               {quotes.map((q) => (
                 <option key={q.id} value={q.id}>
-                  {q.title} — ${q.total.toFixed(2)}
+                  {formatDisplayText(q.title, "Estimate")} — ${q.total.toFixed(2)}
                 </option>
               ))}
             </select>
@@ -536,8 +598,8 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
       </div>
 
       <div style={{ padding: 14, border: `1px solid ${theme.border}`, borderRadius: 10, background: "#fff" }}>
-        <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 14 }}>Photos & files</div>
-        <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b" }}>Photos, PDFs, and Word docs up to 50 MB. Included on send when &ldquo;customer copy&rdquo; is checked.</p>
+        <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 14 }}>Photos</div>
+        <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b" }}>Photos and files up to 50 MB. Included on send when &ldquo;customer copy&rdquo; is checked.</p>
         <input type="file" multiple accept={ENTITY_ATTACHMENT_ACCEPT} disabled={uploadBusy} onChange={(e) => void handleFileUpload(e.target.files)} style={{ fontSize: 13 }} />
         {form.attachments.length > 0 ? (
           <ul style={{ margin: "12px 0 0", padding: 0, listStyle: "none" }}>
@@ -591,7 +653,7 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
           {busy ? "Working…" : "Save invoice"}
         </button>
         <button type="button" disabled={busy} onClick={() => void handleDownloadPdf()} style={{ ...secondaryBtn, padding: "10px 16px", borderRadius: 8, fontWeight: 700 }}>
-          Download PDF
+          Preview / Download PDF
         </button>
         <div style={{ position: "relative" }}>
           <button
@@ -618,6 +680,210 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
           ) : null}
         </div>
       </div>
+
+      {showInvoiceSettings ? (
+        <div
+          role="dialog"
+          aria-modal
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 80,
+            background: "rgba(15,23,42,0.45)",
+            display: "grid",
+            placeItems: "center",
+            padding: 16,
+          }}
+          onClick={() => setShowInvoiceSettings(false)}
+        >
+          <div
+            style={{
+              width: "min(560px, 100%)",
+              maxHeight: "90vh",
+              overflow: "auto",
+              background: "#fff",
+              borderRadius: 12,
+              border: `1px solid ${theme.border}`,
+              padding: 16,
+              display: "grid",
+              gap: 14,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+              <h3 style={{ margin: 0, fontSize: 16 }}>Invoice settings</h3>
+              <button type="button" onClick={() => setShowInvoiceSettings(false)} style={{ ...secondaryBtn, padding: "4px 10px" }}>
+                ×
+              </button>
+            </div>
+
+            <div style={{ display: "grid", gap: 8, padding: 12, borderRadius: 8, border: `1px solid ${theme.border}`, background: "#f8fafc" }}>
+              <div style={{ fontWeight: 800, fontSize: 13 }}>Invoice numbering</div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600 }}>
+                <input
+                  type="checkbox"
+                  checked={invoiceNumberEnabled}
+                  onChange={(e) => setInvoiceNumberEnabled(e.target.checked)}
+                />
+                Apply custom numbering on invoices
+              </label>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+                  Prefix
+                  <input value={invoiceNumberPrefix} onChange={(e) => setInvoiceNumberPrefix(e.target.value.slice(0, 24))} style={inputStyle} />
+                </label>
+                <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+                  Digits
+                  <select value={invoiceNumberDigits} onChange={(e) => setInvoiceNumberDigits(e.target.value)} style={inputStyle}>
+                    {DOCUMENT_NUMBER_DIGIT_OPTIONS.map((d) => (
+                      <option key={d} value={String(d)}>
+                        {d} digits
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <p style={{ margin: 0, fontSize: 12, color: "#475569" }}>
+                Preview:{" "}
+                <strong>
+                  {formatDocumentNumber({
+                    format: buildDocumentNumberFormat(invoiceNumberPrefix.trim() || "INV", clampDocumentNumberDigits(invoiceNumberDigits, 4)),
+                    prefix: invoiceNumberPrefix.trim() || "INV",
+                    sequenceDigits: clampDocumentNumberDigits(invoiceNumberDigits, 4),
+                    nextSequence: 1,
+                  })}
+                </strong>
+              </p>
+            </div>
+
+            <div style={{ display: "grid", gap: 8, padding: 12, borderRadius: 8, border: `1px solid ${theme.border}` }}>
+              <div style={{ fontWeight: 800, fontSize: 13 }}>Fields on invoices</div>
+              <label style={{ display: "flex", gap: 8, fontSize: 13 }}>
+                <input type="checkbox" checked={invoiceTplIncludePreparedDate} onChange={(e) => setInvoiceTplIncludePreparedDate(e.target.checked)} />
+                Date prepared
+              </label>
+              <label style={{ display: "flex", gap: 8, fontSize: 13 }}>
+                <input type="checkbox" checked={invoiceTplIncludeDueDate} onChange={(e) => setInvoiceTplIncludeDueDate(e.target.checked)} />
+                Due date
+              </label>
+              {invoiceTplIncludeDueDate ? (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginLeft: 24 }}>
+                  <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+                    Standard interval
+                    <select
+                      value={invoiceDueIntervalUnit}
+                      onChange={(e) => setInvoiceDueIntervalUnit(e.target.value as "days" | "weeks" | "months")}
+                      style={inputStyle}
+                    >
+                      <option value="days">Days</option>
+                      <option value="weeks">Weeks</option>
+                      <option value="months">Months</option>
+                    </select>
+                  </label>
+                  <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+                    Value
+                    <input
+                      value={invoiceDueIntervalValue}
+                      onChange={(e) => setInvoiceDueIntervalValue(e.target.value.replace(/[^\d]/g, "").slice(0, 3))}
+                      style={inputStyle}
+                    />
+                  </label>
+                </div>
+              ) : null}
+              <label style={{ display: "flex", gap: 8, fontSize: 13 }}>
+                <input type="checkbox" checked={invoiceTplIncludePhotos} onChange={(e) => setInvoiceTplIncludePhotos(e.target.checked)} />
+                Photos
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+                Custom description template
+                <textarea
+                  rows={3}
+                  value={invoiceCustomDescriptionTemplate}
+                  onChange={(e) => setInvoiceCustomDescriptionTemplate(e.target.value)}
+                  placeholder="Optional default notes block for new invoices"
+                  style={{ ...inputStyle, resize: "vertical" }}
+                />
+              </label>
+            </div>
+
+            <div style={{ display: "grid", gap: 8, padding: 12, borderRadius: 8, border: `1px solid ${theme.border}` }}>
+              <div style={{ fontWeight: 800, fontSize: 13 }}>Section order</div>
+              <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>Drag to set top-to-bottom order for enabled sections.</p>
+              {invoiceSectionOrder
+                .filter((id) => {
+                  if (id === "photos") return invoiceTplIncludePhotos
+                  if (id === "due_date") return invoiceTplIncludeDueDate
+                  return true
+                })
+                .map((id, idx, arr) => (
+                  <AdminSortableRow
+                    key={id}
+                    scope="invoice-section-order"
+                    index={idx}
+                    onReorder={(from, to) => {
+                      const visible = arr
+                      const nextVisible = reorderByIndex(visible, from, to)
+                      const hidden = invoiceSectionOrder.filter((x) => !visible.includes(x))
+                      setInvoiceSectionOrder([...nextVisible, ...hidden])
+                    }}
+                    rowStyle={{ padding: "8px 10px", borderRadius: 8, border: `1px solid ${theme.border}`, background: "#fff" }}
+                  >
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>
+                      {id === "description"
+                        ? "Description"
+                        : id === "line_items"
+                          ? "Line items"
+                          : id === "photos"
+                            ? "Photos"
+                            : "Due date"}
+                    </span>
+                  </AdminSortableRow>
+                ))}
+            </div>
+
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" onClick={() => setShowInvoiceSettings(false)} style={secondaryBtn}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                style={{ ...secondaryBtn, background: theme.primary, color: "#fff", borderColor: theme.primary }}
+                onClick={() => {
+                  void (async () => {
+                    if (!supabase || !userId) return
+                    const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+                    const prev =
+                      data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+                        ? { ...(data.metadata as Record<string, unknown>) }
+                        : {}
+                    const next = applyDocumentNumberSettingsToMeta(prev, "invoice", {
+                      prefix: invoiceNumberPrefix,
+                      sequenceDigits: clampDocumentNumberDigits(invoiceNumberDigits, 4),
+                      enabled: invoiceNumberEnabled,
+                    })
+                    next.invoice_template_include_prepared_date = invoiceTplIncludePreparedDate
+                    next.invoice_template_include_due_date = invoiceTplIncludeDueDate
+                    next.invoice_template_include_photos = invoiceTplIncludePhotos
+                    next.invoice_template_due_interval_unit = invoiceDueIntervalUnit
+                    next.invoice_template_due_interval_value = Math.max(1, parseInt(invoiceDueIntervalValue || "1", 10) || 1)
+                    next.invoice_template_section_order = invoiceSectionOrder
+                    next.invoice_template_description = invoiceCustomDescriptionTemplate.trim()
+                    const { error } = await supabase.from("profiles").update({ metadata: next }).eq("id", userId)
+                    if (error) {
+                      setNotice(error.message)
+                      return
+                    }
+                    setNotice("Invoice settings saved.")
+                    setShowInvoiceSettings(false)
+                  })()
+                }}
+              >
+                Save settings
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

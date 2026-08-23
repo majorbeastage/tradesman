@@ -1002,8 +1002,9 @@ export default function PaymentsPage() {
                 lineHeight: 1.55,
               }}
             >
-              <strong>Online payments aren&apos;t set up for this app yet.</strong> Your administrator still needs to finish payment setup
-              for this site (Helcim portal URL on the host + customer codes in Admin).
+              <strong>Online payments aren&apos;t connected on this screen yet.</strong> Your Tradesman billing plan is on file, but this
+              site still needs a Helcim payment portal URL (Vercel <code style={{ color: "#fef3c7" }}>VITE_HELCIM_PAYMENT_PORTAL_URL</code>{" "}
+              or Admin → Billing &amp; Helcim) so customers can open the pay window. Customer codes alone are not enough.
             </div>
           )}
         </>

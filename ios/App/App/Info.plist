@@ -64,6 +64,7 @@
 	<string>Optional background location for office manager live maps when enabled in settings.</string>
 	<key>UIBackgroundModes</key>
 	<array>
+		<!-- Push only. Do NOT add "processing" unless BGTaskSchedulerPermittedIdentifiers is also set. -->
 		<string>remote-notification</string>
 	</array>
 	<key>NSUserNotificationsUsageDescription</key>

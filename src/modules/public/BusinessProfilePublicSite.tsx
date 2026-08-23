@@ -23,6 +23,8 @@ import type {
 import {
   DEFAULT_BUSINESS_PROFILE_THEME,
   WEBSITE_FREEFORM_DESIGN_WIDTH,
+  clampWebsiteOffsetX,
+  clampWebsiteOffsetY,
   defaultWebsiteFeatureCards,
   defaultWebsiteHomeSectionOrder,
   defaultWebsiteNavBar,
@@ -707,16 +709,29 @@ function CanvasEditable({
   positionScale?: number
 }) {
   if (!editMode) {
+    const scale = positionScale > 0 ? positionScale : 1
+    const ox = offsetX || 0
+    const oy = offsetY || 0
+    const liveStyle: CSSProperties = {
+      ...style,
+      ...(ox !== 0 || oy !== 0
+        ? {
+            transform: `translate(${ox * scale}px, ${oy * scale}px)`,
+            position: style?.position ?? "relative",
+            display: style?.display ?? "inline-block",
+          }
+        : null),
+    }
     if (Tag === "a") {
       return (
-        <a className={className} style={style} href={href || "#"} onClick={onAnchorClick}>
+        <a className={className} style={liveStyle} href={href || "#"} onClick={onAnchorClick}>
           {children}
         </a>
       )
     }
     const Comp = Tag
     return (
-      <Comp className={className} style={style}>
+      <Comp className={className} style={liveStyle}>
         {children}
       </Comp>
     )
@@ -747,8 +762,8 @@ function CanvasEditable({
       /* ignore */
     }
     const onMove = (ev: PointerEvent) => {
-      const nextX = Math.max(-900, Math.min(900, Math.round(ox0 + (ev.clientX - startX) / scale)))
-      const nextY = Math.max(-400, Math.min(2800, Math.round(oy0 + (ev.clientY - startY) / scale)))
+      const nextX = clampWebsiteOffsetX(ox0 + (ev.clientX - startX) / scale)
+      const nextY = clampWebsiteOffsetY(oy0 + (ev.clientY - startY) / scale)
       target.style.transform = `translate(${nextX * scale}px, ${nextY * scale}px)`
       target.dataset.dragX = String(nextX)
       target.dataset.dragY = String(nextY)
@@ -885,14 +900,15 @@ function FreeformCanvasLayer({
         if (t.closest?.('[data-edit-target^="canvas."]')) return
         e.preventDefault()
         e.stopPropagation()
-        const dropUrl = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain")
-        if (!dropUrl?.startsWith("http")) return
+        const rawUrl = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain")
+        const dropUrl = rawUrl.split("\n").map((s) => s.trim()).find((s) => /^https?:\/\//i.test(s) || s.startsWith("blob:") || s.startsWith("data:image"))
+        if (!dropUrl) return
         const rect = layerRef.current?.getBoundingClientRect()
         if (!rect) return
         const localX = e.clientX - rect.left - rect.width / 2
-        const localY = e.clientY - rect.top - 140
-        const ox = Math.max(-900, Math.min(900, Math.round(localX / scale)))
-        const oy = Math.max(-400, Math.min(2800, Math.round(localY / scale)))
+        const localY = e.clientY - rect.top - 140 * scale
+        const ox = clampWebsiteOffsetX(localX / scale)
+        const oy = clampWebsiteOffsetY(localY / scale)
         editor.onCreatePhotoAtDrop(dropUrl.trim(), ox, oy)
       }}
     >
@@ -953,8 +969,8 @@ function FreeformCanvasLayer({
                   /* ignore */
                 }
                 const onMove = (ev: PointerEvent) => {
-                  const nextX = Math.max(-900, Math.min(900, Math.round(ox0 + (ev.clientX - startX) / scale)))
-                  const nextY = Math.max(-400, Math.min(2800, Math.round(oy0 + (ev.clientY - startY) / scale)))
+                  const nextX = clampWebsiteOffsetX(ox0 + (ev.clientX - startX) / scale)
+                  const nextY = clampWebsiteOffsetY(oy0 + (ev.clientY - startY) / scale)
                   el.style.transform = `translate(${nextX * scale}px, ${nextY * scale}px)`
                   el.dataset.dragX = String(nextX)
                   el.dataset.dragY = String(nextY)
@@ -1039,12 +1055,12 @@ function FreeformCanvasLayer({
                     const startH = height || 150
                     const parent = (e.currentTarget as HTMLElement).parentElement
                     const onMove = (ev: PointerEvent) => {
-                      const w = Math.max(60, Math.round(startW + (ev.clientX - startX)))
-                      const h = Math.max(60, Math.round(startH + (ev.clientY - startY)))
+                      const w = Math.max(60, Math.round(startW + (ev.clientX - startX) / scale))
+                      const h = Math.max(60, Math.round(startH + (ev.clientY - startY) / scale))
                       if (parent) {
-                        parent.style.width = `${w}px`
-                        parent.style.height = `${h}px`
-                        parent.style.marginLeft = `${-w / 2}px`
+                        parent.style.width = `${w * scale}px`
+                        parent.style.height = `${h * scale}px`
+                        parent.style.marginLeft = `${(-(w * scale)) / 2}px`
                       }
                       ;(e.currentTarget as HTMLElement).dataset.rw = String(w)
                       ;(e.currentTarget as HTMLElement).dataset.rh = String(h)
@@ -1220,19 +1236,45 @@ function ShowcaseLayout({
   }
 
   const styleFor = (id: string): CSSProperties => websiteTextStyleToCss(textStyles[id]) as CSSProperties
-  const textChrome = (id: string) => ({
-    editMode,
-    selectedTargetId: editor?.selectedTargetId,
-    onSelectTarget: editor?.onSelectTarget,
-    onTargetContextMenu: editor?.onTargetContextMenu,
-    onPatchTextStyle: editor?.onPatchTextStyle,
-    enableMoveResize: editMode,
-    offsetX: textStyles[id]?.offsetX ?? 0,
-    offsetY: textStyles[id]?.offsetY ?? 0,
-    style: styleFor(id),
-  })
   const fixedBackground = data.fixedBackground !== false
   const shellRef = useRef<HTMLDivElement | null>(null)
+  const [designScale, setDesignScale] = useState(1)
+  useEffect(() => {
+    const root = shellRef.current
+    if (!root || typeof ResizeObserver === "undefined") return
+    const apply = () => {
+      const w = Math.max(320, Math.round(root.clientWidth || WEBSITE_FREEFORM_DESIGN_WIDTH))
+      setDesignScale(w / WEBSITE_FREEFORM_DESIGN_WIDTH)
+    }
+    apply()
+    const ro = new ResizeObserver(apply)
+    ro.observe(root)
+    return () => ro.disconnect()
+  }, [data.slug, previewMode])
+
+  const textChrome = (id: string) => {
+    const st = textStyles[id]
+    const css = styleFor(id)
+    // CanvasEditable owns transform from offsetX/Y + designScale — strip any leftover transform.
+    const { transform: _t, ...cssSansTransform } = css
+    return {
+      editMode,
+      selectedTargetId: editor?.selectedTargetId,
+      onSelectTarget: editor?.onSelectTarget,
+      onTargetContextMenu: editor?.onTargetContextMenu,
+      onPatchTextStyle: editor?.onPatchTextStyle,
+      enableMoveResize: editMode,
+      offsetX: st?.offsetX ?? 0,
+      offsetY: st?.offsetY ?? 0,
+      positionScale: Math.min(1, designScale > 0 ? designScale : 1),
+      style: cssSansTransform,
+    }
+  }
+  const typographyOnly = (id: string): CSSProperties => {
+    const css = styleFor(id)
+    const { transform: _t, position: _p, display: _d, ...rest } = css
+    return rest
+  }
 
   useEffect(() => {
     if (!previewMode || !fixedBackground) return
@@ -1267,8 +1309,35 @@ function ShowcaseLayout({
     if (!editMode) return
     e.preventDefault()
     e.stopPropagation()
-    const url = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain")
-    if (url?.startsWith("http")) editor?.onDropImageOnSlot?.(slotId, url.trim())
+    const raw = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain")
+    const url = raw.split("\n").map((s) => s.trim()).find((s) => /^https?:\/\//i.test(s) || s.startsWith("blob:") || s.startsWith("data:image"))
+    if (url) editor?.onDropImageOnSlot?.(slotId, url.trim())
+  }
+
+  const onCanvasPhotoDrop = (e: DragEvent) => {
+    if (!editMode || !editor?.onCreatePhotoAtDrop) return
+    const t = e.target as HTMLElement
+    if (t.closest?.('[data-edit-target^="slot."]')) return
+    if (t.closest?.('[data-edit-target^="canvas."]')) return
+    e.preventDefault()
+    e.stopPropagation()
+    const raw = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain")
+    const dropUrl = raw
+      .split("\n")
+      .map((s) => s.trim())
+      .find((s) => /^https?:\/\//i.test(s) || s.startsWith("blob:") || s.startsWith("data:image"))
+    if (!dropUrl) return
+    const root = shellRef.current
+    if (!root) return
+    const rect = root.getBoundingClientRect()
+    const scale = Math.min(1, Math.max(0.2, rect.width / WEBSITE_FREEFORM_DESIGN_WIDTH))
+    const localX = e.clientX - rect.left - rect.width / 2
+    const localY = e.clientY - rect.top - 140 * scale
+    editor.onCreatePhotoAtDrop(
+      dropUrl.trim(),
+      clampWebsiteOffsetX(localX / scale),
+      clampWebsiteOffsetY(localY / scale),
+    )
   }
 
   const bgStyle = background
@@ -1357,11 +1426,7 @@ function ShowcaseLayout({
       <CanvasEditable
         as="h2"
         targetId="contact_page.title"
-        editMode={editMode}
-        selectedTargetId={editor?.selectedTargetId}
-        onSelectTarget={editor?.onSelectTarget}
-        onTargetContextMenu={editor?.onTargetContextMenu}
-        style={styleFor("contact_page.title")}
+        {...textChrome("contact_page.title")}
       >
         {subPages.contact.title || "Contact Us"}
       </CanvasEditable>
@@ -1415,7 +1480,7 @@ function ShowcaseLayout({
             <div className="bp-showcase-hero-copy">
               <CanvasEditable as="div" targetId="hero.headline" {...textChrome("hero.headline")}>
                 {displayLines.map((line) => (
-                  <h1 key={line} style={styleFor("hero.headline")}>
+                  <h1 key={line} style={typographyOnly("hero.headline")}>
                     {line}
                   </h1>
                 ))}
@@ -1489,11 +1554,7 @@ function ShowcaseLayout({
                 <CanvasEditable
                   as="h2"
                   targetId="band.services.title"
-                  editMode={editMode}
-                  selectedTargetId={editor?.selectedTargetId}
-                  onSelectTarget={editor?.onSelectTarget}
-                  onTargetContextMenu={editor?.onTargetContextMenu}
-                  style={styleFor("band.services.title")}
+                  {...textChrome("band.services.title")}
                 >
                   {title}
                 </CanvasEditable>
@@ -1501,6 +1562,7 @@ function ShowcaseLayout({
                   {serviceCards.slice(0, 3).map((card, i) => {
                     const slotTarget = `slot.service_${i + 1}`
                     const st = textStyles[slotTarget] ?? {}
+                    const slotChrome = textChrome(slotTarget)
                     const vis = imageSlotVisualStyle({
                       imageSize: st.imageSize ?? 180,
                       ...st,
@@ -1514,42 +1576,53 @@ function ShowcaseLayout({
                     return (
                     <article key={card.id || i} className="bp-showcase-service-photo-card">
                       {serviceImgs[i] ? (
-                        <button
-                          type="button"
-                          className={`bp-showcase-service-photo${editMode ? " bp-edit-target" : ""}${
-                            editor?.selectedTargetId === slotTarget ? " bp-edit-selected" : ""
-                          }`}
+                        <CanvasEditable
+                          as="div"
+                          targetId={slotTarget}
+                          {...slotChrome}
                           style={{
-                            position: "relative",
-                            overflow: "hidden",
+                            ...slotChrome.style,
+                            display: "block",
                             width: st.scaleMode === "free" && st.maxWidth ? st.maxWidth : "100%",
                             maxWidth: "100%",
-                            height: photoH,
-                            aspectRatio: photoH ? "auto" : "4 / 3",
-                            borderRadius: 18,
-                            padding: 0,
-                            border: 0,
-                            display: "block",
-                            background: "#e2e8f0",
-                            cursor: editMode ? "pointer" : "zoom-in",
-                          }}
-                          onClick={() => {
-                            if (editMode) editor?.onSelectTarget?.(slotTarget)
-                            else onPhotoClick(serviceImgs[i]!)
-                          }}
-                          onDragOver={(e) => editMode && e.preventDefault()}
-                          onDrop={(e) => onSlotDrop(`service_${i + 1}`, e)}
-                          onContextMenu={(e) => {
-                            if (!editMode) return
-                            e.preventDefault()
-                            e.stopPropagation()
-                            editor?.onSelectTarget?.(slotTarget)
-                            editor?.onTargetContextMenu?.(slotTarget, e.clientX, e.clientY)
                           }}
                         >
-                          <img src={serviceImgs[i]!} alt="" style={vis.img} />
-                          {vis.tint ? <span style={vis.tint} /> : null}
-                        </button>
+                          <button
+                            type="button"
+                            className={`bp-showcase-service-photo${editMode ? " bp-edit-target" : ""}${
+                              editor?.selectedTargetId === slotTarget ? " bp-edit-selected" : ""
+                            }`}
+                            style={{
+                              position: "relative",
+                              overflow: "hidden",
+                              width: "100%",
+                              height: photoH,
+                              aspectRatio: photoH ? "auto" : "4 / 3",
+                              borderRadius: 18,
+                              padding: 0,
+                              border: 0,
+                              display: "block",
+                              background: "#e2e8f0",
+                              cursor: editMode ? "grab" : "zoom-in",
+                            }}
+                            onClick={() => {
+                              if (editMode) editor?.onSelectTarget?.(slotTarget)
+                              else onPhotoClick(serviceImgs[i]!)
+                            }}
+                            onDragOver={(e) => editMode && e.preventDefault()}
+                            onDrop={(e) => onSlotDrop(`service_${i + 1}`, e)}
+                            onContextMenu={(e) => {
+                              if (!editMode) return
+                              e.preventDefault()
+                              e.stopPropagation()
+                              editor?.onSelectTarget?.(slotTarget)
+                              editor?.onTargetContextMenu?.(slotTarget, e.clientX, e.clientY)
+                            }}
+                          >
+                            <img src={serviceImgs[i]!} alt="" style={vis.img} />
+                            {vis.tint ? <span style={vis.tint} /> : null}
+                          </button>
+                        </CanvasEditable>
                       ) : (
                         <div
                           className={`bp-showcase-service-photo bp-showcase-service-photo-empty${editMode ? " bp-edit-target" : ""}${
@@ -1574,26 +1647,10 @@ function ShowcaseLayout({
                           {editMode ? "Drop photo" : null}
                         </div>
                       )}
-                      <CanvasEditable
-                        as="h3"
-                        targetId={`service.${i}.title`}
-                        editMode={editMode}
-                        selectedTargetId={editor?.selectedTargetId}
-                        onSelectTarget={editor?.onSelectTarget}
-                        onTargetContextMenu={editor?.onTargetContextMenu}
-                        style={styleFor(`service.${i}.title`)}
-                      >
+                      <CanvasEditable as="h3" targetId={`service.${i}.title`} {...textChrome(`service.${i}.title`)}>
                         {card.title || "Service"}
                       </CanvasEditable>
-                      <CanvasEditable
-                        as="p"
-                        targetId={`service.${i}.body`}
-                        editMode={editMode}
-                        selectedTargetId={editor?.selectedTargetId}
-                        onSelectTarget={editor?.onSelectTarget}
-                        onTargetContextMenu={editor?.onTargetContextMenu}
-                        style={styleFor(`service.${i}.body`)}
-                      >
+                      <CanvasEditable as="p" targetId={`service.${i}.body`} {...textChrome(`service.${i}.body`)}>
                         {card.body || "Add a short description…"}
                       </CanvasEditable>
                     </article>
@@ -1619,23 +1676,17 @@ function ShowcaseLayout({
               <CanvasEditable
                 as="h2"
                 targetId="band.about.title"
-                editMode={editMode}
-                selectedTargetId={editor?.selectedTargetId}
-                onSelectTarget={editor?.onSelectTarget}
-                onTargetContextMenu={editor?.onTargetContextMenu}
-                style={{ textAlign: "center", ...styleFor("band.about.title") }}
+                {...textChrome("band.about.title")}
+                style={{ textAlign: "center", ...textChrome("band.about.title").style }}
               >
                 {title}
               </CanvasEditable>
               <CanvasEditable
                 as="p"
                 targetId="band.about.body"
-                editMode={editMode}
-                selectedTargetId={editor?.selectedTargetId}
-                onSelectTarget={editor?.onSelectTarget}
-                onTargetContextMenu={editor?.onTargetContextMenu}
+                {...textChrome("band.about.body")}
                 className="bp-showcase-band-body"
-                style={{ textAlign: "center", maxWidth: 720, margin: "0 auto", ...styleFor("band.about.body") }}
+                style={{ textAlign: "center", maxWidth: 720, margin: "0 auto", ...textChrome("band.about.body").style }}
               >
                 {body || (editMode ? "Add about text…" : "")}
               </CanvasEditable>
@@ -1645,33 +1696,36 @@ function ShowcaseLayout({
                     const url = idx === 0 ? feature1 : feature2
                     const slotId = idx === 0 ? "feature_1" : "feature_2"
                     const slotTarget = `slot.${slotId}`
+                    const slotChrome = textChrome(slotTarget)
                     const vis = imageSlotVisualStyle(textStyles[slotTarget])
                     return (
                       <div key={card.id || idx} className="bp-showcase-feature-item">
                         {url ? (
-                          <button
-                            type="button"
-                            className={`bp-showcase-feature-thumb${editMode ? " bp-edit-target" : ""}${
-                              editor?.selectedTargetId === slotTarget ? " bp-edit-selected" : ""
-                            }`}
-                            style={vis.wrap}
-                            onClick={() => {
-                              if (editMode) editor?.onSelectTarget?.(slotTarget)
-                              else onPhotoClick(url)
-                            }}
-                            onDragOver={(e) => editMode && e.preventDefault()}
-                            onDrop={(e) => onSlotDrop(slotId, e)}
-                            onContextMenu={(e) => {
-                              if (!editMode) return
-                              e.preventDefault()
-                              e.stopPropagation()
-                              editor?.onSelectTarget?.(slotTarget)
-                              editor?.onTargetContextMenu?.(slotTarget, e.clientX, e.clientY)
-                            }}
-                          >
-                            <img src={url} alt="" style={vis.img} />
-                            {vis.tint ? <span style={vis.tint} /> : null}
-                          </button>
+                          <CanvasEditable as="div" targetId={slotTarget} {...slotChrome} style={{ ...slotChrome.style, display: "block" }}>
+                            <button
+                              type="button"
+                              className={`bp-showcase-feature-thumb${editMode ? " bp-edit-target" : ""}${
+                                editor?.selectedTargetId === slotTarget ? " bp-edit-selected" : ""
+                              }`}
+                              style={{ ...vis.wrap, cursor: editMode ? "grab" : "zoom-in", width: "100%" }}
+                              onClick={() => {
+                                if (editMode) editor?.onSelectTarget?.(slotTarget)
+                                else onPhotoClick(url)
+                              }}
+                              onDragOver={(e) => editMode && e.preventDefault()}
+                              onDrop={(e) => onSlotDrop(slotId, e)}
+                              onContextMenu={(e) => {
+                                if (!editMode) return
+                                e.preventDefault()
+                                e.stopPropagation()
+                                editor?.onSelectTarget?.(slotTarget)
+                                editor?.onTargetContextMenu?.(slotTarget, e.clientX, e.clientY)
+                              }}
+                            >
+                              <img src={url} alt="" style={vis.img} />
+                              {vis.tint ? <span style={vis.tint} /> : null}
+                            </button>
+                          </CanvasEditable>
                         ) : editMode ? (
                           <div
                             className={`bp-showcase-feature-thumb bp-edit-target${
@@ -1695,22 +1749,14 @@ function ShowcaseLayout({
                           <CanvasEditable
                             as="strong"
                             targetId={`feature.${idx}.title`}
-                            editMode={editMode}
-                            selectedTargetId={editor?.selectedTargetId}
-                            onSelectTarget={editor?.onSelectTarget}
-                            onTargetContextMenu={editor?.onTargetContextMenu}
-                            style={styleFor(`feature.${idx}.title`)}
+                            {...textChrome(`feature.${idx}.title`)}
                           >
                             {card.title}
                           </CanvasEditable>
                           <CanvasEditable
                             as="p"
                             targetId={`feature.${idx}.body`}
-                            editMode={editMode}
-                            selectedTargetId={editor?.selectedTargetId}
-                            onSelectTarget={editor?.onSelectTarget}
-                            onTargetContextMenu={editor?.onTargetContextMenu}
-                            style={styleFor(`feature.${idx}.body`)}
+                            {...textChrome(`feature.${idx}.body`)}
                           >
                             {card.body}
                           </CanvasEditable>
@@ -1807,26 +1853,15 @@ function ShowcaseLayout({
     activePage === "about" && subPages.about.enabled ? (
       <section className="bp-showcase-band bp-showcase-band-light">
         <div className="bp-showcase-band-inner" style={{ maxWidth: 800 }}>
-          <CanvasEditable
-            as="h2"
-            targetId="about_page.title"
-            editMode={editMode}
-            selectedTargetId={editor?.selectedTargetId}
-            onSelectTarget={editor?.onSelectTarget}
-            onTargetContextMenu={editor?.onTargetContextMenu}
-            style={styleFor("about_page.title")}
-          >
+          <CanvasEditable as="h2" targetId="about_page.title" {...textChrome("about_page.title")}>
             {subPages.about.title || "About Us"}
           </CanvasEditable>
           <CanvasEditable
             as="p"
             targetId="about_page.body"
-            editMode={editMode}
-            selectedTargetId={editor?.selectedTargetId}
-            onSelectTarget={editor?.onSelectTarget}
-            onTargetContextMenu={editor?.onTargetContextMenu}
+            {...textChrome("about_page.body")}
             className="bp-showcase-band-body"
-            style={{ whiteSpace: "pre-wrap", ...styleFor("about_page.body") }}
+            style={{ whiteSpace: "pre-wrap", ...textChrome("about_page.body").style }}
           >
             {aboutBody || (editMode ? "Add About Us copy…" : "")}
           </CanvasEditable>
@@ -1854,7 +1889,7 @@ function ShowcaseLayout({
   return (
     <div
       ref={shellRef}
-      className={`bp-shell bp-shell-showcase${isHairPlumbing ? " bp-shell-hair-plumbing" : ""}${previewMode ? " bp-shell-showcase-preview" : ""}`}
+      className={`bp-shell bp-shell-showcase${isHairPlumbing ? " bp-shell-hair-plumbing" : ""}${previewMode ? " bp-shell-showcase-preview" : ""}${editMode ? " bp-edit-mode" : ""}`}
       onClick={() => {
         if (editMode) editor?.onSelectTarget?.(null)
       }}
@@ -1893,7 +1928,13 @@ function ShowcaseLayout({
           />
         ) : null}
       </div>
-      <div className="bp-showcase-scroll-layer">
+      <div
+        className="bp-showcase-scroll-layer"
+        onDragOver={(e) => {
+          if (editMode && editor?.onCreatePhotoAtDrop) e.preventDefault()
+        }}
+        onDrop={onCanvasPhotoDrop}
+      >
         {nav}
         {pageContent}
         <FreeformCanvasLayer
@@ -2229,6 +2270,7 @@ export function BusinessProfilePublicSite({
           pointer-events: none;
           z-index: 8;
         }
+        /* Keep items clickable; empty canvas stays pass-through so page fields remain draggable. */
         .bp-freeform-layer-pinned {
           position: fixed;
           inset: 0;
@@ -2585,8 +2627,13 @@ export function BusinessProfilePublicSite({
           enableMoveResize={Boolean(previewMode && editor?.onSelectTarget)}
           offsetX={data.textStyles?.["footer.copyright"]?.offsetX ?? 0}
           offsetY={data.textStyles?.["footer.copyright"]?.offsetY ?? 0}
+          positionScale={1}
           className="bp-client-footer"
-          style={websiteTextStyleToCss(data.textStyles?.["footer.copyright"]) as CSSProperties}
+          style={(() => {
+            const css = websiteTextStyleToCss(data.textStyles?.["footer.copyright"]) as CSSProperties
+            const { transform: _t, ...rest } = css
+            return rest
+          })()}
         >
           {data.footerCopyright?.trim() || `© ${new Date().getFullYear()} ${data.businessName}. All rights reserved.`}
         </CanvasEditable>

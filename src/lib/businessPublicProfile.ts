@@ -228,6 +228,12 @@ export const WEBSITE_BUILDER_PREVIEW_STORAGE_KEY = "tradesman_website_builder_pr
 export const WEBSITE_FONT_OPTIONS = [
   { id: "Oswald", label: "Oswald (headlines)", stack: '"Oswald", system-ui, sans-serif' },
   { id: "Jost", label: "Jost (body)", stack: '"Jost", system-ui, sans-serif' },
+  { id: "Montserrat", label: "Montserrat", stack: '"Montserrat", system-ui, sans-serif' },
+  { id: "RobotoSlab", label: "Roboto Slab", stack: '"Roboto Slab", Georgia, serif' },
+  { id: "Playfair", label: "Playfair Display", stack: '"Playfair Display", Georgia, serif' },
+  { id: "SourceSans", label: "Source Sans 3", stack: '"Source Sans 3", system-ui, sans-serif' },
+  { id: "Lato", label: "Lato", stack: '"Lato", system-ui, sans-serif' },
+  { id: "Merriweather", label: "Merriweather", stack: 'Merriweather, Georgia, serif' },
   { id: "Georgia", label: "Georgia", stack: 'Georgia, "Times New Roman", serif' },
   { id: "System", label: "System", stack: 'system-ui, -apple-system, "Segoe UI", sans-serif' },
 ] as const
@@ -236,6 +242,20 @@ export const WEBSITE_FONT_SIZE_OPTIONS = ["12px", "14px", "16px", "18px", "22px"
 
 /** Freeform placement is authored at this width; render scales to the live container. */
 export const WEBSITE_FREEFORM_DESIGN_WIDTH = 1200
+
+/** Shared drag/save clamps (design-space px). Keep editor + parser in sync. */
+export const WEBSITE_OFFSET_MIN_X = -1400
+export const WEBSITE_OFFSET_MAX_X = 1400
+export const WEBSITE_OFFSET_MIN_Y = -1200
+export const WEBSITE_OFFSET_MAX_Y = 5000
+
+export function clampWebsiteOffsetX(n: number): number {
+  return Math.max(WEBSITE_OFFSET_MIN_X, Math.min(WEBSITE_OFFSET_MAX_X, Math.round(n)))
+}
+
+export function clampWebsiteOffsetY(n: number): number {
+  return Math.max(WEBSITE_OFFSET_MIN_Y, Math.min(WEBSITE_OFFSET_MAX_Y, Math.round(n)))
+}
 
 /** Home-page blocks the editor can turn off entirely. */
 export const WEBSITE_HOME_SECTION_OPTIONS = [
@@ -535,8 +555,8 @@ export function parseWebsiteTextStyles(raw: unknown): WebsiteTextStyles {
       style.textTransform = o.textTransform
     }
     // Wide clamps so deep-page / wide placements survive save (must match editor drag limits).
-    if (typeof o.offsetX === "number" && Number.isFinite(o.offsetX)) style.offsetX = Math.max(-900, Math.min(900, Math.round(o.offsetX)))
-    if (typeof o.offsetY === "number" && Number.isFinite(o.offsetY)) style.offsetY = Math.max(-400, Math.min(2800, Math.round(o.offsetY)))
+    if (typeof o.offsetX === "number" && Number.isFinite(o.offsetX)) style.offsetX = clampWebsiteOffsetX(o.offsetX)
+    if (typeof o.offsetY === "number" && Number.isFinite(o.offsetY)) style.offsetY = clampWebsiteOffsetY(o.offsetY)
     if (typeof o.maxWidth === "number" && Number.isFinite(o.maxWidth)) style.maxWidth = Math.max(80, Math.min(1200, Math.round(o.maxWidth)))
     if (isWebsiteBuiltInLinkTarget(o.linkTarget) && o.linkTarget !== "none") style.linkTarget = o.linkTarget
     if (typeof o.imageSize === "number" && Number.isFinite(o.imageSize)) {
@@ -608,8 +628,9 @@ export function websiteTextStyleToCss(style: WebsiteTextStyle | undefined): {
   if (style.textTransform) css.textTransform = style.textTransform
   const ox = style.offsetX ?? 0
   const oy = style.offsetY ?? 0
-  if (ox !== 0 || oy !== 0) {
-    css.transform = `translate(${ox}px, ${oy}px)`
+  // Offsets are applied by CanvasEditable / freeform layer with design-scale.
+  // Keep typography-only here so live CSS does not double-apply transform.
+  if ((ox !== 0 || oy !== 0) && !style.scrollFixed) {
     css.position = "relative"
     css.display = "inline-block"
   }
@@ -623,6 +644,7 @@ export function websiteTextStyleToCss(style: WebsiteTextStyle | undefined): {
     css.position = "fixed"
     css.zIndex = 45
     css.display = "inline-block"
+    if (ox !== 0 || oy !== 0) css.transform = `translate(${ox}px, ${oy}px)`
   }
   return css
 }

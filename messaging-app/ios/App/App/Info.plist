@@ -62,9 +62,13 @@
 	<string>Tradesman Messaging uses the camera for video calls with your team.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Tradesman Messaging uses the microphone for voice and video calls with your team.</string>
+	<key>NSUserNotificationsUsageDescription</key>
+	<string>Tradesman Messaging sends team message and call alerts when you allow notifications.</string>
 	<key>UIBackgroundModes</key>
 	<array>
+		<!-- Push only. Do NOT add "processing" unless BGTaskSchedulerPermittedIdentifiers is also set. -->
 		<string>remote-notification</string>
+		<string>audio</string>
 	</array>
 </dict>
 </plist>

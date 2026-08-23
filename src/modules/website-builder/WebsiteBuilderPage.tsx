@@ -1039,8 +1039,28 @@ export default function WebsiteBuilderPage() {
 
         {selectedTargetId && selectedKind === "text" ? (
           <div style={{ ...sectionCard, borderColor: "#2563eb", boxShadow: "0 0 0 1px rgba(37,99,235,0.2)" }}>
-            <div style={{ fontSize: 12, fontWeight: 900 }}>
-              {selectedCanvasItem ? "Custom text field" : websiteEditTargetLabel(selectedTargetId)}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 900 }}>
+                {selectedCanvasItem ? "Custom text field" : websiteEditTargetLabel(selectedTargetId)}
+              </div>
+              <button
+                type="button"
+                title="Deselect"
+                aria-label="Deselect"
+                onClick={() => onSelectTarget(null)}
+                style={{
+                  border: `1px solid ${theme.border}`,
+                  background: "#fff",
+                  borderRadius: 6,
+                  width: 28,
+                  height: 28,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                  lineHeight: 1,
+                }}
+              >
+                ×
+              </button>
             </div>
             <textarea
               rows={selectedTargetId.includes("body") || selectedTargetId === "hero.headline" || selectedCanvasItem ? 4 : 2}
@@ -1276,7 +1296,27 @@ export default function WebsiteBuilderPage() {
           </div>
         ) : selectedTargetId && selectedKind === "section" ? (
           <div style={{ ...sectionCard, borderColor: "#2563eb" }}>
-            <div style={{ fontSize: 12, fontWeight: 900 }}>{websiteEditTargetLabel(selectedTargetId)}</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 900 }}>{websiteEditTargetLabel(selectedTargetId)}</div>
+              <button
+                type="button"
+                title="Deselect"
+                aria-label="Deselect"
+                onClick={() => onSelectTarget(null)}
+                style={{
+                  border: `1px solid ${theme.border}`,
+                  background: "#fff",
+                  borderRadius: 6,
+                  width: 28,
+                  height: 28,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                  lineHeight: 1,
+                }}
+              >
+                ×
+              </button>
+            </div>
             <p style={{ margin: 0, fontSize: 12, color: "#475569" }}>Right-click → Remove to hide this block from the site.</p>
             <button
               type="button"
@@ -1296,14 +1336,69 @@ export default function WebsiteBuilderPage() {
           </div>
         ) : selectedTargetId && selectedKind === "image" ? (
           <div style={{ ...sectionCard, borderColor: "#2563eb", boxShadow: "0 0 0 1px rgba(37,99,235,0.2)" }}>
-            <div style={{ fontSize: 12, fontWeight: 900 }}>
-              {selectedCanvasItem ? "Custom photo field" : websiteEditTargetLabel(selectedTargetId)}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 900 }}>
+                {selectedCanvasItem ? "Custom photo field" : websiteEditTargetLabel(selectedTargetId)}
+              </div>
+              <button
+                type="button"
+                title="Deselect"
+                aria-label="Deselect"
+                onClick={() => onSelectTarget(null)}
+                style={{
+                  border: `1px solid ${theme.border}`,
+                  background: "#fff",
+                  borderRadius: 6,
+                  width: 28,
+                  height: 28,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                  lineHeight: 1,
+                }}
+              >
+                ×
+              </button>
             </div>
             <p style={{ margin: 0, fontSize: 12, color: "#475569" }}>
-              {selectedCanvasItem
-                ? "Drag a photo from the tray onto this field on the page. Drag to move; corner handle to resize."
-                : "Drag a photo from the tray below onto this slot, or clear it."}
+              {selectedTargetId === "slot.background"
+                ? "Background selected — set tint below, or drag a tray photo onto the page to replace the background."
+                : selectedCanvasItem
+                  ? "Drag a photo from the tray onto this field on the page. Drag to move; corner handle to resize."
+                  : "Drag a photo from the tray below onto this slot, or clear it."}
             </p>
+            {selectedTargetId === "slot.background" ? (
+              <div
+                style={{
+                  display: "grid",
+                  gap: 8,
+                  padding: 10,
+                  borderRadius: 8,
+                  border: `1px solid ${theme.border}`,
+                  background: "#f8fafc",
+                }}
+              >
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#0f172a" }}>Background tint</div>
+                <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
+                  Tint color
+                  <input
+                    type="color"
+                    value={selectedStyle.tintColor || "#0f172a"}
+                    onChange={(e) => patchTextStyle(selectedTargetId, { tintColor: e.target.value })}
+                    style={{ width: "100%", height: 34, borderRadius: 8, border: `1px solid ${theme.border}` }}
+                  />
+                </label>
+                <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
+                  Tint strength ({selectedStyle.tintOpacity ?? 0}%)
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={selectedStyle.tintOpacity ?? 0}
+                    onChange={(e) => patchTextStyle(selectedTargetId, { tintOpacity: Number(e.target.value) })}
+                  />
+                </label>
+              </div>
+            ) : null}
             <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
               Scale mode
               <select
@@ -1503,7 +1598,8 @@ export default function WebsiteBuilderPage() {
           <div style={sectionCard}>
             <div style={{ fontSize: 12, fontWeight: 900 }}>Nothing selected</div>
             <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-              Click a field in the preview, or use Quick add to place a new text/photo field you can drag anywhere.
+              Click a field in the preview, then drag it — headlines, body copy, service/feature photos, and freeform
+              items all move. Use Quick add for new text/photo fields you can place anywhere.
             </p>
           </div>
         )}
