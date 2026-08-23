@@ -81,47 +81,88 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
   const [invoiceNumberDigits, setInvoiceNumberDigits] = useState("4")
   const [invoiceTplIncludePreparedDate, setInvoiceTplIncludePreparedDate] = useState(true)
   const [invoiceTplIncludeDueDate, setInvoiceTplIncludeDueDate] = useState(true)
-  const [invoiceTplIncludePhotos, setInvoiceTplIncludePhotos] = useState(true)
+  const [invoiceTplIncludePhotos, setInvoiceTplIncludePhotos] = useState(false)
+  const [invoiceTplIncludeJobDetails, setInvoiceTplIncludeJobDetails] = useState(false)
+  const [invoiceTplIncludeCustomFields, setInvoiceTplIncludeCustomFields] = useState(false)
+  const [invoiceTplIncludeDescription, setInvoiceTplIncludeDescription] = useState(true)
   const [invoiceDueIntervalUnit, setInvoiceDueIntervalUnit] = useState<"days" | "weeks" | "months">("days")
   const [invoiceDueIntervalValue, setInvoiceDueIntervalValue] = useState("14")
   const [invoiceCustomDescriptionTemplate, setInvoiceCustomDescriptionTemplate] = useState("")
   const [invoiceSectionOrder, setInvoiceSectionOrder] = useState<string[]>([
-    "description",
     "line_items",
+    "job_details",
+    "description",
+    "custom_fields",
     "photos",
     "due_date",
   ])
+  const [tplLoaded, setTplLoaded] = useState(false)
+
+  function mergeInvoiceSectionOrder(raw: string[]): string[] {
+    const all = ["line_items", "job_details", "description", "custom_fields", "photos", "due_date"]
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const id of raw) {
+      if (!all.includes(id) || seen.has(id)) continue
+      seen.add(id)
+      out.push(id)
+    }
+    for (const id of all) {
+      if (!seen.has(id)) out.push(id)
+    }
+    return out
+  }
+
+  function applyInvoiceTemplateMeta(meta: Record<string, unknown>) {
+    const inv = parseDocumentNumberSettings(meta, "invoice")
+    setInvoiceNumberEnabled(inv.enabled === true)
+    setInvoiceNumberPrefix(inv.prefix)
+    setInvoiceNumberDigits(String(inv.sequenceDigits))
+    setInvoiceTplIncludePreparedDate(meta.invoice_template_include_prepared_date !== false)
+    setInvoiceTplIncludeDueDate(meta.invoice_template_include_due_date !== false)
+    setInvoiceTplIncludePhotos(meta.invoice_template_include_photos === true)
+    setInvoiceTplIncludeJobDetails(meta.invoice_template_include_job_details === true)
+    setInvoiceTplIncludeCustomFields(meta.invoice_template_include_custom_fields === true)
+    setInvoiceTplIncludeDescription(meta.invoice_template_include_description !== false)
+    const unit = meta.invoice_template_due_interval_unit
+    if (unit === "days" || unit === "weeks" || unit === "months") setInvoiceDueIntervalUnit(unit)
+    if (typeof meta.invoice_template_due_interval_value === "number") {
+      setInvoiceDueIntervalValue(String(meta.invoice_template_due_interval_value))
+    }
+    if (typeof meta.invoice_template_description === "string") {
+      setInvoiceCustomDescriptionTemplate(meta.invoice_template_description)
+    }
+    if (Array.isArray(meta.invoice_template_section_order)) {
+      setInvoiceSectionOrder(
+        mergeInvoiceSectionOrder(meta.invoice_template_section_order.filter((x): x is string => typeof x === "string")),
+      )
+    }
+  }
 
   useEffect(() => {
-    if (!showInvoiceSettings || !supabase || !userId) return
+    if (!supabase || !userId) return
     void (async () => {
       const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
       const meta =
         data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
           ? (data.metadata as Record<string, unknown>)
           : {}
-      const inv = parseDocumentNumberSettings(meta, "invoice")
-      setInvoiceNumberEnabled(inv.enabled === true)
-      setInvoiceNumberPrefix(inv.prefix)
-      setInvoiceNumberDigits(String(inv.sequenceDigits))
-      setInvoiceTplIncludePreparedDate(meta.invoice_template_include_prepared_date !== false)
-      setInvoiceTplIncludeDueDate(meta.invoice_template_include_due_date !== false)
-      setInvoiceTplIncludePhotos(meta.invoice_template_include_photos !== false)
-      const unit = meta.invoice_template_due_interval_unit
-      if (unit === "days" || unit === "weeks" || unit === "months") setInvoiceDueIntervalUnit(unit)
-      if (typeof meta.invoice_template_due_interval_value === "number") {
-        setInvoiceDueIntervalValue(String(meta.invoice_template_due_interval_value))
-      }
-      if (typeof meta.invoice_template_description === "string") {
-        setInvoiceCustomDescriptionTemplate(meta.invoice_template_description)
-      }
-      if (Array.isArray(meta.invoice_template_section_order)) {
-        setInvoiceSectionOrder(
-          meta.invoice_template_section_order.filter((x): x is string => typeof x === "string"),
-        )
-      }
+      applyInvoiceTemplateMeta(meta)
+      setTplLoaded(true)
     })()
-  }, [showInvoiceSettings, supabase, userId])
+  }, [supabase, userId])
+
+  useEffect(() => {
+    if (!showInvoiceSettings || !supabase || !userId || !tplLoaded) return
+    void (async () => {
+      const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+      const meta =
+        data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+          ? (data.metadata as Record<string, unknown>)
+          : {}
+      applyInvoiceTemplateMeta(meta)
+    })()
+  }, [showInvoiceSettings, supabase, userId, tplLoaded])
 
   const subtotal = useMemo(() => invoiceSubtotal(form.lineItems), [form.lineItems])
 
@@ -385,11 +426,408 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
   }
 
   function startNewInvoice() {
-    setForm(defaultInvoiceFormState())
+    const next = defaultInvoiceFormState()
+    if (invoiceCustomDescriptionTemplate.trim()) {
+      next.notes = invoiceCustomDescriptionTemplate.trim()
+    }
+    setForm(next)
     setNotice(null)
   }
 
   const inputStyle = { ...theme.formInput, width: "100%", boxSizing: "border-box" as const }
+  const sectionBase: CSSProperties = {
+    marginTop: 0,
+    border: `1px solid ${theme.border}`,
+    borderRadius: 8,
+    background: "#fff",
+    padding: "10px 12px",
+  }
+  const summaryStyle: CSSProperties = {
+    cursor: "pointer",
+    fontWeight: 700,
+    fontSize: 14,
+    color: theme.text,
+    listStyle: "none",
+  }
+
+  function sectionEnabled(id: string): boolean {
+    if (id === "photos") return invoiceTplIncludePhotos
+    if (id === "due_date") return invoiceTplIncludeDueDate
+    if (id === "job_details") return invoiceTplIncludeJobDetails
+    if (id === "custom_fields") return invoiceTplIncludeCustomFields
+    if (id === "description") return invoiceTplIncludeDescription && !invoiceTplIncludeJobDetails
+    return true
+  }
+
+  function sectionLabel(id: string): string {
+    if (id === "description") return "Description"
+    if (id === "line_items") return "Line items"
+    if (id === "photos") return "Photos"
+    if (id === "due_date") return "Due date"
+    if (id === "job_details") return "Job details"
+    if (id === "custom_fields") return "Custom fields"
+    return id
+  }
+
+  const visibleSectionOrder = invoiceSectionOrder.filter(sectionEnabled)
+
+  function renderInvoiceSection(id: string) {
+    if (id === "line_items") {
+      return (
+        <div key={id} style={{ padding: 14, border: `1px solid ${theme.border}`, borderRadius: 10, background: "#fff" }}>
+          <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 14 }}>Line items</div>
+          <div style={{ width: "100%", overflowX: "auto" }}>
+            <table
+              style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                marginTop: 0,
+                border: "1px solid #cbd5e1",
+                fontSize: 13,
+              }}
+            >
+              <thead>
+                <tr style={{ textAlign: "left", borderBottom: "1px solid #94a3b8", background: "#e2e8f0" }}>
+                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700 }}>#</th>
+                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700 }}>Description</th>
+                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, width: 72 }}>Qty</th>
+                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, width: 96 }}>Unit</th>
+                  <th style={{ padding: "10px 8px", color: "#0f172a", fontWeight: 700, width: 88 }}>Total</th>
+                  <th style={{ padding: "10px 8px", width: 56 }} />
+                </tr>
+              </thead>
+              <tbody>
+                {form.lineItems.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} style={{ padding: 12, color: "#334155", fontWeight: 500 }}>
+                      No line items yet — add below or load from an estimate.
+                    </td>
+                  </tr>
+                ) : (
+                  form.lineItems.map((li, rowIdx) => (
+                    <tr key={li.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
+                      <td style={{ padding: "10px 8px", fontWeight: 600 }}>{rowIdx + 1}</td>
+                      <td style={{ padding: "6px 8px" }}>
+                        <input
+                          value={li.description}
+                          onChange={(e) =>
+                            setForm((p) => ({
+                              ...p,
+                              lineItems: p.lineItems.map((x) => (x.id === li.id ? { ...x, description: e.target.value } : x)),
+                            }))
+                          }
+                          style={inputStyle}
+                        />
+                      </td>
+                      <td style={{ padding: "6px 8px" }}>
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.01}
+                          value={li.quantity}
+                          onChange={(e) =>
+                            setForm((p) => ({
+                              ...p,
+                              lineItems: p.lineItems.map((x) =>
+                                x.id === li.id ? { ...x, quantity: Number.parseFloat(e.target.value) || 0 } : x,
+                              ),
+                            }))
+                          }
+                          style={inputStyle}
+                        />
+                      </td>
+                      <td style={{ padding: "6px 8px" }}>
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.01}
+                          value={li.unit_price}
+                          onChange={(e) =>
+                            setForm((p) => ({
+                              ...p,
+                              lineItems: p.lineItems.map((x) =>
+                                x.id === li.id ? { ...x, unit_price: Number.parseFloat(e.target.value) || 0 } : x,
+                              ),
+                            }))
+                          }
+                          style={inputStyle}
+                        />
+                      </td>
+                      <td style={{ padding: "10px 8px", fontWeight: 700 }}>${invoiceSubtotal([li]).toFixed(2)}</td>
+                      <td style={{ padding: "6px 8px" }}>
+                        <button
+                          type="button"
+                          onClick={() => setForm((p) => ({ ...p, lineItems: p.lineItems.filter((x) => x.id !== li.id) }))}
+                          style={{ background: "none", border: "none", color: "#b91c1c", cursor: "pointer", fontSize: 12 }}
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div
+            style={{
+              marginTop: 16,
+              padding: 14,
+              border: `1px solid ${theme.border}`,
+              borderRadius: 8,
+              background: "#f8fafc",
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 8,
+              alignItems: "end",
+            }}
+          >
+            <input placeholder="Description" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} style={{ ...inputStyle, flex: "1 1 160px" }} />
+            <input placeholder="Qty" value={newQty} onChange={(e) => setNewQty(e.target.value)} style={{ ...inputStyle, width: 72 }} />
+            <input placeholder="Unit $" value={newUnit} onChange={(e) => setNewUnit(e.target.value)} style={{ ...inputStyle, width: 96 }} />
+            <button
+              type="button"
+              onClick={() => {
+                const qty = Number.parseFloat(newQty) || 1
+                const unit = Number.parseFloat(newUnit) || 0
+                if (!newDesc.trim()) return
+                setForm((p) => ({
+                  ...p,
+                  lineItems: [...p.lineItems, { ...newInvoiceLine(), description: newDesc.trim(), quantity: qty, unit_price: unit }],
+                }))
+                setNewDesc("")
+                setNewQty("1")
+                setNewUnit("0")
+              }}
+              style={{ padding: "8px 12px", borderRadius: 6, border: "none", background: theme.primary, color: "#fff", fontWeight: 700, cursor: "pointer" }}
+            >
+              Add line item
+            </button>
+          </div>
+          <div style={{ marginTop: 12, fontWeight: 800, fontSize: 15 }}>Subtotal: ${subtotal.toFixed(2)}</div>
+        </div>
+      )
+    }
+
+    if (id === "job_details") {
+      return (
+        <details key={id} style={{ ...sectionBase, background: "#f8fafc" }}>
+          <summary style={summaryStyle}>Job details</summary>
+          <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ fontWeight: 600, display: "block", marginBottom: 4 }}>Leave note for customer to see</span>
+              <textarea
+                rows={3}
+                value={form.notes}
+                onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))}
+                style={{ ...inputStyle, resize: "vertical" }}
+              />
+            </label>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ fontWeight: 600, display: "block", marginBottom: 4 }}>Leave internal notes</span>
+              <textarea
+                rows={3}
+                value={form.internalNotes}
+                onChange={(e) => setForm((p) => ({ ...p, internalNotes: e.target.value }))}
+                style={{ ...inputStyle, resize: "vertical" }}
+              />
+            </label>
+          </div>
+        </details>
+      )
+    }
+
+    if (id === "description") {
+      return (
+        <details key={id} style={sectionBase}>
+          <summary style={summaryStyle}>Description</summary>
+          <div style={{ marginTop: 10 }}>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ fontWeight: 600, display: "block", marginBottom: 4 }}>Notes / job description</span>
+              <textarea
+                rows={3}
+                value={form.notes}
+                onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))}
+                placeholder={invoiceCustomDescriptionTemplate || undefined}
+                style={{ ...inputStyle, resize: "vertical" }}
+              />
+            </label>
+          </div>
+        </details>
+      )
+    }
+
+    if (id === "custom_fields") {
+      return (
+        <details key={id} style={sectionBase}>
+          <summary style={summaryStyle}>
+            Custom fields
+            <span style={{ fontWeight: 600, color: "#64748b", marginLeft: 8, fontSize: 13 }}>
+              {form.customFields.length}
+            </span>
+          </summary>
+          <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+            {form.customFields.map((cf) => (
+              <div key={cf.id} style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8, alignItems: "end" }}>
+                <label style={{ fontSize: 12, fontWeight: 600 }}>
+                  Label
+                  <input
+                    value={cf.label}
+                    onChange={(e) =>
+                      setForm((p) => ({
+                        ...p,
+                        customFields: p.customFields.map((x) => (x.id === cf.id ? { ...x, label: e.target.value } : x)),
+                      }))
+                    }
+                    style={{ ...inputStyle, marginTop: 4 }}
+                  />
+                </label>
+                <label style={{ fontSize: 12, fontWeight: 600 }}>
+                  Value
+                  <input
+                    value={cf.value}
+                    onChange={(e) =>
+                      setForm((p) => ({
+                        ...p,
+                        customFields: p.customFields.map((x) => (x.id === cf.id ? { ...x, value: e.target.value } : x)),
+                      }))
+                    }
+                    style={{ ...inputStyle, marginTop: 4 }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setForm((p) => ({ ...p, customFields: p.customFields.filter((x) => x.id !== cf.id) }))}
+                  style={{ ...secondaryBtn, padding: "8px 10px", color: "#b91c1c" }}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() =>
+                setForm((p) => ({
+                  ...p,
+                  customFields: [...p.customFields, { id: crypto.randomUUID(), label: "", value: "" }],
+                }))
+              }
+              style={secondaryBtn}
+            >
+              Add custom field
+            </button>
+          </div>
+        </details>
+      )
+    }
+
+    if (id === "photos") {
+      return (
+        <details key={id} style={sectionBase}>
+          <summary style={summaryStyle}>
+            Photos
+            <span style={{ fontWeight: 600, color: "#64748b", marginLeft: 8, fontSize: 13 }}>
+              {form.attachments.length} file{form.attachments.length === 1 ? "" : "s"}
+            </span>
+          </summary>
+          <div style={{ marginTop: 10 }}>
+            <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b" }}>
+              Photos and files up to 50 MB. Included on send when &ldquo;customer copy&rdquo; is checked.
+            </p>
+            <input
+              type="file"
+              multiple
+              accept={ENTITY_ATTACHMENT_ACCEPT}
+              disabled={uploadBusy}
+              onChange={(e) => void handleFileUpload(e.target.files)}
+              style={{ fontSize: 13 }}
+            />
+            {form.attachments.length > 0 ? (
+              <ul style={{ margin: "12px 0 0", padding: 0, listStyle: "none" }}>
+                {form.attachments.map((att) => (
+                  <li
+                    key={att.id}
+                    style={{
+                      marginBottom: 8,
+                      padding: 8,
+                      border: `1px solid ${theme.border}`,
+                      borderRadius: 8,
+                      display: "flex",
+                      gap: 10,
+                      alignItems: "center",
+                    }}
+                  >
+                    {isProbablyImageAttachment(att.content_type, att.public_url, att.file_name) ? (
+                      <img src={att.public_url} alt="" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 6 }} />
+                    ) : (
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          width: 48,
+                          height: 48,
+                          alignItems: "center",
+                          justifyContent: "center",
+                          background: "#f1f5f9",
+                          borderRadius: 6,
+                          fontWeight: 800,
+                          fontSize: 10,
+                        }}
+                      >
+                        {entityAttachmentDisplayLabel(att.content_type, att.file_name)}
+                      </span>
+                    )}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <a href={att.public_url} target="_blank" rel="noopener noreferrer" style={{ fontWeight: 600, fontSize: 13, color: theme.primary }}>
+                        {att.file_name || "File"}
+                      </a>
+                      <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, fontSize: 12 }}>
+                        <input
+                          type="checkbox"
+                          checked={att.attach_to_customer_copy}
+                          onChange={(e) =>
+                            setForm((p) => ({
+                              ...p,
+                              attachments: p.attachments.map((a) =>
+                                a.id === att.id ? { ...a, attach_to_customer_copy: e.target.checked } : a,
+                              ),
+                            }))
+                          }
+                        />
+                        Include on customer copy
+                      </label>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setForm((p) => ({ ...p, attachments: p.attachments.filter((a) => a.id !== att.id) }))}
+                      style={{ background: "none", border: "none", color: "#b91c1c", cursor: "pointer", fontSize: 12 }}
+                    >
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        </details>
+      )
+    }
+
+    if (id === "due_date") {
+      return (
+        <details key={id} style={sectionBase}>
+          <summary style={summaryStyle}>Due date</summary>
+          <div style={{ marginTop: 10 }}>
+            <label style={{ fontSize: 13 }}>
+              <span style={{ fontWeight: 600, display: "block", marginBottom: 4 }}>Due date</span>
+              <input type="date" value={form.dueDate} onChange={(e) => setForm((p) => ({ ...p, dueDate: e.target.value }))} style={inputStyle} />
+            </label>
+          </div>
+        </details>
+      )
+    }
+
+    return null
+  }
 
   return (
     <div style={{ display: "grid", gap: 16, maxWidth: 960 }}>
@@ -477,171 +915,20 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
             <span style={{ fontWeight: 600, display: "block", marginBottom: 4 }}>Invoice #</span>
             <input value={form.invoiceNumber} onChange={(e) => setForm((p) => ({ ...p, invoiceNumber: e.target.value }))} style={inputStyle} />
           </label>
-          <label style={{ fontSize: 13 }}>
-            <span style={{ fontWeight: 600, display: "block", marginBottom: 4 }}>Due date</span>
-            <input type="date" value={form.dueDate} onChange={(e) => setForm((p) => ({ ...p, dueDate: e.target.value }))} style={inputStyle} />
-          </label>
+          {invoiceTplIncludePreparedDate ? (
+            <label style={{ fontSize: 13 }}>
+              <span style={{ fontWeight: 600, display: "block", marginBottom: 4 }}>Date prepared</span>
+              <input type="date" value={form.invoiceDate} onChange={(e) => setForm((p) => ({ ...p, invoiceDate: e.target.value }))} style={inputStyle} />
+            </label>
+          ) : null}
         </div>
         <label style={{ fontSize: 13 }}>
           <span style={{ fontWeight: 600, display: "block", marginBottom: 4 }}>Job title</span>
           <input value={form.jobTitle} onChange={(e) => setForm((p) => ({ ...p, jobTitle: e.target.value }))} style={inputStyle} />
         </label>
-        <label style={{ fontSize: 13 }}>
-          <span style={{ fontWeight: 600, display: "block", marginBottom: 4 }}>Notes / job description</span>
-          <textarea rows={3} value={form.notes} onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))} style={{ ...inputStyle, resize: "vertical" }} />
-        </label>
       </div>
 
-      <div style={{ padding: 14, border: `1px solid ${theme.border}`, borderRadius: 10, background: "#fff" }}>
-        <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 14 }}>Line items</div>
-        {form.lineItems.length === 0 ? (
-          <p style={{ margin: "0 0 10px", fontSize: 13, color: "#64748b" }}>No lines yet — add below or load from an estimate.</p>
-        ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 12, fontSize: 13 }}>
-            <thead>
-              <tr style={{ borderBottom: "1px solid #e2e8f0", textAlign: "left" }}>
-                <th style={{ padding: "6px 4px" }}>Description</th>
-                <th style={{ padding: "6px 4px", width: 72 }}>Qty</th>
-                <th style={{ padding: "6px 4px", width: 96 }}>Unit $</th>
-                <th style={{ padding: "6px 4px", width: 88 }}>Total</th>
-                <th style={{ padding: "6px 4px", width: 56 }} />
-              </tr>
-            </thead>
-            <tbody>
-              {form.lineItems.map((li) => (
-                <tr key={li.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                  <td style={{ padding: "4px" }}>
-                    <input
-                      value={li.description}
-                      onChange={(e) =>
-                        setForm((p) => ({
-                          ...p,
-                          lineItems: p.lineItems.map((x) => (x.id === li.id ? { ...x, description: e.target.value } : x)),
-                        }))
-                      }
-                      style={inputStyle}
-                    />
-                  </td>
-                  <td style={{ padding: "4px" }}>
-                    <input
-                      type="number"
-                      min={0}
-                      step={0.01}
-                      value={li.quantity}
-                      onChange={(e) =>
-                        setForm((p) => ({
-                          ...p,
-                          lineItems: p.lineItems.map((x) =>
-                            x.id === li.id ? { ...x, quantity: Number.parseFloat(e.target.value) || 0 } : x,
-                          ),
-                        }))
-                      }
-                      style={inputStyle}
-                    />
-                  </td>
-                  <td style={{ padding: "4px" }}>
-                    <input
-                      type="number"
-                      min={0}
-                      step={0.01}
-                      value={li.unit_price}
-                      onChange={(e) =>
-                        setForm((p) => ({
-                          ...p,
-                          lineItems: p.lineItems.map((x) =>
-                            x.id === li.id ? { ...x, unit_price: Number.parseFloat(e.target.value) || 0 } : x,
-                          ),
-                        }))
-                      }
-                      style={inputStyle}
-                    />
-                  </td>
-                  <td style={{ padding: "4px", fontWeight: 700 }}>${invoiceSubtotal([li]).toFixed(2)}</td>
-                  <td style={{ padding: "4px" }}>
-                    <button
-                      type="button"
-                      onClick={() => setForm((p) => ({ ...p, lineItems: p.lineItems.filter((x) => x.id !== li.id) }))}
-                      style={{ background: "none", border: "none", color: "#b91c1c", cursor: "pointer", fontSize: 12 }}
-                    >
-                      Remove
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "end" }}>
-          <input placeholder="Description" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} style={{ ...inputStyle, flex: "1 1 160px" }} />
-          <input placeholder="Qty" value={newQty} onChange={(e) => setNewQty(e.target.value)} style={{ ...inputStyle, width: 72 }} />
-          <input placeholder="Unit $" value={newUnit} onChange={(e) => setNewUnit(e.target.value)} style={{ ...inputStyle, width: 96 }} />
-          <button
-            type="button"
-            onClick={() => {
-              const qty = Number.parseFloat(newQty) || 1
-              const unit = Number.parseFloat(newUnit) || 0
-              if (!newDesc.trim()) return
-              setForm((p) => ({
-                ...p,
-                lineItems: [...p.lineItems, { ...newInvoiceLine(), description: newDesc.trim(), quantity: qty, unit_price: unit }],
-              }))
-              setNewDesc("")
-              setNewQty("1")
-              setNewUnit("0")
-            }}
-            style={{ padding: "8px 12px", borderRadius: 6, border: "none", background: theme.primary, color: "#fff", fontWeight: 700, cursor: "pointer" }}
-          >
-            Add line
-          </button>
-        </div>
-        <div style={{ marginTop: 12, fontWeight: 800, fontSize: 15 }}>Subtotal: ${subtotal.toFixed(2)}</div>
-      </div>
-
-      <div style={{ padding: 14, border: `1px solid ${theme.border}`, borderRadius: 10, background: "#fff" }}>
-        <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 14 }}>Photos</div>
-        <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b" }}>Photos and files up to 50 MB. Included on send when &ldquo;customer copy&rdquo; is checked.</p>
-        <input type="file" multiple accept={ENTITY_ATTACHMENT_ACCEPT} disabled={uploadBusy} onChange={(e) => void handleFileUpload(e.target.files)} style={{ fontSize: 13 }} />
-        {form.attachments.length > 0 ? (
-          <ul style={{ margin: "12px 0 0", padding: 0, listStyle: "none" }}>
-            {form.attachments.map((att) => (
-              <li key={att.id} style={{ marginBottom: 8, padding: 8, border: `1px solid ${theme.border}`, borderRadius: 8, display: "flex", gap: 10, alignItems: "center" }}>
-                {isProbablyImageAttachment(att.content_type, att.public_url, att.file_name) ? (
-                  <img src={att.public_url} alt="" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 6 }} />
-                ) : (
-                  <span style={{ display: "inline-flex", width: 48, height: 48, alignItems: "center", justifyContent: "center", background: "#f1f5f9", borderRadius: 6, fontWeight: 800, fontSize: 10 }}>
-                    {entityAttachmentDisplayLabel(att.content_type, att.file_name)}
-                  </span>
-                )}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <a href={att.public_url} target="_blank" rel="noopener noreferrer" style={{ fontWeight: 600, fontSize: 13, color: theme.primary }}>
-                    {att.file_name || "File"}
-                  </a>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, fontSize: 12 }}>
-                    <input
-                      type="checkbox"
-                      checked={att.attach_to_customer_copy}
-                      onChange={(e) =>
-                        setForm((p) => ({
-                          ...p,
-                          attachments: p.attachments.map((a) => (a.id === att.id ? { ...a, attach_to_customer_copy: e.target.checked } : a)),
-                        }))
-                      }
-                    />
-                    Include on customer copy
-                  </label>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setForm((p) => ({ ...p, attachments: p.attachments.filter((a) => a.id !== att.id) }))}
-                  style={{ background: "none", border: "none", color: "#b91c1c", cursor: "pointer", fontSize: 12 }}
-                >
-                  Remove
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </div>
+      <div style={{ display: "grid", gap: 12 }}>{visibleSectionOrder.map((id) => renderInvoiceSection(id))}</div>
 
       <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
         <input type="checkbox" checked={includePaymentLink} onChange={(e) => setIncludePaymentLink(e.target.checked)} />
@@ -717,129 +1004,134 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
               </button>
             </div>
 
-            <div style={{ display: "grid", gap: 8, padding: 12, borderRadius: 8, border: `1px solid ${theme.border}`, background: "#f8fafc" }}>
-              <div style={{ fontWeight: 800, fontSize: 13 }}>Invoice numbering</div>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600 }}>
-                <input
-                  type="checkbox"
-                  checked={invoiceNumberEnabled}
-                  onChange={(e) => setInvoiceNumberEnabled(e.target.checked)}
-                />
-                Apply custom numbering on invoices
-              </label>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
-                  Prefix
-                  <input value={invoiceNumberPrefix} onChange={(e) => setInvoiceNumberPrefix(e.target.value.slice(0, 24))} style={inputStyle} />
+            <details style={{ border: `1px solid ${theme.border}`, borderRadius: 8, background: "#f8fafc", padding: "10px 12px" }}>
+              <summary style={{ ...summaryStyle, fontSize: 13 }}>Invoice numbering</summary>
+              <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600 }}>
+                  <input
+                    type="checkbox"
+                    checked={invoiceNumberEnabled}
+                    onChange={(e) => setInvoiceNumberEnabled(e.target.checked)}
+                  />
+                  Apply custom numbering on invoices
                 </label>
-                <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
-                  Digits
-                  <select value={invoiceNumberDigits} onChange={(e) => setInvoiceNumberDigits(e.target.value)} style={inputStyle}>
-                    {DOCUMENT_NUMBER_DIGIT_OPTIONS.map((d) => (
-                      <option key={d} value={String(d)}>
-                        {d} digits
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <p style={{ margin: 0, fontSize: 12, color: "#475569" }}>
-                Preview:{" "}
-                <strong>
-                  {formatDocumentNumber({
-                    format: buildDocumentNumberFormat(invoiceNumberPrefix.trim() || "INV", clampDocumentNumberDigits(invoiceNumberDigits, 4)),
-                    prefix: invoiceNumberPrefix.trim() || "INV",
-                    sequenceDigits: clampDocumentNumberDigits(invoiceNumberDigits, 4),
-                    nextSequence: 1,
-                  })}
-                </strong>
-              </p>
-            </div>
-
-            <div style={{ display: "grid", gap: 8, padding: 12, borderRadius: 8, border: `1px solid ${theme.border}` }}>
-              <div style={{ fontWeight: 800, fontSize: 13 }}>Fields on invoices</div>
-              <label style={{ display: "flex", gap: 8, fontSize: 13 }}>
-                <input type="checkbox" checked={invoiceTplIncludePreparedDate} onChange={(e) => setInvoiceTplIncludePreparedDate(e.target.checked)} />
-                Date prepared
-              </label>
-              <label style={{ display: "flex", gap: 8, fontSize: 13 }}>
-                <input type="checkbox" checked={invoiceTplIncludeDueDate} onChange={(e) => setInvoiceTplIncludeDueDate(e.target.checked)} />
-                Due date
-              </label>
-              {invoiceTplIncludeDueDate ? (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginLeft: 24 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                   <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
-                    Standard interval
-                    <select
-                      value={invoiceDueIntervalUnit}
-                      onChange={(e) => setInvoiceDueIntervalUnit(e.target.value as "days" | "weeks" | "months")}
-                      style={inputStyle}
-                    >
-                      <option value="days">Days</option>
-                      <option value="weeks">Weeks</option>
-                      <option value="months">Months</option>
+                    Prefix
+                    <input value={invoiceNumberPrefix} onChange={(e) => setInvoiceNumberPrefix(e.target.value.slice(0, 24))} style={inputStyle} />
+                  </label>
+                  <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+                    Digits
+                    <select value={invoiceNumberDigits} onChange={(e) => setInvoiceNumberDigits(e.target.value)} style={inputStyle}>
+                      {DOCUMENT_NUMBER_DIGIT_OPTIONS.map((d) => (
+                        <option key={d} value={String(d)}>
+                          {d} digits
+                        </option>
+                      ))}
                     </select>
                   </label>
-                  <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
-                    Value
-                    <input
-                      value={invoiceDueIntervalValue}
-                      onChange={(e) => setInvoiceDueIntervalValue(e.target.value.replace(/[^\d]/g, "").slice(0, 3))}
-                      style={inputStyle}
-                    />
-                  </label>
                 </div>
-              ) : null}
-              <label style={{ display: "flex", gap: 8, fontSize: 13 }}>
-                <input type="checkbox" checked={invoiceTplIncludePhotos} onChange={(e) => setInvoiceTplIncludePhotos(e.target.checked)} />
-                Photos
-              </label>
-              <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
-                Custom description template
-                <textarea
-                  rows={3}
-                  value={invoiceCustomDescriptionTemplate}
-                  onChange={(e) => setInvoiceCustomDescriptionTemplate(e.target.value)}
-                  placeholder="Optional default notes block for new invoices"
-                  style={{ ...inputStyle, resize: "vertical" }}
-                />
-              </label>
-            </div>
+                <p style={{ margin: 0, fontSize: 12, color: "#475569" }}>
+                  Preview:{" "}
+                  <strong>
+                    {formatDocumentNumber({
+                      format: buildDocumentNumberFormat(invoiceNumberPrefix.trim() || "INV", clampDocumentNumberDigits(invoiceNumberDigits, 4)),
+                      prefix: invoiceNumberPrefix.trim() || "INV",
+                      sequenceDigits: clampDocumentNumberDigits(invoiceNumberDigits, 4),
+                      nextSequence: 1,
+                    })}
+                  </strong>
+                </p>
+              </div>
+            </details>
 
-            <div style={{ display: "grid", gap: 8, padding: 12, borderRadius: 8, border: `1px solid ${theme.border}` }}>
-              <div style={{ fontWeight: 800, fontSize: 13 }}>Section order</div>
-              <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>Drag to set top-to-bottom order for enabled sections.</p>
-              {invoiceSectionOrder
-                .filter((id) => {
-                  if (id === "photos") return invoiceTplIncludePhotos
-                  if (id === "due_date") return invoiceTplIncludeDueDate
-                  return true
-                })
-                .map((id, idx, arr) => (
-                  <AdminSortableRow
-                    key={id}
-                    scope="invoice-section-order"
-                    index={idx}
-                    onReorder={(from, to) => {
-                      const visible = arr
-                      const nextVisible = reorderByIndex(visible, from, to)
-                      const hidden = invoiceSectionOrder.filter((x) => !visible.includes(x))
-                      setInvoiceSectionOrder([...nextVisible, ...hidden])
-                    }}
-                    rowStyle={{ padding: "8px 10px", borderRadius: 8, border: `1px solid ${theme.border}`, background: "#fff" }}
-                  >
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>
-                      {id === "description"
-                        ? "Description"
-                        : id === "line_items"
-                          ? "Line items"
-                          : id === "photos"
-                            ? "Photos"
-                            : "Due date"}
-                    </span>
-                  </AdminSortableRow>
-                ))}
-            </div>
+            <details style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: "10px 12px" }}>
+              <summary style={{ ...summaryStyle, fontSize: 13 }}>Fields on invoices</summary>
+              <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+                <label style={{ display: "flex", gap: 8, fontSize: 13 }}>
+                  <input type="checkbox" checked={invoiceTplIncludePreparedDate} onChange={(e) => setInvoiceTplIncludePreparedDate(e.target.checked)} />
+                  Date prepared
+                </label>
+                <label style={{ display: "flex", gap: 8, fontSize: 13 }}>
+                  <input type="checkbox" checked={invoiceTplIncludeDueDate} onChange={(e) => setInvoiceTplIncludeDueDate(e.target.checked)} />
+                  Due date
+                </label>
+                {invoiceTplIncludeDueDate ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginLeft: 24 }}>
+                    <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+                      Standard interval
+                      <select
+                        value={invoiceDueIntervalUnit}
+                        onChange={(e) => setInvoiceDueIntervalUnit(e.target.value as "days" | "weeks" | "months")}
+                        style={inputStyle}
+                      >
+                        <option value="days">Days</option>
+                        <option value="weeks">Weeks</option>
+                        <option value="months">Months</option>
+                      </select>
+                    </label>
+                    <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+                      Value
+                      <input
+                        value={invoiceDueIntervalValue}
+                        onChange={(e) => setInvoiceDueIntervalValue(e.target.value.replace(/[^\d]/g, "").slice(0, 3))}
+                        style={inputStyle}
+                      />
+                    </label>
+                  </div>
+                ) : null}
+                <label style={{ display: "flex", gap: 8, fontSize: 13 }}>
+                  <input type="checkbox" checked={invoiceTplIncludeJobDetails} onChange={(e) => setInvoiceTplIncludeJobDetails(e.target.checked)} />
+                  Job details
+                </label>
+                <label style={{ display: "flex", gap: 8, fontSize: 13 }}>
+                  <input type="checkbox" checked={invoiceTplIncludeDescription} onChange={(e) => setInvoiceTplIncludeDescription(e.target.checked)} />
+                  Description
+                </label>
+                <label style={{ display: "flex", gap: 8, fontSize: 13 }}>
+                  <input type="checkbox" checked={invoiceTplIncludeCustomFields} onChange={(e) => setInvoiceTplIncludeCustomFields(e.target.checked)} />
+                  Custom fields
+                </label>
+                <label style={{ display: "flex", gap: 8, fontSize: 13 }}>
+                  <input type="checkbox" checked={invoiceTplIncludePhotos} onChange={(e) => setInvoiceTplIncludePhotos(e.target.checked)} />
+                  Photos
+                </label>
+                <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+                  Custom description template
+                  <textarea
+                    rows={3}
+                    value={invoiceCustomDescriptionTemplate}
+                    onChange={(e) => setInvoiceCustomDescriptionTemplate(e.target.value)}
+                    placeholder="Optional default notes block for new invoices"
+                    style={{ ...inputStyle, resize: "vertical" }}
+                  />
+                </label>
+              </div>
+            </details>
+
+            <details style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: "10px 12px" }}>
+              <summary style={{ ...summaryStyle, fontSize: 13 }}>Section order</summary>
+              <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+                {invoiceSectionOrder
+                  .filter(sectionEnabled)
+                  .map((id, idx, arr) => (
+                    <AdminSortableRow
+                      key={id}
+                      scope="invoice-section-order"
+                      index={idx}
+                      onReorder={(from, to) => {
+                        const visible = arr
+                        const nextVisible = reorderByIndex(visible, from, to)
+                        const hidden = invoiceSectionOrder.filter((x) => !visible.includes(x))
+                        setInvoiceSectionOrder(mergeInvoiceSectionOrder([...nextVisible, ...hidden]))
+                      }}
+                      rowStyle={{ padding: "8px 10px", borderRadius: 8, border: `1px solid ${theme.border}`, background: "#fff" }}
+                    >
+                      <span style={{ fontSize: 13, fontWeight: 600 }}>{sectionLabel(id)}</span>
+                    </AdminSortableRow>
+                  ))}
+              </div>
+            </details>
 
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <button type="button" onClick={() => setShowInvoiceSettings(false)} style={secondaryBtn}>
@@ -864,6 +1156,9 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
                     next.invoice_template_include_prepared_date = invoiceTplIncludePreparedDate
                     next.invoice_template_include_due_date = invoiceTplIncludeDueDate
                     next.invoice_template_include_photos = invoiceTplIncludePhotos
+                    next.invoice_template_include_job_details = invoiceTplIncludeJobDetails
+                    next.invoice_template_include_custom_fields = invoiceTplIncludeCustomFields
+                    next.invoice_template_include_description = invoiceTplIncludeDescription
                     next.invoice_template_due_interval_unit = invoiceDueIntervalUnit
                     next.invoice_template_due_interval_value = Math.max(1, parseInt(invoiceDueIntervalValue || "1", 10) || 1)
                     next.invoice_template_section_order = invoiceSectionOrder

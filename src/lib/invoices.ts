@@ -24,6 +24,12 @@ export type InvoiceAttachment = {
   note?: string
 }
 
+export type InvoiceCustomField = {
+  id: string
+  label: string
+  value: string
+}
+
 export type InvoiceRecord = {
   id: string
   invoice_number: string
@@ -36,10 +42,13 @@ export type InvoiceRecord = {
   customer_address: string
   job_title: string
   notes: string
+  /** Staff-only notes (not on customer PDF by default). */
+  internal_notes?: string
   invoice_date: string
   due_date: string
   line_items: InvoiceLineItem[]
   attachments: InvoiceAttachment[]
+  custom_fields?: InvoiceCustomField[]
   payment_request_id: string | null
   status: "draft" | "sent" | "paid"
   created_at: string
@@ -66,10 +75,12 @@ export type InvoiceFormState = {
   customerAddress: string
   jobTitle: string
   notes: string
+  internalNotes: string
   invoiceDate: string
   dueDate: string
   lineItems: InvoiceLineItem[]
   attachments: InvoiceAttachment[]
+  customFields: InvoiceCustomField[]
   paymentRequestId: string
   status: InvoiceRecord["status"]
 }
@@ -145,6 +156,17 @@ export function parseInvoices(raw: unknown): InvoiceRecord[] {
         })
       }
     }
+    const custom_fields: InvoiceCustomField[] = []
+    if (Array.isArray(row.custom_fields)) {
+      for (const cf of row.custom_fields) {
+        if (!isRecord(cf)) continue
+        custom_fields.push({
+          id: typeof cf.id === "string" ? cf.id : crypto.randomUUID(),
+          label: typeof cf.label === "string" ? cf.label : "",
+          value: typeof cf.value === "string" ? cf.value : "",
+        })
+      }
+    }
     out.push({
       id: row.id,
       invoice_number: typeof row.invoice_number === "string" ? row.invoice_number : generateInvoiceNumber(),
@@ -157,10 +179,12 @@ export function parseInvoices(raw: unknown): InvoiceRecord[] {
       customer_address: typeof row.customer_address === "string" ? row.customer_address : "",
       job_title: typeof row.job_title === "string" ? row.job_title : "",
       notes: typeof row.notes === "string" ? row.notes : "",
+      internal_notes: typeof row.internal_notes === "string" ? row.internal_notes : "",
       invoice_date: typeof row.invoice_date === "string" ? row.invoice_date : new Date().toISOString().slice(0, 10),
       due_date: typeof row.due_date === "string" ? row.due_date : "",
       line_items: items,
       attachments,
+      custom_fields,
       payment_request_id: typeof row.payment_request_id === "string" ? row.payment_request_id : null,
       status: row.status === "sent" || row.status === "paid" ? row.status : "draft",
       created_at: typeof row.created_at === "string" ? row.created_at : new Date().toISOString(),
@@ -225,10 +249,12 @@ export function defaultInvoiceFormState(): InvoiceFormState {
     customerAddress: "",
     jobTitle: "",
     notes: "",
+    internalNotes: "",
     invoiceDate,
     dueDate,
     lineItems: [],
     attachments: [],
+    customFields: [],
     paymentRequestId: "",
     status: "draft",
   }
@@ -246,10 +272,12 @@ export function invoiceRecordToFormState(record: InvoiceRecord): InvoiceFormStat
     customerAddress: record.customer_address,
     jobTitle: record.job_title,
     notes: record.notes,
+    internalNotes: record.internal_notes ?? "",
     invoiceDate: record.invoice_date,
     dueDate: record.due_date,
     lineItems: record.line_items.map((li) => ({ ...li })),
     attachments: record.attachments.map((a) => ({ ...a })),
+    customFields: (record.custom_fields ?? []).map((c) => ({ ...c })),
     paymentRequestId: record.payment_request_id ?? "",
     status: record.status,
   }
@@ -269,10 +297,12 @@ export function formStateToInvoiceRecord(form: InvoiceFormState, existing?: Invo
     customer_address: form.customerAddress.trim(),
     job_title: form.jobTitle.trim(),
     notes: form.notes.trim(),
+    internal_notes: form.internalNotes.trim(),
     invoice_date: form.invoiceDate.trim() || now.slice(0, 10),
     due_date: form.dueDate.trim(),
     line_items: form.lineItems.map((li) => ({ ...li })),
     attachments: form.attachments.map((a) => ({ ...a })),
+    custom_fields: form.customFields.map((c) => ({ ...c })),
     payment_request_id: form.paymentRequestId.trim() || null,
     status: form.status,
     created_at: existing?.created_at ?? now,

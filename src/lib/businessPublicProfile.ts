@@ -243,6 +243,15 @@ export const WEBSITE_FONT_SIZE_OPTIONS = ["12px", "14px", "16px", "18px", "22px"
 /** Freeform placement is authored at this width; render scales to the live container. */
 export const WEBSITE_FREEFORM_DESIGN_WIDTH = 1200
 
+/**
+ * Map container CSS px → design-space scale for offsets/sizes.
+ * Never exceeds 1: wide viewports keep a 1200px design rail (builder / pop-out / live match).
+ */
+export function websiteDesignScale(containerWidthPx: number): number {
+  const w = Number.isFinite(containerWidthPx) ? containerWidthPx : WEBSITE_FREEFORM_DESIGN_WIDTH
+  return Math.max(0.2, Math.min(1, w / WEBSITE_FREEFORM_DESIGN_WIDTH))
+}
+
 /** Shared drag/save clamps (design-space px). Keep editor + parser in sync. */
 export const WEBSITE_OFFSET_MIN_X = -1400
 export const WEBSITE_OFFSET_MAX_X = 1400
@@ -560,7 +569,7 @@ export function parseWebsiteTextStyles(raw: unknown): WebsiteTextStyles {
     if (typeof o.maxWidth === "number" && Number.isFinite(o.maxWidth)) style.maxWidth = Math.max(80, Math.min(1200, Math.round(o.maxWidth)))
     if (isWebsiteBuiltInLinkTarget(o.linkTarget) && o.linkTarget !== "none") style.linkTarget = o.linkTarget
     if (typeof o.imageSize === "number" && Number.isFinite(o.imageSize)) {
-      style.imageSize = Math.max(32, Math.min(640, Math.round(o.imageSize)))
+      style.imageSize = Math.max(32, Math.min(1200, Math.round(o.imageSize)))
     }
     if (typeof o.tintColor === "string" && HEX_COLOR_RE.test(o.tintColor.trim())) {
       style.tintColor = o.tintColor.trim().toLowerCase()

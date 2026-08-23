@@ -23,6 +23,7 @@ import type {
 import {
   DEFAULT_BUSINESS_PROFILE_THEME,
   WEBSITE_FREEFORM_DESIGN_WIDTH,
+  websiteDesignScale,
   clampWebsiteOffsetX,
   clampWebsiteOffsetY,
   defaultWebsiteFeatureCards,
@@ -795,9 +796,13 @@ function CanvasEditable({
     const startX = e.clientX
     const startW = el?.getBoundingClientRect().width ?? 200
     const onMove = (ev: PointerEvent) => {
-      const wScreen = Math.max(80 * scale, Math.round(startW + (ev.clientX - startX)))
-      if (el) el.style.maxWidth = `${wScreen}px`
-      ;(e.currentTarget as HTMLElement).dataset.resizeW = String(Math.round(wScreen / scale))
+      const wDesign = Math.max(80, Math.round((startW + (ev.clientX - startX)) / scale))
+      if (el) {
+        el.style.width = `${wDesign * scale}px`
+        el.style.maxWidth = `${wDesign * scale}px`
+        el.style.minWidth = `${Math.min(80 * scale, wDesign * scale)}px`
+      }
+      ;(e.currentTarget as HTMLElement).dataset.resizeW = String(wDesign)
     }
     const onUp = () => {
       window.removeEventListener("pointermove", onMove)
@@ -880,7 +885,7 @@ function FreeformCanvasLayer({
     ro.observe(el)
     return () => ro.disconnect()
   }, [items.length, pinnedOnly])
-  const scale = layerWidth / WEBSITE_FREEFORM_DESIGN_WIDTH
+  const scale = websiteDesignScale(layerWidth)
   const filtered = items.filter((item) => {
     const pinned = Boolean(textStyles[`canvas.${item.id}`]?.scrollFixed)
     return pinnedOnly ? pinned : !pinned
@@ -1244,7 +1249,7 @@ function ShowcaseLayout({
     if (!root || typeof ResizeObserver === "undefined") return
     const apply = () => {
       const w = Math.max(320, Math.round(root.clientWidth || WEBSITE_FREEFORM_DESIGN_WIDTH))
-      setDesignScale(w / WEBSITE_FREEFORM_DESIGN_WIDTH)
+      setDesignScale(websiteDesignScale(w))
     }
     apply()
     const ro = new ResizeObserver(apply)
@@ -1256,7 +1261,9 @@ function ShowcaseLayout({
     const st = textStyles[id]
     const css = styleFor(id)
     // CanvasEditable owns transform from offsetX/Y + designScale — strip any leftover transform.
-    const { transform: _t, ...cssSansTransform } = css
+    const { transform: _t, maxWidth: _mw, ...cssSansTransform } = css
+    const designW = typeof st?.maxWidth === "number" ? st.maxWidth : undefined
+    const screenW = designW != null ? designW * (designScale > 0 ? designScale : 1) : undefined
     return {
       editMode,
       selectedTargetId: editor?.selectedTargetId,
@@ -1266,8 +1273,17 @@ function ShowcaseLayout({
       enableMoveResize: editMode,
       offsetX: st?.offsetX ?? 0,
       offsetY: st?.offsetY ?? 0,
-      positionScale: Math.min(1, designScale > 0 ? designScale : 1),
-      style: cssSansTransform,
+      positionScale: designScale > 0 ? designScale : 1,
+      style: {
+        ...cssSansTransform,
+        ...(screenW != null
+          ? {
+              width: screenW,
+              maxWidth: screenW,
+              boxSizing: "border-box" as const,
+            }
+          : null),
+      },
     }
   }
   const typographyOnly = (id: string): CSSProperties => {
@@ -1330,8 +1346,10 @@ function ShowcaseLayout({
     const root = shellRef.current
     if (!root) return
     const rect = root.getBoundingClientRect()
-    const scale = Math.min(1, Math.max(0.2, rect.width / WEBSITE_FREEFORM_DESIGN_WIDTH))
-    const localX = e.clientX - rect.left - rect.width / 2
+    const scale = websiteDesignScale(rect.width)
+    const railW = Math.min(rect.width, WEBSITE_FREEFORM_DESIGN_WIDTH)
+    const railLeft = rect.left + (rect.width - railW) / 2
+    const localX = e.clientX - railLeft - railW / 2
     const localY = e.clientY - rect.top - 140 * scale
     editor.onCreatePhotoAtDrop(
       dropUrl.trim(),
@@ -2265,6 +2283,10 @@ export function BusinessProfilePublicSite({
           position: absolute;
           left: 0;
           right: 0;
+          width: 100%;
+          max-width: 1200px;
+          margin-left: auto;
+          margin-right: auto;
           top: 0;
           bottom: 0;
           pointer-events: none;
@@ -2273,7 +2295,14 @@ export function BusinessProfilePublicSite({
         /* Keep items clickable; empty canvas stays pass-through so page fields remain draggable. */
         .bp-freeform-layer-pinned {
           position: fixed;
-          inset: 0;
+          left: 0;
+          right: 0;
+          top: 0;
+          bottom: 0;
+          width: 100%;
+          max-width: 1200px;
+          margin-left: auto;
+          margin-right: auto;
           z-index: 45;
           pointer-events: none;
         }
