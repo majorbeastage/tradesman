@@ -24,6 +24,7 @@ import {
   WEBSITE_BUILDER_PREVIEW_STORAGE_KEY,
   WEBSITE_FONT_OPTIONS,
   WEBSITE_FONT_SIZE_OPTIONS,
+  WEBSITE_FREEFORM_DESIGN_WIDTH,
   WEBSITE_HOME_SECTION_OPTIONS,
   WEBSITE_SOCIAL_PLATFORM_OPTIONS,
   businessWebProfilePublicUrl,
@@ -708,22 +709,34 @@ export default function WebsiteBuilderPage() {
     setMessage("Text field added — drag it on the page, edit copy in the panel above.")
   }
 
-  function addPhotoField() {
+  function addPhotoFieldAt(imageUrl: string | null, offsetX: number, offsetY: number) {
     const id = `p_${Date.now().toString(36)}`
     const targetId = `canvas.${id}`
-    const stack = settings.canvasItems.length
     setSettings((s) => ({
       ...s,
-      canvasItems: [...s.canvasItems, { id, kind: "photo" as const, imageUrl: null }].slice(0, 24),
+      canvasItems: [
+        ...s.canvasItems,
+        { id, kind: "photo" as const, imageUrl: imageUrl?.trim() || null },
+      ].slice(0, 24),
       textStyles: patchWebsiteTextStyle(s.textStyles, targetId, {
-        offsetX: 40 + (stack % 3) * 24,
-        offsetY: 60 + stack * 28,
+        offsetX,
+        offsetY,
         maxWidth: 200,
         imageSize: 150,
       }),
     }))
     setSelectedTargetId(targetId)
-    setMessage("Photo field added — drag a tray photo onto it, then move/resize on the page.")
+    setMessage(imageUrl ? "Photo added on the page — drag to reposition." : "Photo field added — drop a tray photo onto it.")
+  }
+
+  function addPhotoField() {
+    const stack = settings.canvasItems.length
+    addPhotoFieldAt(null, 40 + (stack % 3) * 24, 60 + stack * 28)
+  }
+
+  function onCreatePhotoAtDrop(imageUrl: string, offsetX: number, offsetY: number) {
+    addPhotoFieldAt(imageUrl, offsetX, offsetY)
+    setContextMenu(null)
   }
 
   function removeCanvasItem(itemId: string) {
@@ -924,7 +937,7 @@ export default function WebsiteBuilderPage() {
     return <p style={{ margin: 24, color: "#64748b" }}>Loading website builder…</p>
   }
 
-  const previewWidth = previewDevice === "mobile" ? 390 : "100%"
+  const previewWidth = previewDevice === "mobile" ? 390 : WEBSITE_FREEFORM_DESIGN_WIDTH
 
   return (
     <div className="wb-root">
@@ -2059,7 +2072,7 @@ export default function WebsiteBuilderPage() {
         </details>
 
         <details style={sectionCard}>
-          <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 900, color: EDITOR_INK }}>Section order (drag)</summary>
+          <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 900, color: EDITOR_INK }}>Section order</summary>
           <div style={{ display: "grid", gap: 6 }}>
             {settings.homeSectionOrder.map((id) => {
               const opt = WEBSITE_HOME_SECTION_OPTIONS.find((o) => o.id === id)
@@ -2071,6 +2084,16 @@ export default function WebsiteBuilderPage() {
                   onDragStart={(e) => onSectionListDragStart(id, e)}
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={(e) => onSectionListDrop(id, e)}
+                  onClick={() => {
+                    const targetId = `section.${id}`
+                    setSelectedTargetId(targetId)
+                    setContextMenu(null)
+                    requestAnimationFrame(() => {
+                      const el = document.querySelector(`[data-edit-target="${targetId}"]`) as HTMLElement | null
+                      el?.scrollIntoView({ behavior: "smooth", block: "center" })
+                    })
+                    setMessage(`Selected ${opt?.label ?? id} — use the inspector options above for this section.`)
+                  }}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -2080,7 +2103,7 @@ export default function WebsiteBuilderPage() {
                     border: `1px solid ${theme.border}`,
                     background: on ? "#fff" : "#f1f5f9",
                     color: EDITOR_INK,
-                    cursor: "grab",
+                    cursor: "pointer",
                     opacity: on ? 1 : 0.65,
                   }}
                 >
@@ -2446,6 +2469,7 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                 onTargetContextMenu,
                 onDropImageOnSlot,
                 onDropImageOnCanvasItem,
+                onCreatePhotoAtDrop,
                 onPatchTextStyle: patchTextStyle,
               }}
             />
@@ -2461,13 +2485,15 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
               left: contextMenu.x,
               top: contextMenu.y,
               zIndex: 80,
-              minWidth: 200,
+              minWidth: 168,
+              maxWidth: 240,
               background: "#ffffff",
-              border: "1px solid #cbd5e1",
-              borderRadius: 10,
-              boxShadow: "0 12px 40px rgba(15,23,42,0.25)",
-              padding: 6,
+              border: "1px solid #94a3b8",
+              borderRadius: 6,
+              boxShadow: "0 8px 24px rgba(15,23,42,0.18)",
+              padding: 4,
               color: "#0f172a",
+              fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
             }}
             onClick={(e) => e.stopPropagation()}
             onPointerDown={(e) => e.stopPropagation()}
@@ -2478,11 +2504,13 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                 display: "block",
                 width: "100%",
                 textAlign: "left",
-                padding: "8px 10px",
+                padding: "6px 10px",
                 border: "none",
                 background: "transparent",
-                borderRadius: 6,
-                fontWeight: 700,
+                borderRadius: 4,
+                fontWeight: 650,
+                fontSize: 12.5,
+                lineHeight: 1.35,
                 cursor: "pointer",
                 color: "#0f172a",
               }}
@@ -2502,11 +2530,13 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                     display: "block",
                     width: "100%",
                     textAlign: "left",
-                    padding: "8px 10px",
+                    padding: "6px 10px",
                     border: "none",
                     background: "transparent",
-                    borderRadius: 6,
-                    fontWeight: 700,
+                    borderRadius: 4,
+                    fontWeight: 650,
+                    fontSize: 12.5,
+                    lineHeight: 1.35,
                     cursor: "pointer",
                     color: "#0f172a",
                   }}
@@ -2527,11 +2557,13 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                     display: "block",
                     width: "100%",
                     textAlign: "left",
-                    padding: "8px 10px",
+                    padding: "6px 10px",
                     border: "none",
                     background: "transparent",
-                    borderRadius: 6,
-                    fontWeight: 700,
+                    borderRadius: 4,
+                    fontWeight: 650,
+                    fontSize: 12.5,
+                    lineHeight: 1.35,
                     cursor: "pointer",
                     color: "#0f172a",
                   }}
@@ -2552,11 +2584,13 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                     display: "block",
                     width: "100%",
                     textAlign: "left",
-                    padding: "8px 10px",
+                    padding: "6px 10px",
                     border: "none",
                     background: "transparent",
-                    borderRadius: 6,
-                    fontWeight: 700,
+                    borderRadius: 4,
+                    fontWeight: 650,
+                    fontSize: 12.5,
+                    lineHeight: 1.35,
                     cursor: "pointer",
                     color: "#0f172a",
                   }}
@@ -2573,11 +2607,13 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                     display: "block",
                     width: "100%",
                     textAlign: "left",
-                    padding: "8px 10px",
+                    padding: "6px 10px",
                     border: "none",
                     background: "transparent",
-                    borderRadius: 6,
-                    fontWeight: 700,
+                    borderRadius: 4,
+                    fontWeight: 650,
+                    fontSize: 12.5,
+                    lineHeight: 1.35,
                     cursor: "pointer",
                     color: "#0f172a",
                   }}
@@ -2602,11 +2638,13 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                     display: "block",
                     width: "100%",
                     textAlign: "left",
-                    padding: "8px 10px",
+                    padding: "6px 10px",
                     border: "none",
                     background: "transparent",
-                    borderRadius: 6,
-                    fontWeight: 700,
+                    borderRadius: 4,
+                    fontWeight: 650,
+                    fontSize: 12.5,
+                    lineHeight: 1.35,
                     cursor: "pointer",
                     color: "#0f172a",
                   }}
@@ -2628,11 +2666,13 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                     display: "block",
                     width: "100%",
                     textAlign: "left",
-                    padding: "8px 10px",
+                    padding: "6px 10px",
                     border: "none",
                     background: "transparent",
-                    borderRadius: 6,
-                    fontWeight: 700,
+                    borderRadius: 4,
+                    fontWeight: 650,
+                    fontSize: 12.5,
+                    lineHeight: 1.35,
                     cursor: "pointer",
                     color: "#0f172a",
                   }}
@@ -2651,11 +2691,13 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                     display: "block",
                     width: "100%",
                     textAlign: "left",
-                    padding: "8px 10px",
+                    padding: "6px 10px",
                     border: "none",
                     background: "transparent",
-                    borderRadius: 6,
-                    fontWeight: 700,
+                    borderRadius: 4,
+                    fontWeight: 650,
+                    fontSize: 12.5,
+                    lineHeight: 1.35,
                     cursor: "pointer",
                     color: "#0f172a",
                   }}
@@ -2674,11 +2716,13 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                     display: "block",
                     width: "100%",
                     textAlign: "left",
-                    padding: "8px 10px",
+                    padding: "6px 10px",
                     border: "none",
                     background: "transparent",
-                    borderRadius: 6,
-                    fontWeight: 700,
+                    borderRadius: 4,
+                    fontWeight: 650,
+                    fontSize: 12.5,
+                    lineHeight: 1.35,
                     cursor: "pointer",
                     color: "#0f172a",
                   }}
@@ -2696,11 +2740,13 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                     display: "block",
                     width: "100%",
                     textAlign: "left",
-                    padding: "8px 10px",
+                    padding: "6px 10px",
                     border: "none",
                     background: "transparent",
-                    borderRadius: 6,
-                    fontWeight: 700,
+                    borderRadius: 4,
+                    fontWeight: 650,
+                    fontSize: 12.5,
+                    lineHeight: 1.35,
                     cursor: "pointer",
                     color: "#0f172a",
                   }}
@@ -2722,11 +2768,13 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                     display: "block",
                     width: "100%",
                     textAlign: "left",
-                    padding: "8px 10px",
+                    padding: "6px 10px",
                     border: "none",
                     background: "transparent",
-                    borderRadius: 6,
-                    fontWeight: 700,
+                    borderRadius: 4,
+                    fontWeight: 650,
+                    fontSize: 12.5,
+                    lineHeight: 1.35,
                     cursor: "pointer",
                     color: "#0f172a",
                   }}

@@ -47,10 +47,11 @@ export function parseQuoteAttachmentMeta(meta: unknown): {
   includeNote: boolean
 } {
   if (!meta || typeof meta !== "object" || Array.isArray(meta))
-    return { note: "", attachToCustomerCopy: false, includeNote: false }
+    return { note: "", attachToCustomerCopy: true, includeNote: false }
   const m = meta as Record<string, unknown>
   const note = typeof m.note === "string" ? m.note : ""
-  const attachToCustomerCopy = m.attach_to_customer_copy === true
+  // Default ON when the flag was never set (new uploads include on customer estimate).
+  const attachToCustomerCopy = m.attach_to_customer_copy !== false
   const includeNote = m.include_note === true
   return { note, attachToCustomerCopy, includeNote }
 }

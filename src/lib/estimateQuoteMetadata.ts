@@ -28,11 +28,44 @@ export function quoteJobDetailsFromMetadata(meta: unknown): string {
   return typeof raw === "string" ? raw.trim() : ""
 }
 
-/** Customer-facing job description (shown on exported estimate when template option enabled). */
+/** Customer-facing job description (shown on exported estimate when filled). */
 export function quoteCustomerJobDescriptionFromMetadata(meta: unknown): string {
   if (!meta || typeof meta !== "object" || Array.isArray(meta)) return ""
   const raw = (meta as Record<string, unknown>).customer_job_description
   return typeof raw === "string" ? raw.trim() : ""
+}
+
+/** Staff-only notes on the quote (never on customer PDF). */
+export function quoteInternalNotesFromMetadata(meta: unknown): string {
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return ""
+  const m = meta as Record<string, unknown>
+  const internal = typeof m.internal_notes === "string" ? m.internal_notes.trim() : ""
+  if (internal) return internal
+  // Legacy: before dual-field UI, job_details was often the only notes field.
+  return typeof m.job_details === "string" ? m.job_details.trim() : ""
+}
+
+/** Combined customer + internal notes for calendar events (always both when present). */
+export function buildEstimateNotesSummaryForCalendar(opts: {
+  customerNotes?: string | null
+  internalNotes?: string | null
+}): string {
+  const parts: string[] = []
+  const customer = (opts.customerNotes || "").trim()
+  const internal = (opts.internalNotes || "").trim()
+  if (customer) parts.push(`Customer view:\n${customer}`)
+  if (internal) parts.push(`Internal only:\n${internal}`)
+  return parts.join("\n\n").slice(0, 4000)
+}
+
+export type JobDetailsDefaultView = "customer" | "internal"
+
+export function parseJobDetailsDefault(meta: Record<string, unknown> | null | undefined): JobDetailsDefaultView {
+  const raw = meta?.estimate_template_job_details_default
+  if (raw === "customer" || raw === "internal") return raw
+  // Migrate older toggles: include job description → default customer view.
+  if (meta?.estimate_template_include_job_description === true) return "customer"
+  return "internal"
 }
 
 export function estimateGuideFlagsFromQuoteMetadata(meta: unknown): EstimateGuideFlags {

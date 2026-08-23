@@ -1484,13 +1484,13 @@ export const DEFAULT_ESTIMATE_TEMPLATE_ITEMS: PortalSettingItem[] = [
     customFieldSubtype: "textarea",
   },
   /**
-   * Kept in defaults for portal merge/docs. QuotesPage renders these as a built-in
-   * Job description block (not portal custom fields) so every live client sees them.
+   * Kept in defaults for portal merge/docs. QuotesPage renders Job details defaults
+   * as a built-in block (not portal custom fields) so every live client sees them.
    */
   {
     id: "estimate_template_include_job_description",
     type: "checkbox",
-    label: "Include job description on customer estimate (per-estimate field in wizard & editor)",
+    label: "Include job description on customer estimate",
     defaultChecked: false,
   },
   {
@@ -1498,6 +1498,19 @@ export const DEFAULT_ESTIMATE_TEMPLATE_ITEMS: PortalSettingItem[] = [
     type: "custom_field",
     customFieldSubtype: "text",
     label: "Job description section heading (default: Job description)",
+    dependency: { dependsOnItemId: "estimate_template_include_job_description", showWhenValue: "checked" },
+  },
+  {
+    id: "estimate_template_job_details_default",
+    type: "dropdown",
+    label: "Job details default",
+    options: ["customer", "internal"],
+  },
+  {
+    id: "estimate_template_include_internal_notes",
+    type: "checkbox",
+    label: "Create additional notes field for internal use only",
+    defaultChecked: false,
     dependency: { dependsOnItemId: "estimate_template_include_job_description", showWhenValue: "checked" },
   },
   {

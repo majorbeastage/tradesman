@@ -36,7 +36,7 @@ import { formatCommEventEmailFromLabel } from "../../lib/communicationEmailAddre
 import AttachmentStrip, { type AttachmentStripItem } from "../../components/AttachmentStrip"
 import { loadAttachmentsByCommunicationEventIds } from "../../lib/communicationAttachments"
 import { canStartEstimateForCustomer } from "../../lib/customerWorkflowProgress"
-import { loadAccountWorkflowBundleFromMetadata } from "../../lib/estimateWorkflowRuntime"
+import { canBypassEstimateApprovals, loadAccountWorkflowBundleFromMetadata } from "../../lib/estimateWorkflowRuntime"
 import { uploadFilesForOutbound } from "../../lib/uploadCommAttachment"
 import AiConsumerReplyApprovalCard from "../../components/AiConsumerReplyApprovalCard"
 import { PENDING_AI_CONSUMER_REPLY_KEY, parsePendingAiConsumerReply } from "../../types/aiOutboundApproval"
@@ -3082,7 +3082,16 @@ function ConversationsPageInner(_props: ConversationsPageProps) {
                     ? loadAccountWorkflowBundleFromMetadata(profRow.metadata as Record<string, unknown>)
                     : null
                   if (workflowBundle) {
-                    const gate = canStartEstimateForCustomer(workflowBundle.workflow, custRow?.metadata)
+                    const [{ data: roleRow }] = await Promise.all([
+                      supabase.from("profiles").select("role").eq("id", userId).maybeSingle(),
+                    ])
+                    const role = typeof roleRow?.role === "string" ? roleRow.role : null
+                    const bypass = canBypassEstimateApprovals(role, profRow?.metadata as Record<string, unknown>, {
+                      userId,
+                      accountOwnerUserId: userId,
+                      workflow: workflowBundle.workflow,
+                    }) || sandboxTraining
+                    const gate = canStartEstimateForCustomer(workflowBundle.workflow, custRow?.metadata, { bypass })
                     if (!gate.allowed) {
                       alert(
                         `Complete the workflow step “${gate.blockingStepLabel}” on the customer profile before creating an estimate.`,

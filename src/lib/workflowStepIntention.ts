@@ -141,59 +141,64 @@ export function resolveEstimatePrimaryDeliveryAction(input: {
   const parallelHandoffActions = actions.filter(
     (a) => a.kind === "send_for_approval" && !a.disabled && !isWorkflowApprovalSendAction(a, input.workflow),
   )
-  const customerGate = canSendEstimateToCustomer(input.workflow, input.state)
+  const customerGate = canSendEstimateToCustomer(input.workflow, input.state, {
+    bypass: Boolean(input.canBypassApprovals),
+  })
 
-  const sendApproval = actions.find(
-    (a) => a.kind === "send_for_approval" && !a.disabled && isWorkflowApprovalSendAction(a, input.workflow),
-  )
-  if (sendApproval) {
-    const pendingSends = actions.filter(
+  // Leadership / owner bypass: live process gates must not trap send behind legacy approval steps.
+  if (!input.canBypassApprovals) {
+    const sendApproval = actions.find(
       (a) => a.kind === "send_for_approval" && !a.disabled && isWorkflowApprovalSendAction(a, input.workflow),
     )
-    const assignees = pendingSends.map((a) => a.assignee).filter((a): a is WorkflowAssignee => a != null)
-    const node = input.workflow.nodes.find((n) => n.id === sendApproval.nodeId)
-    const intention = node ? inferWorkflowStepIntention(node, "estimate") : "send_to_approver"
-    return {
-      mode: "workflow_approval",
-      buttonLabel: intentionPrimaryButtonLabel(intention, assignees, node?.label),
-      detail: sendApproval.detail,
-      workflowAction: sendApproval,
-      batchSendActions: pendingSends,
-      parallelHandoffActions,
-      pendingApprovers: assignees,
-      customerSendAllowed: false,
-      customerBlockReason: customerGate.reason,
+    if (sendApproval) {
+      const pendingSends = actions.filter(
+        (a) => a.kind === "send_for_approval" && !a.disabled && isWorkflowApprovalSendAction(a, input.workflow),
+      )
+      const assignees = pendingSends.map((a) => a.assignee).filter((a): a is WorkflowAssignee => a != null)
+      const node = input.workflow.nodes.find((n) => n.id === sendApproval.nodeId)
+      const intention = node ? inferWorkflowStepIntention(node, "estimate") : "send_to_approver"
+      return {
+        mode: "workflow_approval",
+        buttonLabel: intentionPrimaryButtonLabel(intention, assignees, node?.label),
+        detail: sendApproval.detail,
+        workflowAction: sendApproval,
+        batchSendActions: pendingSends,
+        parallelHandoffActions,
+        pendingApprovers: assignees,
+        customerSendAllowed: false,
+        customerBlockReason: customerGate.reason,
+      }
     }
-  }
 
-  const markApproval = actions.find((a) => a.kind === "mark_approved" && !a.disabled)
-  if (markApproval) {
-    const pendingMarks = actions.filter((a) => a.kind === "mark_approved" && !a.disabled)
-    const assignees = pendingMarks.map((a) => a.assignee).filter((a): a is WorkflowAssignee => a != null)
-    return {
-      mode: "workflow_review",
-      buttonLabel: assignees.length > 1 ? "Review pending approvals" : markApproval.label,
-      detail: markApproval.detail,
-      workflowAction: markApproval,
-      batchSendActions: [],
-      parallelHandoffActions,
-      pendingApprovers: assignees,
-      customerSendAllowed: false,
-      customerBlockReason: customerGate.reason,
+    const markApproval = actions.find((a) => a.kind === "mark_approved" && !a.disabled)
+    if (markApproval) {
+      const pendingMarks = actions.filter((a) => a.kind === "mark_approved" && !a.disabled)
+      const assignees = pendingMarks.map((a) => a.assignee).filter((a): a is WorkflowAssignee => a != null)
+      return {
+        mode: "workflow_review",
+        buttonLabel: assignees.length > 1 ? "Review pending approvals" : markApproval.label,
+        detail: markApproval.detail,
+        workflowAction: markApproval,
+        batchSendActions: [],
+        parallelHandoffActions,
+        pendingApprovers: assignees,
+        customerSendAllowed: false,
+        customerBlockReason: customerGate.reason,
+      }
     }
-  }
 
-  if (!customerGate.allowed) {
-    return {
-      mode: "blocked",
-      buttonLabel: "Complete workflow first",
-      detail: customerGate.reason ?? "Internal workflow steps must finish before customer delivery.",
-      workflowAction: null,
-      batchSendActions: [],
-      parallelHandoffActions,
-      pendingApprovers: [],
-      customerSendAllowed: false,
-      customerBlockReason: customerGate.reason,
+    if (!customerGate.allowed) {
+      return {
+        mode: "blocked",
+        buttonLabel: "Complete workflow first",
+        detail: customerGate.reason ?? "Internal workflow steps must finish before customer delivery.",
+        workflowAction: null,
+        batchSendActions: [],
+        parallelHandoffActions,
+        pendingApprovers: [],
+        customerSendAllowed: false,
+        customerBlockReason: customerGate.reason,
+      }
     }
   }
 

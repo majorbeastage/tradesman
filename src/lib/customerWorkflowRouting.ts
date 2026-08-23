@@ -24,6 +24,8 @@ export type CustomerWorkflowMetaV1 = {
   activeNodeId?: string | null
   departmentKey?: string | null
   completedNodeIds?: string[]
+  /** Labels for completed steps — survives workflow rebuilds that change node UUIDs. */
+  completedNodeLabels?: string[]
   pendingNodeIds?: string[]
   sharedWithUserIds?: string[]
   rollbackNote?: string | null
@@ -63,6 +65,9 @@ export function parseCustomerWorkflowMeta(metadata: unknown): CustomerWorkflowMe
     departmentKey: typeof o.departmentKey === "string" ? o.departmentKey : null,
     completedNodeIds: Array.isArray(o.completedNodeIds)
       ? o.completedNodeIds.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      : undefined,
+    completedNodeLabels: Array.isArray(o.completedNodeLabels)
+      ? o.completedNodeLabels.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
       : undefined,
     pendingNodeIds: Array.isArray(o.pendingNodeIds)
       ? o.pendingNodeIds.filter((x): x is string => typeof x === "string" && x.trim().length > 0)

@@ -130,11 +130,29 @@ import {
 } from "../../lib/estimateGuidePrefs"
 import { estimateWizardScopeAnalysisReady, estimateWizardMaxStep, estimateWizardPhase, getResumeEstimateWizardStep, type EstimateWizardStep } from "../../lib/estimateWizardStepUtils"
 import {
+  buildEstimateNotesSummaryForCalendar,
   estimateGuideFlagsFromQuoteMetadata,
   mergeQuoteMetadataWithEstimateGuide,
+  parseJobDetailsDefault,
   quoteCustomerJobDescriptionFromMetadata,
   quoteJobDetailsFromMetadata,
+  type JobDetailsDefaultView,
 } from "../../lib/estimateQuoteMetadata"
+import {
+  DEFAULT_ESTIMATE_DOC_SECTION_ORDER,
+  ESTIMATE_DOC_SECTION_LABELS,
+  estimateDocSectionsForTemplate,
+  orderedEstimateDocSections,
+  parseEstimateDocSectionOrder,
+  type EstimateDocSectionId,
+} from "../../lib/estimateDocSectionOrder"
+import {
+  DEFAULT_ESTIMATE_NUMBER_FORMAT,
+  DEFAULT_INVOICE_NUMBER_FORMAT,
+  formatDocumentNumber,
+  parseDocumentNumberSettings,
+} from "../../lib/documentNumberFormat"
+import { buildQuoteHtmlDocument, downloadQuoteHtmlFile } from "../../lib/documentQuoteHtml"
 import { findLatestQuoteIdForCustomer } from "../../lib/quoteCustomerNavigation"
 import { logEstimateScheduledCommunicationEvent } from "../../lib/customerSchedulingActivity"
 import {
@@ -267,6 +285,8 @@ const ESTIMATE_TEMPLATE_TEXT_GROUP_IDS = new Set([
 const ESTIMATE_TEMPLATE_JOB_DESCRIPTION_IDS = new Set([
   "estimate_template_include_job_description",
   "estimate_template_job_description_label",
+  "estimate_template_include_internal_notes",
+  "estimate_template_job_details_default",
 ])
 
 const ESTIMATE_TEMPLATE_SPECIALTY_GROUP_IDS = new Set([
@@ -299,17 +319,25 @@ const ESTIMATE_WORKFLOW_SUMMARY_STYLE: CSSProperties = {
 
 const ESTIMATE_FMT_PDF = "PDF"
 const ESTIMATE_FMT_DOCX = "Microsoft Word (.docx)"
+const ESTIMATE_FMT_HTML = "Web page (.html) — best for tablets"
 
-function metaToExportFormat(v: unknown): "pdf" | "docx" {
-  return v === "docx" ? "docx" : "pdf"
+function metaToExportFormat(v: unknown): "pdf" | "docx" | "html" {
+  if (v === "docx") return "docx"
+  if (v === "html") return "html"
+  return "pdf"
 }
 
-function exportFormatToDropdown(fmt: "pdf" | "docx"): string {
-  return fmt === "docx" ? ESTIMATE_FMT_DOCX : ESTIMATE_FMT_PDF
+function exportFormatToDropdown(fmt: "pdf" | "docx" | "html"): string {
+  if (fmt === "docx") return ESTIMATE_FMT_DOCX
+  if (fmt === "html") return ESTIMATE_FMT_HTML
+  return ESTIMATE_FMT_PDF
 }
 
-function dropdownToExportFormat(label: string): "pdf" | "docx" {
-  return label.trim() === ESTIMATE_FMT_DOCX ? "docx" : "pdf"
+function dropdownToExportFormat(label: string): "pdf" | "docx" | "html" {
+  const t = label.trim()
+  if (t === ESTIMATE_FMT_DOCX) return "docx"
+  if (t === ESTIMATE_FMT_HTML) return "html"
+  return "pdf"
 }
 
 /** Merge comma/semicolon-separated email fields; dedupe case-insensitively. */
@@ -564,7 +592,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [estimateConversationsFoldOpen, setEstimateConversationsFoldOpen] = useState(false)
   const [estimateMediaFoldOpen, setEstimateMediaFoldOpen] = useState(false)
   const [estimateJobDetailsFoldOpen, setEstimateJobDetailsFoldOpen] = useState(false)
-  const [estimateJobDescriptionFoldOpen, setEstimateJobDescriptionFoldOpen] = useState(false)
   const [estimateQuoteItemsQuickFoldOpen, setEstimateQuoteItemsQuickFoldOpen] = useState(false)
   const [conversationBulletsBusy, setConversationBulletsBusy] = useState(false)
   const [jobPackBulletsBusy, setJobPackBulletsBusy] = useState(false)
@@ -574,7 +601,17 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [customerDeliveryPanel, setCustomerDeliveryPanel] = useState<EstimateCustomerDeliveryPanel>(null)
   const [quoteOfferEsign, setQuoteOfferEsign] = useState(false)
   const [quoteIncludeJobDescription, setQuoteIncludeJobDescription] = useState(false)
+  const [jobDetailsDefault, setJobDetailsDefault] = useState<JobDetailsDefaultView>("internal")
+  const [quoteSecondaryNotesFoldOpen, setQuoteSecondaryNotesFoldOpen] = useState(false)
   const [quoteJobDescriptionLabel, setQuoteJobDescriptionLabel] = useState("Job description")
+  /** Secondary notes field (the non-default type: internal when default is customer, or customer when default is internal). */
+  const [secondaryNotesText, setSecondaryNotesText] = useState("")
+  const [estimateDocSectionOrder, setEstimateDocSectionOrder] = useState<EstimateDocSectionId[]>([
+    ...DEFAULT_ESTIMATE_DOC_SECTION_ORDER,
+  ])
+  const [estimateNumberFormat, setEstimateNumberFormat] = useState(DEFAULT_ESTIMATE_NUMBER_FORMAT)
+  const [estimateNumberPrefix, setEstimateNumberPrefix] = useState("EST")
+  const [estimateNumberPreviewSeq, setEstimateNumberPreviewSeq] = useState(1)
   const [esignLinkUrl, setEsignLinkUrl] = useState<string | null>(null)
   const [esignLinkBusy, setEsignLinkBusy] = useState(false)
   const [esignLinkError, setEsignLinkError] = useState<string | null>(null)
@@ -586,7 +623,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [quoteSmsSending, setQuoteSmsSending] = useState(false)
   const [quoteSmsAttachEntity, setQuoteSmsAttachEntity] = useState(true)
   const [jobDetailsText, setJobDetailsText] = useState("")
-  const [customerJobDescriptionText, setCustomerJobDescriptionText] = useState("")
   const [jobDetailsSpeechSupported, setJobDetailsSpeechSupported] = useState(false)
   const [jobDetailsVoiceListening, setJobDetailsVoiceListening] = useState(false)
   const jobDetailsRecognitionRef = useRef<SpeechRecognition | null>(null)
@@ -621,7 +657,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [quotePdfBusy, setQuotePdfBusy] = useState(false)
   const [quotePdfTemplate, setQuotePdfTemplate] = useState<string | null>(null)
   const [quoteTemplateFooter, setQuoteTemplateFooter] = useState("")
-  const [quoteExportFormat, setQuoteExportFormat] = useState<"pdf" | "docx">("pdf")
+  const [quoteExportFormat, setQuoteExportFormat] = useState<"pdf" | "docx" | "html">("pdf")
   const [quoteIncludePreparedDate, setQuoteIncludePreparedDate] = useState(true)
   const [quoteShowLineNumbers, setQuoteShowLineNumbers] = useState(true)
   const [quoteShowLogo, setQuoteShowLogo] = useState(true)
@@ -698,7 +734,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const conversationsSectionRef = useRef<HTMLDetailsElement | null>(null)
   const mediaSectionRef = useRef<HTMLDetailsElement | null>(null)
   const jobDetailsSectionRef = useRef<HTMLDetailsElement | null>(null)
-  const jobDescriptionSectionRef = useRef<HTMLDetailsElement | null>(null)
   const quoteItemsSectionRef = useRef<HTMLDetailsElement | null>(null)
   const reviewSendSectionRef = useRef<HTMLDivElement | null>(null)
   const estimateWizardFileInputRef = useRef<HTMLInputElement | null>(null)
@@ -827,7 +862,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
       linkableUsers: linkableOrgUsers,
       state: quoteInternalWorkflowState,
       quoteHasLineItems: selectedQuoteItems.length > 0,
-      canBypassApprovals: sandboxTraining || canBypassEstimateApprovals(profileRole, profileMetadata),
+      canBypassApprovals: sandboxTraining || canBypassEstimateApprovals(profileRole, profileMetadata, {
+        userId: authUserId || viewerUserId,
+        accountOwnerUserId: userId,
+        workflow: accountWorkflowBundle?.workflow,
+      }),
       customerCompletedNodeIds,
     })
     return filterWorkflowActionsForUser(raw, {
@@ -835,9 +874,13 @@ export default function QuotesPage(_props: QuotesPageProps) {
       state: quoteInternalWorkflowState,
       userId,
       profileRole,
-      canBypassApprovals: sandboxTraining || canBypassEstimateApprovals(profileRole, profileMetadata),
+      canBypassApprovals: sandboxTraining || canBypassEstimateApprovals(profileRole, profileMetadata, {
+        userId: authUserId || viewerUserId,
+        accountOwnerUserId: userId,
+        workflow: accountWorkflowBundle?.workflow,
+      }),
     })
-  }, [accountWorkflowBundle, linkableOrgUsers, quoteInternalWorkflowState, customerCompletedNodeIds, selectedQuoteItems.length, sandboxTraining, profileRole, profileMetadata, userId])
+  }, [accountWorkflowBundle, linkableOrgUsers, quoteInternalWorkflowState, customerCompletedNodeIds, selectedQuoteItems.length, sandboxTraining, profileRole, profileMetadata, userId, authUserId, viewerUserId])
 
   const estimateParallelHandoffs = useMemo((): WorkflowActionButton[] => {
     if (!accountWorkflowBundle) return []
@@ -863,8 +906,15 @@ export default function QuotesPage(_props: QuotesPageProps) {
 
   const customerSendWorkflowGate = useMemo(() => {
     if (!accountWorkflowBundle) return { allowed: true as const }
-    return canSendEstimateToCustomer(accountWorkflowBundle.workflow, quoteInternalWorkflowState)
-  }, [accountWorkflowBundle, quoteInternalWorkflowState])
+    const bypass =
+      sandboxTraining ||
+      canBypassEstimateApprovals(profileRole, profileMetadata, {
+        userId: authUserId || viewerUserId,
+        accountOwnerUserId: userId,
+        workflow: accountWorkflowBundle.workflow,
+      })
+    return canSendEstimateToCustomer(accountWorkflowBundle.workflow, quoteInternalWorkflowState, { bypass })
+  }, [accountWorkflowBundle, quoteInternalWorkflowState, sandboxTraining, profileRole, profileMetadata, userId, authUserId, viewerUserId])
 
   const estimatePrimaryDelivery = useMemo(() => {
     if (!accountWorkflowBundle) {
@@ -886,13 +936,19 @@ export default function QuotesPage(_props: QuotesPageProps) {
       linkableUsers: linkableOrgUsers,
       state: quoteInternalWorkflowState,
       quoteHasLineItems: selectedQuoteItems.length > 0,
-      canBypassApprovals: sandboxTraining || canBypassEstimateApprovals(profileRole, profileMetadata),
+      canBypassApprovals: sandboxTraining || canBypassEstimateApprovals(profileRole, profileMetadata, {
+        userId: authUserId || viewerUserId,
+        accountOwnerUserId: userId,
+        workflow: accountWorkflowBundle?.workflow,
+      }),
     })
   }, [
     accountWorkflowBundle,
     linkableOrgUsers,
     quoteInternalWorkflowState,
     selectedQuoteItems.length,
+    authUserId,
+    viewerUserId,
     sandboxTraining,
     profileRole,
     profileMetadata,
@@ -1026,7 +1082,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
       setEstimateConversationsFoldOpen(false)
       setEstimateMediaFoldOpen(false)
       setEstimateJobDetailsFoldOpen(false)
-      setEstimateJobDescriptionFoldOpen(false)
       setEstimateQuoteItemsQuickFoldOpen(false)
       return
     }
@@ -1034,12 +1089,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
     setEstimateTemplatesFoldOpen(phase === "jobType")
     setEstimateConversationsFoldOpen(phase === "conversations")
     setEstimateMediaFoldOpen(phase === "media")
-    setEstimateJobDetailsFoldOpen(phase === "jobDetails")
-    setEstimateJobDescriptionFoldOpen(phase === "jobDescription")
+    setEstimateJobDetailsFoldOpen(phase === "jobDetails" || phase === "jobDescription")
     setEstimateQuoteItemsQuickFoldOpen(phase === "quoteItems")
   }, [estimateStartGuideOpen, estimateStartGuideStep, selectedQuoteId, quoteIncludeJobDescription])
 
-  const jobDetailsDbSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const selectedQuotePersistRef = useRef<QuoteRow | null>(null)
   useEffect(() => {
     selectedQuotePersistRef.current = selectedQuote
@@ -1048,19 +1101,24 @@ export default function QuotesPage(_props: QuotesPageProps) {
   useEffect(() => {
     if (!selectedQuoteId) {
       setJobDetailsText("")
-      setCustomerJobDescriptionText("")
+      setSecondaryNotesText("")
     }
   }, [selectedQuoteId])
 
-  const customerJobDescriptionDbSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const customerFacingNotesText =
+    jobDetailsDefault === "customer" ? jobDetailsText : secondaryNotesText
+  const internalOnlyNotesText =
+    jobDetailsDefault === "customer" ? secondaryNotesText : jobDetailsText
+
+  const secondaryNotesDbSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
-    if (!supabase || !userId || !selectedQuoteId || !quoteIncludeJobDescription) return
+    if (!supabase || !userId || !selectedQuoteId) return
     const client = supabase
     const qRow = selectedQuotePersistRef.current
     if (!qRow || qRow.id !== selectedQuoteId) return
-    if (customerJobDescriptionDbSaveTimerRef.current) clearTimeout(customerJobDescriptionDbSaveTimerRef.current)
-    customerJobDescriptionDbSaveTimerRef.current = setTimeout(() => {
-      customerJobDescriptionDbSaveTimerRef.current = null
+    if (secondaryNotesDbSaveTimerRef.current) clearTimeout(secondaryNotesDbSaveTimerRef.current)
+    secondaryNotesDbSaveTimerRef.current = setTimeout(() => {
+      secondaryNotesDbSaveTimerRef.current = null
       void (async () => {
         const latest = selectedQuotePersistRef.current
         if (!latest || latest.id !== selectedQuoteId) return
@@ -1068,57 +1126,33 @@ export default function QuotesPage(_props: QuotesPageProps) {
           latest.metadata && typeof latest.metadata === "object" && !Array.isArray(latest.metadata)
             ? { ...(latest.metadata as Record<string, unknown>) }
             : {}
-        const nextMeta: Record<string, unknown> = { ...prevMeta, customer_job_description: customerJobDescriptionText }
+        const customer =
+          jobDetailsDefault === "customer" ? jobDetailsText : secondaryNotesText
+        const internal =
+          jobDetailsDefault === "customer" ? secondaryNotesText : jobDetailsText
+        const nextMeta: Record<string, unknown> = {
+          ...prevMeta,
+          customer_job_description: customer,
+          internal_notes: internal,
+          // Keep legacy job_details as the primary field for older readers / AI packs.
+          job_details: jobDetailsText,
+        }
         const { error } = await client
           .from("quotes")
           .update({ metadata: nextMeta, updated_at: new Date().toISOString() })
           .eq("id", selectedQuoteId)
           .eq("user_id", userId)
         if (error && !supabaseQuotesMissingMetadataColumn(error.message)) {
-          console.error("[quotes] customer_job_description save", error.message)
+          console.error("[quotes] notes dual-field save", error.message)
         } else {
           setSelectedQuote((q: QuoteRow | null) => (q && q.id === selectedQuoteId ? { ...q, metadata: nextMeta } : q))
         }
       })()
     }, 650)
     return () => {
-      if (customerJobDescriptionDbSaveTimerRef.current) clearTimeout(customerJobDescriptionDbSaveTimerRef.current)
+      if (secondaryNotesDbSaveTimerRef.current) clearTimeout(secondaryNotesDbSaveTimerRef.current)
     }
-  }, [customerJobDescriptionText, selectedQuoteId, supabase, userId, quoteIncludeJobDescription])
-
-  useEffect(() => {
-    if (!supabase || !userId || !selectedQuoteId) return
-    if (jobDetailsVoiceActiveRef.current) return
-    const client = supabase
-    const qRow = selectedQuotePersistRef.current
-    if (!qRow || qRow.id !== selectedQuoteId) return
-    if (jobDetailsDbSaveTimerRef.current) clearTimeout(jobDetailsDbSaveTimerRef.current)
-    jobDetailsDbSaveTimerRef.current = setTimeout(() => {
-      jobDetailsDbSaveTimerRef.current = null
-      void (async () => {
-        const latest = selectedQuotePersistRef.current
-        if (!latest || latest.id !== selectedQuoteId) return
-        const prevMeta =
-          latest.metadata && typeof latest.metadata === "object" && !Array.isArray(latest.metadata)
-            ? { ...(latest.metadata as Record<string, unknown>) }
-            : {}
-        const nextMeta: Record<string, unknown> = { ...prevMeta, job_details: jobDetailsText }
-        const { error } = await client
-          .from("quotes")
-          .update({ metadata: nextMeta, updated_at: new Date().toISOString() })
-          .eq("id", selectedQuoteId)
-          .eq("user_id", userId)
-        if (error) {
-          if (!supabaseQuotesMissingMetadataColumn(error.message)) console.error("[quotes] job_details save", error.message)
-          return
-        }
-        setSelectedQuote((q: QuoteRow | null) => (q && q.id === selectedQuoteId ? { ...q, metadata: nextMeta } : q))
-      })()
-    }, 650)
-    return () => {
-      if (jobDetailsDbSaveTimerRef.current) clearTimeout(jobDetailsDbSaveTimerRef.current)
-    }
-  }, [jobDetailsText, selectedQuoteId, supabase, userId])
+  }, [jobDetailsText, secondaryNotesText, jobDetailsDefault, selectedQuoteId, supabase, userId])
 
   useEffect(() => {
     if (!selectedQuoteId || jobDetailsVoiceActiveRef.current) return
@@ -1455,9 +1489,18 @@ export default function QuotesPage(_props: QuotesPageProps) {
       setQuoteCancellationText(typeof meta.estimate_template_cancellation_fee === "string" ? meta.estimate_template_cancellation_fee : "")
       setQuoteLegalSignatures(meta.estimate_template_legal_signatures !== false)
       setQuoteOfferEsign(meta.estimate_template_offer_esign === true)
-      setQuoteIncludeJobDescription(meta.estimate_template_include_job_description === true)
+      const detailsDefault = parseJobDetailsDefault(meta)
+      setJobDetailsDefault(detailsDefault)
+      setQuoteIncludeJobDescription(detailsDefault === "customer" || meta.estimate_template_include_job_description === true)
       const jobDescLabel = typeof meta.estimate_template_job_description_label === "string" ? meta.estimate_template_job_description_label.trim() : ""
       setQuoteJobDescriptionLabel(jobDescLabel || "Job description")
+      setEstimateDocSectionOrder(parseEstimateDocSectionOrder(meta.estimate_template_section_order))
+      {
+        const estNum = parseDocumentNumberSettings(meta, "estimate")
+        setEstimateNumberFormat(estNum.format)
+        setEstimateNumberPrefix(estNum.prefix)
+        setEstimateNumberPreviewSeq(estNum.nextSequence)
+      }
       const laborMeta = meta.estimate_default_labor_rate
       if (typeof laborMeta === "number" && Number.isFinite(laborMeta)) setEstimateDefaultLaborRate(String(laborMeta))
       else if (typeof laborMeta === "string") setEstimateDefaultLaborRate(laborMeta)
@@ -1547,14 +1590,25 @@ export default function QuotesPage(_props: QuotesPageProps) {
       const legalBody = typeof meta.estimate_template_legal_text === "string" ? meta.estimate_template_legal_text : ""
       const legalCancel = typeof meta.estimate_template_cancellation_fee === "string" ? meta.estimate_template_cancellation_fee : ""
       const legalSigs = meta.estimate_template_legal_signatures !== false
-      const includeJobDescription = meta.estimate_template_include_job_description === true
+      const detailsDefault = parseJobDetailsDefault(meta)
       const jobDescriptionLabel =
         typeof meta.estimate_template_job_description_label === "string" ? meta.estimate_template_job_description_label.trim() : ""
+      const estNum = parseDocumentNumberSettings(meta, "estimate")
+      const invNum = parseDocumentNumberSettings(meta, "invoice")
       const next: Record<string, string> = {
-        /** Always present — built-in, not portal-config dependent. */
-        estimate_template_include_job_description: includeJobDescription ? "checked" : "unchecked",
+        estimate_template_job_details_default: detailsDefault,
+        estimate_template_include_job_description: detailsDefault === "customer" ? "checked" : "unchecked",
         estimate_template_job_description_label: jobDescriptionLabel,
+        estimate_template_include_internal_notes: "unchecked",
+        estimate_template_output_format: exportFormatToDropdown(metaToExportFormat(meta.estimate_template_output_format)),
+        estimate_number_format: estNum.format,
+        estimate_number_prefix: estNum.prefix,
+        invoice_number_format: invNum.format,
+        invoice_number_prefix: invNum.prefix,
       }
+      setJobDetailsDefault(detailsDefault)
+      setEstimateDocSectionOrder(parseEstimateDocSectionOrder(meta.estimate_template_section_order))
+      setEstimateNumberPreviewSeq(estNum.nextSequence)
       for (const item of estimateTemplateItems) {
         if (item.id === "estimate_template_notes") next[item.id] = notes
         else if (item.id === "estimate_template_footer") next[item.id] = footer
@@ -1670,12 +1724,36 @@ export default function QuotesPage(_props: QuotesPageProps) {
     if (hasItem("estimate_template_offer_esign")) {
       prevMeta.estimate_template_offer_esign = estimateTemplateFormValues.estimate_template_offer_esign === "checked"
     }
-    const includeJobDescriptionChecked =
-      estimateTemplateFormValues.estimate_template_include_job_description === "checked"
-    prevMeta.estimate_template_include_job_description = includeJobDescriptionChecked
+    const detailsDefaultRaw = (estimateTemplateFormValues.estimate_template_job_details_default ?? "").trim()
+    const detailsDefault: JobDetailsDefaultView =
+      detailsDefaultRaw === "customer" || detailsDefaultRaw === "internal"
+        ? detailsDefaultRaw
+        : parseJobDetailsDefault({
+            estimate_template_include_job_description:
+              estimateTemplateFormValues.estimate_template_include_job_description === "checked",
+          })
+    prevMeta.estimate_template_job_details_default = detailsDefault
+    // Keep legacy flag in sync so older code paths still understand customer-facing default.
+    prevMeta.estimate_template_include_job_description = detailsDefault === "customer"
+    prevMeta.estimate_template_include_internal_notes = true
     const jobDescLabelRaw = (estimateTemplateFormValues.estimate_template_job_description_label ?? "").trim()
     if (jobDescLabelRaw) prevMeta.estimate_template_job_description_label = jobDescLabelRaw
     else delete prevMeta.estimate_template_job_description_label
+
+    prevMeta.estimate_template_section_order = estimateDocSectionOrder
+    prevMeta.estimate_template_output_format = dropdownToExportFormat(
+      estimateTemplateFormValues.estimate_template_output_format ?? ESTIMATE_FMT_PDF,
+    )
+    const estFmt = (estimateTemplateFormValues.estimate_number_format ?? "").trim() || DEFAULT_ESTIMATE_NUMBER_FORMAT
+    const estPrefix = (estimateTemplateFormValues.estimate_number_prefix ?? "").trim() || "EST"
+    const invFmt = (estimateTemplateFormValues.invoice_number_format ?? "").trim() || DEFAULT_INVOICE_NUMBER_FORMAT
+    const invPrefix = (estimateTemplateFormValues.invoice_number_prefix ?? "").trim() || "INV"
+    prevMeta.estimate_number_format = estFmt
+    prevMeta.estimate_number_prefix = estPrefix
+    prevMeta.invoice_number_format = invFmt
+    prevMeta.invoice_number_prefix = invPrefix
+    if (typeof prevMeta.estimate_number_next !== "number") prevMeta.estimate_number_next = 1
+    if (typeof prevMeta.invoice_number_next !== "number") prevMeta.invoice_number_next = 1
     const { error } = await supabase
       .from("profiles")
       .update({
@@ -1721,8 +1799,12 @@ export default function QuotesPage(_props: QuotesPageProps) {
     if (hasItem("estimate_template_offer_esign")) {
       setQuoteOfferEsign(estimateTemplateFormValues.estimate_template_offer_esign === "checked")
     }
-    setQuoteIncludeJobDescription(includeJobDescriptionChecked)
+    setQuoteIncludeJobDescription(detailsDefault === "customer")
+    setJobDetailsDefault(detailsDefault)
     setQuoteJobDescriptionLabel(jobDescLabelRaw || "Job description")
+    setQuoteExportFormat(dropdownToExportFormat(estimateTemplateFormValues.estimate_template_output_format ?? ESTIMATE_FMT_PDF))
+    setEstimateNumberFormat(estFmt)
+    setEstimateNumberPrefix(estPrefix)
     setShowEstimateTemplateModal(false)
   }
 
@@ -2485,7 +2567,15 @@ export default function QuotesPage(_props: QuotesPageProps) {
           .eq("id", cid)
           .eq("user_id", userId)
           .maybeSingle()
-        const gate = canStartEstimateForCustomer(accountWorkflowBundle.workflow, custRow?.metadata)
+        const gate = canStartEstimateForCustomer(accountWorkflowBundle.workflow, custRow?.metadata, {
+          bypass:
+            sandboxTraining ||
+            canBypassEstimateApprovals(profileRole, profileMetadata, {
+              userId: authUserId || viewerUserId,
+              accountOwnerUserId: userId,
+              workflow: accountWorkflowBundle.workflow,
+            }),
+        })
         if (!gate.allowed) {
           alert(
             `Complete the workflow step “${gate.blockingStepLabel}” on the customer profile before creating an estimate.`,
@@ -2540,7 +2630,15 @@ export default function QuotesPage(_props: QuotesPageProps) {
           .eq("id", cid)
           .eq("user_id", userId)
           .maybeSingle()
-        const gate = canStartEstimateForCustomer(accountWorkflowBundle.workflow, custRow?.metadata)
+        const gate = canStartEstimateForCustomer(accountWorkflowBundle.workflow, custRow?.metadata, {
+          bypass:
+            sandboxTraining ||
+            canBypassEstimateApprovals(profileRole, profileMetadata, {
+              userId: authUserId || viewerUserId,
+              accountOwnerUserId: userId,
+              workflow: accountWorkflowBundle.workflow,
+            }),
+        })
         if (!gate.allowed) {
           alert(
             `Complete the workflow step “${gate.blockingStepLabel}” on the customer profile before creating an estimate.`,
@@ -2810,7 +2908,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
 
   function handleGuideJobDescriptionContinue() {
     if (selectedQuote?.id) {
-      const provided = Boolean(customerJobDescriptionText.trim())
+      const provided = Boolean(customerFacingNotesText.trim())
       saveEstimateGuideFlags(selectedQuote.id, { jobDescriptionProvided: provided, jobDescriptionSkipped: !provided })
       setEstimateGuideFlags((f) => ({ ...f, jobDescriptionProvided: provided, jobDescriptionSkipped: !provided }))
     }
@@ -2844,7 +2942,12 @@ export default function QuotesPage(_props: QuotesPageProps) {
       quoteDetailJobTypes.find((j) => j.id === jtId)?.name ?? jobTypes.find((j) => j.id === jtId)?.name ?? ""
     setCalTitle(jtName ? `${cust} — ${jtName}` : cust)
     setCalJobTypeId(jtId)
-    setCalNotes(jobDetailsText.trim().slice(0, 2000))
+    setCalNotes(
+      buildEstimateNotesSummaryForCalendar({
+        customerNotes: customerFacingNotesText,
+        internalNotes: internalOnlyNotesText,
+      }).slice(0, 4000),
+    )
     const d = new Date()
     d.setDate(d.getDate() + 1)
     setCalDate(
@@ -3272,10 +3375,20 @@ export default function QuotesPage(_props: QuotesPageProps) {
       return false
     }
     setSelectedQuote({ ...row, job_type_id: row.job_type_id ?? null })
-    const jobDetailsFromDb = quoteJobDetailsFromMetadata(row.metadata)
-    if (jobDetailsFromDb.trim()) setJobDetailsText(jobDetailsFromDb)
-    const customerJobDescFromDb = quoteCustomerJobDescriptionFromMetadata(row.metadata)
-    if (customerJobDescFromDb.trim()) setCustomerJobDescriptionText(customerJobDescFromDb)
+    const metaObj =
+      row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? (row.metadata as Record<string, unknown>)
+        : {}
+    const customerFromDb = quoteCustomerJobDescriptionFromMetadata(metaObj)
+    const explicitInternal = typeof metaObj.internal_notes === "string" ? metaObj.internal_notes.trim() : ""
+    const legacyJobDetails = quoteJobDetailsFromMetadata(metaObj)
+    if (jobDetailsDefault === "customer") {
+      setJobDetailsText(customerFromDb || legacyJobDetails)
+      setSecondaryNotesText(explicitInternal)
+    } else {
+      setJobDetailsText(explicitInternal || legacyJobDetails)
+      setSecondaryNotesText(customerFromDb)
+    }
     applyQuoteCustomerFormFromCustomers(row.customers as CustomerRow | null | undefined)
     const linkedCustomerId = typeof row.customer_id === "string" ? row.customer_id.trim() : ""
     if (linkedCustomerId) {
@@ -3297,8 +3410,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
       ...(row.customer_id
         ? { customerLinkedViaGuide: true, customerSkipped: false }
         : {}),
-      ...(jobDetailsFromDb.trim() ? { jobDetailsProvided: true, jobDetailsSkipped: false } : {}),
-      ...(customerJobDescFromDb.trim() ? { jobDescriptionProvided: true, jobDescriptionSkipped: false } : {}),
+      ...(legacyJobDetails.trim() || customerFromDb.trim() || explicitInternal.trim()
+        ? { jobDetailsProvided: true, jobDetailsSkipped: false }
+        : {}),
+      ...(customerFromDb.trim() ? { jobDescriptionProvided: true, jobDescriptionSkipped: false } : {}),
       ...((items?.length ?? 0) > 0 ? { quoteItemsReady: true } : {}),
     }
     setEstimateGuideFlags(mergedGuide)
@@ -3932,6 +4047,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
           public_url: up.public_url,
           content_type: contentType,
           file_name: file.name || null,
+          metadata: { attach_to_customer_copy: true, include_note: false, note: "" },
         })
         if (error) throw new Error(error.message)
       }
@@ -3941,12 +4057,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
     } finally {
       setQuoteEntityUploadBusy(false)
     }
-  }
-
-  function copyJobDetailsToCustomerDescription() {
-    const src = jobDetailsText.trim()
-    if (!src) return
-    setCustomerJobDescriptionText(src)
   }
 
   async function removeQuoteEntityRowLocal(row: EntityAttachmentRow) {
@@ -3988,8 +4098,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
       items,
       templateHeader: quotePdfTemplate,
       templateFooter: quoteTemplateFooter.trim() ? quoteTemplateFooter.trim() : null,
-      jobDescription:
-        quoteIncludeJobDescription && customerJobDescriptionText.trim() ? customerJobDescriptionText.trim() : null,
+      jobDescription: customerFacingNotesText.trim() ? customerFacingNotesText.trim() : null,
       jobDescriptionLabel: quoteJobDescriptionLabel.trim() || "Job description",
       includePreparedDate: quoteIncludePreparedDate,
       showLineNumbers: quoteShowLineNumbers,
@@ -3997,6 +4106,21 @@ export default function QuotesPage(_props: QuotesPageProps) {
       legal,
       customerCopyAttachments: quoteCustomerCopyAttachmentsPayload(quoteEntityRows),
       sandboxWatermark: sandboxTraining,
+      sectionOrder: orderedEstimateDocSections(
+        estimateDocSectionOrder,
+        estimateDocSectionsForTemplate({
+          includeJobDescription: Boolean(customerFacingNotesText.trim()) || jobDetailsDefault === "customer",
+          hasIntro: Boolean(quotePdfTemplate?.trim()),
+          hasFooter: Boolean(quoteTemplateFooter.trim()),
+          includeLegal: Boolean(quoteIncludeLegal || quoteLegalSignatures),
+          hasPhotos: quoteCustomerCopyAttachmentsPayload(quoteEntityRows).length > 0,
+        }),
+      ),
+      documentNumber: formatDocumentNumber({
+        format: estimateNumberFormat,
+        prefix: estimateNumberPrefix,
+        nextSequence: estimateNumberPreviewSeq,
+      }),
     }
   }
 
@@ -4011,6 +4135,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
         const { buildQuoteDocxBlob, downloadDocxBlob } = await import("../../lib/documentQuoteDocx")
         const blob = await buildQuoteDocxBlob({ ...base, sandboxWatermark: sandboxTraining })
         downloadDocxBlob(blob, `quote-${shortId}.docx`)
+      } else if (quoteExportFormat === "html") {
+        const html = buildQuoteHtmlDocument(base)
+        downloadQuoteHtmlFile(html, `estimate-${shortId}`)
       } else {
         const bytes = await buildQuotePdfBytes(base)
         downloadPdfBlob(bytes, `quote-${shortId}.pdf`)
@@ -5336,7 +5463,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
             onClose={() => void closeEstimateTemplateModal()}
             afterMainForm={
               <>
-                <div
+                <details
                   style={{
                     marginTop: 4,
                     marginBottom: 12,
@@ -5344,59 +5471,275 @@ export default function QuotesPage(_props: QuotesPageProps) {
                     borderRadius: 10,
                     border: `1px solid ${theme.border}`,
                     background: "#f8fafc",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 10,
                   }}
                 >
-                  <p style={{ margin: 0, fontWeight: 800, fontSize: 14, color: theme.text }}>Job description</p>
-                  <label
-                    style={{
-                      display: "flex",
-                      alignItems: "flex-start",
-                      gap: 10,
-                      cursor: "pointer",
-                      fontSize: 13,
-                      color: theme.text,
-                      lineHeight: 1.4,
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={estimateTemplateFormValues.estimate_template_include_job_description === "checked"}
-                      onChange={(e) =>
-                        setEstimateTemplateFormValues((prev) => ({
-                          ...prev,
-                          estimate_template_include_job_description: e.target.checked ? "checked" : "unchecked",
-                        }))
-                      }
-                      style={{ marginTop: 2 }}
-                    />
-                    <span>
-                      Include job description on customer estimate (per-estimate field in wizard &amp; editor)
-                    </span>
-                  </label>
-                  {estimateTemplateFormValues.estimate_template_include_job_description === "checked" ? (
-                    <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13, color: theme.text }}>
-                      <span style={{ fontWeight: 600 }}>Section heading (optional)</span>
+                  <summary style={{ cursor: "pointer", fontWeight: 800, fontSize: 14, color: theme.text, userSelect: "none" }}>
+                    Job details
+                  </summary>
+                  <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                    <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                      Choose which notes field is primary in the estimate builder. The other type stays available as an optional add-on.
+                    </p>
+                    <label
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: 10,
+                        cursor: "pointer",
+                        fontSize: 13,
+                        color: theme.text,
+                        lineHeight: 1.4,
+                      }}
+                    >
                       <input
-                        type="text"
-                        value={estimateTemplateFormValues.estimate_template_job_description_label ?? ""}
+                        type="radio"
+                        name="estimate_job_details_default"
+                        checked={(estimateTemplateFormValues.estimate_template_job_details_default ?? "internal") === "customer"}
+                        onChange={() =>
+                          setEstimateTemplateFormValues((prev) => ({
+                            ...prev,
+                            estimate_template_job_details_default: "customer",
+                            estimate_template_include_job_description: "checked",
+                          }))
+                        }
+                        style={{ marginTop: 2 }}
+                      />
+                      <span>
+                        <strong>Default to customer view</strong>
+                        <span style={{ display: "block", fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                          Job details are shared on the customer estimate. Builder shows “Add internal notes” for staff-only notes.
+                        </span>
+                      </span>
+                    </label>
+                    <label
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: 10,
+                        cursor: "pointer",
+                        fontSize: 13,
+                        color: theme.text,
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="estimate_job_details_default"
+                        checked={(estimateTemplateFormValues.estimate_template_job_details_default ?? "internal") !== "customer"}
+                        onChange={() =>
+                          setEstimateTemplateFormValues((prev) => ({
+                            ...prev,
+                            estimate_template_job_details_default: "internal",
+                            estimate_template_include_job_description: "unchecked",
+                          }))
+                        }
+                        style={{ marginTop: 2 }}
+                      />
+                      <span>
+                        <strong>Default to internal only</strong>
+                        <span style={{ display: "block", fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                          Job details stay internal. Builder shows “Add notes for customer view” when you want customer-facing text.
+                        </span>
+                      </span>
+                    </label>
+                    {(estimateTemplateFormValues.estimate_template_job_details_default ?? "internal") === "customer" ? (
+                      <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13, color: theme.text }}>
+                        <span style={{ fontWeight: 600 }}>Customer section heading (optional)</span>
+                        <input
+                          type="text"
+                          value={estimateTemplateFormValues.estimate_template_job_description_label ?? ""}
+                          onChange={(e) =>
+                            setEstimateTemplateFormValues((prev) => ({
+                              ...prev,
+                              estimate_template_job_description_label: e.target.value,
+                            }))
+                          }
+                          placeholder="Job description"
+                          style={theme.formInput}
+                        />
+                      </label>
+                    ) : null}
+                  </div>
+                </details>
+                <details
+                  style={{
+                    marginTop: 4,
+                    marginBottom: 10,
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    border: `1px solid ${theme.border}`,
+                    background: "#f8fafc",
+                  }}
+                >
+                  <summary style={{ cursor: "pointer", fontWeight: 800, fontSize: 14, color: theme.text, userSelect: "none" }}>
+                    Document layout &amp; formats
+                  </summary>
+                  <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 14 }}>
+                    <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13, color: theme.text }}>
+                      <span style={{ fontWeight: 700 }}>Preferred download / send format</span>
+                      <select
+                        value={estimateTemplateFormValues.estimate_template_output_format ?? ESTIMATE_FMT_PDF}
                         onChange={(e) =>
                           setEstimateTemplateFormValues((prev) => ({
                             ...prev,
-                            estimate_template_job_description_label: e.target.value,
+                            estimate_template_output_format: e.target.value,
                           }))
                         }
-                        placeholder="Job description"
                         style={theme.formInput}
-                      />
-                      <span style={{ fontSize: 12, color: "#64748b" }}>
-                        Shown on the estimate preview and exported/sent PDF or Word file when filled in.
+                      >
+                        <option value={ESTIMATE_FMT_PDF}>{ESTIMATE_FMT_PDF}</option>
+                        <option value={ESTIMATE_FMT_DOCX}>{ESTIMATE_FMT_DOCX}</option>
+                        <option value={ESTIMATE_FMT_HTML}>{ESTIMATE_FMT_HTML}</option>
+                      </select>
+                      <span style={{ fontSize: 12, color: "#64748b", lineHeight: 1.4 }}>
+                        HTML opens in any browser (helpful on Android tablets when PDF preview fails). You can still pick a format when saving.
                       </span>
                     </label>
-                  ) : null}
-                </div>
+                    <div>
+                      <p style={{ margin: "0 0 8px", fontWeight: 700, fontSize: 13, color: theme.text }}>Custom item sorting</p>
+                      <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b", lineHeight: 1.4 }}>
+                        Use arrows to set top-to-bottom order on the customer estimate (sections you have enabled).
+                      </p>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {orderedEstimateDocSections(
+                          estimateDocSectionOrder,
+                          estimateDocSectionsForTemplate({
+                            includeJobDescription:
+                              (estimateTemplateFormValues.estimate_template_job_details_default ?? "internal") ===
+                              "customer",
+                            hasIntro: Boolean((estimateTemplateFormValues.estimate_template_notes ?? "").trim()),
+                            hasFooter: Boolean((estimateTemplateFormValues.estimate_template_footer ?? "").trim()),
+                            includeLegal: estimateTemplateFormValues.estimate_template_include_legal === "checked",
+                            hasPhotos: true,
+                          }),
+                        ).map((id, idx, arr) => (
+                          <div
+                            key={id}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                              padding: "8px 10px",
+                              borderRadius: 8,
+                              border: `1px solid ${theme.border}`,
+                              background: "#fff",
+                            }}
+                          >
+                            <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: theme.text }}>
+                              {ESTIMATE_DOC_SECTION_LABELS[id]}
+                            </span>
+                            <button
+                              type="button"
+                              disabled={idx === 0}
+                              onClick={() => {
+                                setEstimateDocSectionOrder((prev) => {
+                                  const next = [...orderedEstimateDocSections(prev, arr)]
+                                  if (idx <= 0) return next
+                                  ;[next[idx - 1], next[idx]] = [next[idx], next[idx - 1]]
+                                  return parseEstimateDocSectionOrder(next)
+                                })
+                              }}
+                              style={{
+                                border: "none",
+                                background: "transparent",
+                                cursor: idx === 0 ? "default" : "pointer",
+                                opacity: idx === 0 ? 0.35 : 1,
+                              }}
+                            >
+                              ↑
+                            </button>
+                            <button
+                              type="button"
+                              disabled={idx === arr.length - 1}
+                              onClick={() => {
+                                setEstimateDocSectionOrder((prev) => {
+                                  const next = [...orderedEstimateDocSections(prev, arr)]
+                                  if (idx >= next.length - 1) return next
+                                  ;[next[idx], next[idx + 1]] = [next[idx + 1], next[idx]]
+                                  return parseEstimateDocSectionOrder(next)
+                                })
+                              }}
+                              style={{
+                                border: "none",
+                                background: "transparent",
+                                cursor: idx === arr.length - 1 ? "default" : "pointer",
+                                opacity: idx === arr.length - 1 ? 0.35 : 1,
+                              }}
+                            >
+                              ↓
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <p style={{ margin: "0 0 8px", fontWeight: 700, fontSize: 13, color: theme.text }}>Custom numbering</p>
+                      <p style={{ margin: "0 0 10px", fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                        Tokens: {"{PREFIX}"} {"{YYYY}"} {"{YY}"} {"{MM}"} {"{DD}"} {"{####}"} {"{###}"} {"{SEQ}"}. Example: EST-
+                        {"{YYYY}"}-{"{####}"}
+                      </p>
+                      <div style={{ display: "grid", gap: 10 }}>
+                        <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+                          Estimate format
+                          <input
+                            value={estimateTemplateFormValues.estimate_number_format ?? ""}
+                            onChange={(e) =>
+                              setEstimateTemplateFormValues((prev) => ({ ...prev, estimate_number_format: e.target.value }))
+                            }
+                            placeholder={DEFAULT_ESTIMATE_NUMBER_FORMAT}
+                            style={theme.formInput}
+                          />
+                        </label>
+                        <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+                          Estimate prefix (for {"{PREFIX}"})
+                          <input
+                            value={estimateTemplateFormValues.estimate_number_prefix ?? ""}
+                            onChange={(e) =>
+                              setEstimateTemplateFormValues((prev) => ({ ...prev, estimate_number_prefix: e.target.value }))
+                            }
+                            placeholder="EST"
+                            style={theme.formInput}
+                          />
+                        </label>
+                        <p style={{ margin: 0, fontSize: 12, color: "#475569" }}>
+                          Preview:{" "}
+                          <strong>
+                            {formatDocumentNumber(
+                              {
+                                format: estimateTemplateFormValues.estimate_number_format || DEFAULT_ESTIMATE_NUMBER_FORMAT,
+                                prefix: estimateTemplateFormValues.estimate_number_prefix || "EST",
+                                nextSequence: estimateNumberPreviewSeq,
+                              },
+                              new Date(),
+                            )}
+                          </strong>
+                        </p>
+                        <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+                          Invoice format
+                          <input
+                            value={estimateTemplateFormValues.invoice_number_format ?? ""}
+                            onChange={(e) =>
+                              setEstimateTemplateFormValues((prev) => ({ ...prev, invoice_number_format: e.target.value }))
+                            }
+                            placeholder={DEFAULT_INVOICE_NUMBER_FORMAT}
+                            style={theme.formInput}
+                          />
+                        </label>
+                        <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 600 }}>
+                          Invoice prefix (for {"{PREFIX}"})
+                          <input
+                            value={estimateTemplateFormValues.invoice_number_prefix ?? ""}
+                            onChange={(e) =>
+                              setEstimateTemplateFormValues((prev) => ({ ...prev, invoice_number_prefix: e.target.value }))
+                            }
+                            placeholder="INV"
+                            style={theme.formInput}
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                </details>
                 {estimateTemplateItemsText.length > 0 ? (
                   <details
                     style={{
@@ -6011,7 +6354,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                         jobTypeId: (selectedQuote as QuoteRow).job_type_id,
                                         entityCount: quoteMediaRows.length,
                                         jobDetailsText,
-                                        customerJobDescriptionText,
+                                        customerJobDescriptionText: customerFacingNotesText,
                                         lineItemCount: selectedQuoteItems.length,
                                         includeJobDescription: quoteIncludeJobDescription,
                                       })
@@ -6118,10 +6461,16 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               onJobDetailsVoiceStop={stopJobDetailsVoice}
                               onJobDescriptionContinue={handleGuideJobDescriptionContinue}
                               onJobDescriptionSkip={handleGuideJobDescriptionSkip}
-                              onJobDescriptionOpen={() => openGuideSection(jobDescriptionSectionRef)}
+                              onJobDescriptionOpen={() => {
+                                setQuoteSecondaryNotesFoldOpen(jobDetailsDefault !== "customer")
+                                openGuideSection(jobDetailsSectionRef)
+                              }}
                               jobDescriptionBusy={estimateGuideBusy}
-                              jobDescriptionNotes={customerJobDescriptionText}
-                              onJobDescriptionNotesChange={setCustomerJobDescriptionText}
+                              jobDescriptionNotes={customerFacingNotesText}
+                              onJobDescriptionNotesChange={(v) => {
+                                if (jobDetailsDefault === "customer") setJobDetailsText(v)
+                                else setSecondaryNotesText(v)
+                              }}
                               onQuoteItemsContinue={handleGuideQuoteItemsContinue}
                               onQuoteItemsSkip={handleGuideQuoteItemsSkip}
                               estimateLinePresets={estimateLinePresets}
@@ -6941,7 +7290,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                       <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, fontSize: 12 }}>
                                         <input
                                           type="checkbox"
-                                          checked={parsed.includeNote}
+                                          checked={parsed.includeNote || Boolean(parsed.note?.trim())}
                                           onChange={(e) =>
                                             void patchEntityAttachmentMetadataRow(row, {
                                               include_note: e.target.checked,
@@ -6952,46 +7301,29 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                         />
                                         Write description
                                       </label>
-                                      {parsed.includeNote ? (
+                                      {parsed.includeNote || Boolean(parsed.note?.trim()) ? (
                                         <div style={{ marginTop: 8 }}>
                                           <textarea
+                                            key={`ent-note-${row.id}-${parsed.note}`}
                                             rows={2}
-                                            placeholder="Short description…"
+                                            placeholder="Short description… (saves when you leave this field)"
                                             defaultValue={parsed.note}
                                             id={`ent-note-${row.id}`}
-                                            style={{ ...theme.formInput, width: "100%", maxWidth: 420, fontSize: 13 }}
-                                          />
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              const el = document.getElementById(`ent-note-${row.id}`) as HTMLTextAreaElement | null
-                                              const val = el?.value?.trim() ?? ""
+                                            onBlur={(e) => {
+                                              const val = e.target.value.trim()
+                                              if (val === (parsed.note || "").trim()) return
                                               void patchEntityAttachmentMetadataRow(row, {
                                                 include_note: true,
                                                 note: val,
                                                 attach_to_customer_copy: parsed.attachToCustomerCopy,
                                               })
                                             }}
-                                            style={{
-                                              marginTop: 6,
-                                              padding: "4px 10px",
-                                              fontSize: 12,
-                                              fontWeight: 600,
-                                              borderRadius: 4,
-                                              border: "none",
-                                              background: theme.primary,
-                                              color: "#fff",
-                                              cursor: "pointer",
-                                            }}
-                                          >
-                                            Save description
-                                          </button>
+                                            style={{ ...theme.formInput, width: "100%", maxWidth: 420, fontSize: 13 }}
+                                          />
+                                          <p style={{ margin: "4px 0 0", fontSize: 11, color: "#64748b" }}>
+                                            Autosaves when you leave the field — click again to edit anytime.
+                                          </p>
                                         </div>
-                                      ) : null}
-                                      {parsed.note?.trim() ? (
-                                        <p style={{ margin: "6px 0 0", fontSize: 12, color: "#475569" }}>
-                                          <strong>Saved:</strong> {parsed.note}
-                                        </p>
                                       ) : null}
                                       <label style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 8, fontSize: 12, lineHeight: 1.4 }}>
                                         <input
@@ -7006,9 +7338,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                           }
                                         />
                                         <span>
-                                          <span style={{ display: "block", fontWeight: 600 }}>Attach this to customer&apos;s copy</span>
+                                          <span style={{ display: "block", fontWeight: 600 }}>Include on customer estimate</span>
                                           <span style={{ display: "block", color: "#64748b", fontSize: 11, marginTop: 3 }}>
-                                            Off by default — turn on only when you want this file included on the estimate you send.
+                                            On by default — turn off to keep this file internal only.
                                           </span>
                                         </span>
                                       </label>
@@ -7029,6 +7361,9 @@ export default function QuotesPage(_props: QuotesPageProps) {
                             >
                               <summary style={ESTIMATE_WORKFLOW_SUMMARY_STYLE}>
                                 Job details
+                                <span style={{ fontWeight: 600, fontSize: 12, color: jobDetailsDefault === "customer" ? "#0369a1" : "#64748b" }}>
+                                  {jobDetailsDefault === "customer" ? "(customer view)" : "(internal only)"}
+                                </span>
                                 <EstimateGuideStatusMarker
                                   show={showEstimateWizardMarkers}
                                   variant={jobDetailsText.trim() ? "done" : estimateGuideFlags.jobDetailsSkipped ? "skipped" : "none"}
@@ -7184,62 +7519,44 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               </div>
                             </details>
 
-                            {quoteIncludeJobDescription ? (
-                              <details
-                                ref={jobDescriptionSectionRef}
-                                open={estimateJobDescriptionFoldOpen}
-                                onToggle={(e) => setEstimateJobDescriptionFoldOpen((e.target as HTMLDetailsElement).open)}
-                                style={{ ...ESTIMATE_WORKFLOW_SECTION_BASE, background: "#fff" }}
-                              >
-                                <summary style={ESTIMATE_WORKFLOW_SUMMARY_STYLE}>
-                                  {quoteJobDescriptionLabel}
-                                  <EstimateGuideStatusMarker
-                                    show={showEstimateWizardMarkers}
-                                    variant={
-                                      customerJobDescriptionText.trim()
-                                        ? "done"
-                                        : estimateGuideFlags.jobDescriptionSkipped
-                                          ? "skipped"
-                                          : "none"
-                                    }
-                                    label={quoteJobDescriptionLabel}
-                                  />
-                                </summary>
-                                <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-                                  <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-                                    Customer-facing summary shown on the exported estimate PDF/Word document.
-                                  </p>
-                                  {jobDetailsText.trim() && !customerJobDescriptionText.trim() ? (
-                                    <button
-                                      type="button"
-                                      onClick={copyJobDetailsToCustomerDescription}
-                                      style={{
-                                        justifySelf: "start",
-                                        padding: "8px 12px",
-                                        borderRadius: 6,
-                                        border: `1px solid ${theme.primary}`,
-                                        background: "#fff",
-                                        color: theme.primary,
-                                        fontWeight: 700,
-                                        fontSize: 13,
-                                        cursor: "pointer",
-                                      }}
-                                    >
-                                      Copy from job details
-                                    </button>
-                                  ) : null}
-                                  <textarea
-                                    id="estimate-customer-job-description"
-                                    aria-label={quoteJobDescriptionLabel}
-                                    rows={5}
-                                    placeholder="Describe the work in plain language your customer will understand…"
-                                    value={customerJobDescriptionText}
-                                    onChange={(e) => setCustomerJobDescriptionText(e.target.value)}
-                                    style={{ ...theme.formInput, resize: "vertical" }}
-                                  />
-                                </div>
-                              </details>
-                            ) : null}
+                            {quoteIncludeJobDescription ? null : null}
+                            <details
+                              open={quoteSecondaryNotesFoldOpen}
+                              onToggle={(e) => setQuoteSecondaryNotesFoldOpen((e.target as HTMLDetailsElement).open)}
+                              style={{ ...ESTIMATE_WORKFLOW_SECTION_BASE, background: "#fff" }}
+                            >
+                              <summary style={ESTIMATE_WORKFLOW_SUMMARY_STYLE}>
+                                {quoteSecondaryNotesFoldOpen || secondaryNotesText.trim()
+                                  ? jobDetailsDefault === "customer"
+                                    ? "Internal notes"
+                                    : "Customer view notes"
+                                  : jobDetailsDefault === "customer"
+                                    ? "Add Internal Notes"
+                                    : "Add notes for customer view"}
+                              </summary>
+                              <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+                                <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
+                                  {jobDetailsDefault === "customer"
+                                    ? "Staff-only notes — not shown on the customer estimate. Both note types are copied to the calendar event."
+                                    : "Shown on the customer estimate when filled. Both note types are copied to the calendar event."}
+                                </p>
+                                <textarea
+                                  id="estimate-secondary-notes"
+                                  aria-label={
+                                    jobDetailsDefault === "customer" ? "Internal notes" : "Notes for customer view"
+                                  }
+                                  rows={4}
+                                  placeholder={
+                                    jobDetailsDefault === "customer"
+                                      ? "Internal notes for your team…"
+                                      : "Describe the work for the customer estimate…"
+                                  }
+                                  value={secondaryNotesText}
+                                  onChange={(e) => setSecondaryNotesText(e.target.value)}
+                                  style={{ ...theme.formInput, resize: "vertical" }}
+                                />
+                              </div>
+                            </details>
 
               <details
                 ref={quoteItemsSectionRef}
@@ -8483,12 +8800,19 @@ export default function QuotesPage(_props: QuotesPageProps) {
                     <p style={{ margin: "0 0 8px", fontWeight: 700, fontSize: 14 }}>Export format</p>
                     <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
                       <select
-                        value={quoteExportFormat === "docx" ? ESTIMATE_FMT_DOCX : ESTIMATE_FMT_PDF}
+                        value={
+                          quoteExportFormat === "docx"
+                            ? ESTIMATE_FMT_DOCX
+                            : quoteExportFormat === "html"
+                              ? ESTIMATE_FMT_HTML
+                              : ESTIMATE_FMT_PDF
+                        }
                         onChange={(e) => setQuoteExportFormat(dropdownToExportFormat(e.target.value))}
                         style={{ ...theme.formInput, minWidth: 200, color: "#0f172a" }}
                       >
                         <option>{ESTIMATE_FMT_PDF}</option>
                         <option>{ESTIMATE_FMT_DOCX}</option>
+                        <option>{ESTIMATE_FMT_HTML}</option>
                       </select>
                       <button
                         type="button"

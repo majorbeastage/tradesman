@@ -104,6 +104,10 @@ export async function buildQuotePdfBytes(params: {
   } | null
   /** Photos/files marked for customer copy (shown after footer, before legal). */
   customerCopyAttachments?: QuotePdfCustomerCopyAttachment[]
+  /** Optional display number (custom estimate numbering). */
+  documentNumber?: string | null
+  /** Custom top-to-bottom order for body sections (header always first). */
+  sectionOrder?: Array<'intro' | 'job_description' | 'line_items' | 'photos' | 'footer' | 'legal'>
   sandboxWatermark?: boolean
 }): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
@@ -197,15 +201,21 @@ export async function buildQuotePdfBytes(params: {
     draw(`Prepared: ${d}`, 10, false, 0.4)
   }
   y -= 8
+  if (params.documentNumber?.trim()) {
+    draw(`No. ${params.documentNumber.trim()}`, 10, false, 0.35)
+    y -= 4
+  }
 
-  if (params.templateHeader?.trim()) {
+  const renderIntro = () => {
+    if (!params.templateHeader?.trim()) return
     for (const para of params.templateHeader.trim().split(/\n+/).slice(0, 12)) {
       drawWrappedParagraph(para, 10, 0.35)
     }
     y -= 6
   }
 
-  if (params.jobDescription?.trim()) {
+  const renderJobDescription = () => {
+    if (!params.jobDescription?.trim()) return
     const heading = params.jobDescriptionLabel?.trim() || "Job description"
     draw(heading, 11, true, 0.2)
     y -= 2
@@ -213,26 +223,30 @@ export async function buildQuotePdfBytes(params: {
     y -= 8
   }
 
-  draw("Line items", 11, true, 0.2)
-  y -= 4
-  params.items.forEach((row, idx) => {
-    const prefix = showNums ? `${idx + 1}. ` : ""
-    const line = `${prefix}${row.description.slice(0, 72)}  ×${row.quantity}  @ $${row.unitPrice.toFixed(2)}  = $${row.total.toFixed(2)}`
-    draw(line, 10, false, 0.3)
-  })
-  const grand = params.items.reduce((s, r) => s + r.total, 0)
-  y -= 6
-  draw(`Total: $${grand.toFixed(2)}`, 13, true, 0.1)
+  const renderLineItems = () => {
+    draw("Line items", 11, true, 0.2)
+    y -= 4
+    params.items.forEach((row, idx) => {
+      const prefix = showNums ? `${idx + 1}. ` : ""
+      const line = `${prefix}${row.description.slice(0, 72)}  ×${row.quantity}  @ $${row.unitPrice.toFixed(2)}  = $${row.total.toFixed(2)}`
+      draw(line, 10, false, 0.3)
+    })
+    const grand = params.items.reduce((s, r) => s + r.total, 0)
+    y -= 6
+    draw(`Total: $${grand.toFixed(2)}`, 13, true, 0.1)
+  }
 
-  if (params.templateFooter?.trim()) {
+  const renderFooter = () => {
+    if (!params.templateFooter?.trim()) return
     y -= 12
     for (const para of params.templateFooter.trim().split(/\n+/).slice(0, 12)) {
       drawWrappedParagraph(para, 9, 0.45)
     }
   }
 
-  const copyAtts = params.customerCopyAttachments?.filter((a) => a.publicUrl?.trim()) ?? []
-  if (copyAtts.length > 0) {
+  const renderPhotos = async () => {
+    const copyAtts = params.customerCopyAttachments?.filter((a) => a.publicUrl?.trim()) ?? []
+    if (copyAtts.length === 0) return
     y -= 16
     newPageIfNeeded(140)
     draw("Photos & files (customer copy)", 11, true, 0.12)
@@ -271,7 +285,8 @@ export async function buildQuotePdfBytes(params: {
     }
   }
 
-  if (params.legal?.body?.trim()) {
+  const renderLegal = () => {
+    if (!params.legal?.body?.trim()) return
     y -= 18
     newPageIfNeeded(120)
     draw("Terms and acknowledgment", 11, true, 0.12)
@@ -311,6 +326,19 @@ export async function buildQuotePdfBytes(params: {
         y -= lineH + 2
       }
     }
+  }
+
+  const order =
+    params.sectionOrder && params.sectionOrder.length
+      ? params.sectionOrder
+      : (["intro", "job_description", "line_items", "photos", "footer", "legal"] as const)
+  for (const section of order) {
+    if (section === "intro") renderIntro()
+    else if (section === "job_description") renderJobDescription()
+    else if (section === "line_items") renderLineItems()
+    else if (section === "footer") renderFooter()
+    else if (section === "photos") await renderPhotos()
+    else if (section === "legal") renderLegal()
   }
 
   return finalizePdfBytes(await doc.save(), { sandboxWatermark: params.sandboxWatermark })

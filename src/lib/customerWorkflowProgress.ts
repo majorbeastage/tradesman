@@ -1,5 +1,6 @@
 /**
  * Per-customer business workflow progress (manual step completion + estimate gates).
+ * Live account workflow is authoritative; stored node IDs are remapped via labels / orphan credit.
  */
 
 import type { BusinessWorkflowDoc, WorkflowNode } from "./businessWorkflow"
@@ -10,6 +11,7 @@ import type { OrganizationChartDoc } from "./organizationChart"
 import type { ExternalContactsDoc } from "./externalContacts"
 import type { LinkableOrgUser } from "./orgChartMembers"
 import { resolveWorkflowOrgAssigneeUserId } from "./workflowStepAutoShare"
+import { resolveLiveCompletedNodeIds } from "./workflowProgressResilience"
 
 export type SequentialWorkflowProgress = {
   currentNodeId: string | null
@@ -17,27 +19,38 @@ export type SequentialWorkflowProgress = {
   completedNodeIds: string[]
 }
 
+function completionHintsFromCustomerMetadata(customerMetadata: unknown) {
+  const meta = parseCustomerWorkflowMeta(customerMetadata)
+  return {
+    completedNodeIds: meta?.completedNodeIds ?? [],
+    completedNodeLabels: meta?.completedNodeLabels ?? [],
+  }
+}
+
 export function resolveSequentialWorkflowProgress(
   workflow: BusinessWorkflowDoc,
   customerMetadata: unknown,
 ): SequentialWorkflowProgress {
   const nodes = sortedWorkflowNodes(workflow)
+  const liveCompleted = new Set(
+    resolveLiveCompletedNodeIds(workflow, completionHintsFromCustomerMetadata(customerMetadata)),
+  )
   const meta = parseCustomerWorkflowMeta(customerMetadata)
-  const completed = new Set(meta?.completedNodeIds ?? [])
 
   let activeId = meta?.activeNodeId ?? null
-  if (activeId && completed.has(activeId)) activeId = null
+  if (activeId && liveCompleted.has(activeId)) activeId = null
+  if (activeId && !nodes.some((n) => n.id === activeId)) activeId = null
   if (!activeId) {
-    activeId = nodes.find((n) => !completed.has(n.id))?.id ?? null
+    activeId = nodes.find((n) => !liveCompleted.has(n.id))?.id ?? null
   }
 
   const active = activeId ? nodes.find((n) => n.id === activeId) : null
-  const allDone = nodes.length > 0 && nodes.every((n) => completed.has(n.id))
+  const allDone = nodes.length > 0 && nodes.every((n) => liveCompleted.has(n.id))
 
   return {
     currentNodeId: activeId,
     currentNodeLabel: active?.label ?? (allDone ? "Completed" : null),
-    completedNodeIds: nodes.filter((n) => completed.has(n.id)).map((n) => n.id),
+    completedNodeIds: nodes.filter((n) => liveCompleted.has(n.id)).map((n) => n.id),
   }
 }
 
@@ -67,11 +80,21 @@ export function buildCustomerWorkflowStepCompleteUpdate(input: {
     input.externalContacts,
     input.linkableUsers,
   )
+  const completedNode = input.workflow.nodes.find((n) => n.id === input.nodeId)
+  const prevMeta = parseCustomerWorkflowMeta(input.customerMetadata)
+  const prevLabels = [...(prevMeta?.completedNodeLabels ?? [])]
+  if (
+    completedNode?.label?.trim() &&
+    !prevLabels.some((l) => l.trim().toLowerCase() === completedNode.label.trim().toLowerCase())
+  ) {
+    prevLabels.push(completedNode.label.trim())
+  }
   const metadata = mergeCustomerWorkflowMeta(input.customerMetadata, {
     quoteId: input.quoteId ?? null,
     activeNodeId: progress.currentNodeId,
     departmentKey,
     completedNodeIds: progress.completedNodeIds,
+    completedNodeLabels: prevLabels,
     pendingNodeIds: [],
   })
   return {
@@ -117,11 +140,16 @@ export function findFirstEstimateWorkflowNode(workflow: BusinessWorkflowDoc): Wo
 export function canStartEstimateForCustomer(
   workflow: BusinessWorkflowDoc,
   customerMetadata: unknown,
+  opts?: { bypass?: boolean },
 ): { allowed: boolean; blockingStepLabel?: string } {
+  if (opts?.bypass) return { allowed: true }
+
   const estimateNode = findFirstEstimateWorkflowNode(workflow)
   if (!estimateNode) return { allowed: true }
 
-  const completed = new Set(parseCustomerWorkflowMeta(customerMetadata)?.completedNodeIds ?? [])
+  const completed = new Set(
+    resolveLiveCompletedNodeIds(workflow, completionHintsFromCustomerMetadata(customerMetadata)),
+  )
   const nodes = sortedWorkflowNodes(workflow)
   for (const node of nodes) {
     if (node.order >= estimateNode.order) break

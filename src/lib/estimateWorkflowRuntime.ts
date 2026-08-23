@@ -22,6 +22,7 @@ import {
   ORG_CHART_META_KEY,
 } from "./organizationChart"
 import type { LinkableOrgUser } from "./orgChartMembers"
+import { canBypassWorkflowProcessGates, resolveLiveCompletedNodeIds } from "./workflowProgressResilience"
 
 export const QUOTE_INTERNAL_WORKFLOW_META_KEY = "internal_workflow_v1"
 
@@ -242,6 +243,15 @@ function nodeById(doc: BusinessWorkflowDoc, id: string): WorkflowNode | null {
   return doc.nodes.find((n) => n.id === id) ?? null
 }
 
+function quoteLiveCompletedIds(doc: BusinessWorkflowDoc, state: QuoteInternalWorkflowState): Set<string> {
+  return new Set(
+    resolveLiveCompletedNodeIds(doc, {
+      completedNodeIds: state.completedNodeIds,
+      historyLabels: state.history.map((h) => h.nodeLabel).filter(Boolean),
+    }),
+  )
+}
+
 function prerequisitesMet(
   doc: BusinessWorkflowDoc,
   targetNodeId: string,
@@ -250,13 +260,14 @@ function prerequisitesMet(
   const incoming = incomingEdges(doc, targetNodeId)
   if (incoming.length === 0) return true
 
+  const completed = quoteLiveCompletedIds(doc, state)
   const multi = incoming.filter((e) => e.approval === "needs_multiple_approvals")
   if (multi.length > 0) {
-    return multi.every((e) => state.completedNodeIds.includes(e.fromId))
+    return multi.every((e) => completed.has(e.fromId))
   }
 
   for (const edge of incoming) {
-    if (state.completedNodeIds.includes(edge.fromId)) continue
+    if (completed.has(edge.fromId)) continue
     if (edge.approval === "approved") {
       return false
     }
@@ -335,10 +346,16 @@ export function isWorkflowProcessOverseer(
   userId: string | null | undefined,
   workflow: BusinessWorkflowDoc,
   profileRole?: string | null,
+  accountOwnerUserId?: string | null,
 ): boolean {
   if (!userId) return false
-  const role = (profileRole ?? "").trim().toLowerCase()
-  if (role === "admin" || role === "office_manager" || role === "corporate_management") return true
+  if (canBypassWorkflowProcessGates(profileRole, {
+    userId,
+    accountOwnerUserId: accountOwnerUserId ?? userId,
+    processOverseerUserIds: workflow.processOverseerUserIds ?? null,
+  })) {
+    return true
+  }
   return (workflow.processOverseerUserIds ?? []).includes(userId)
 }
 
@@ -405,13 +422,25 @@ export function filterWorkflowActionsForUser(
 export function canSendEstimateToCustomer(
   workflow: BusinessWorkflowDoc,
   state: QuoteInternalWorkflowState,
+  opts?: { bypass?: boolean },
 ): { allowed: boolean; reason?: string } {
+  if (opts?.bypass) return { allowed: true }
+
+  const liveCompleted = new Set(
+    resolveLiveCompletedNodeIds(workflow, {
+      completedNodeIds: state.completedNodeIds,
+      historyLabels: state.history.map((h) => h.nodeLabel).filter(Boolean),
+    }),
+  )
+  // Drop pending IDs that no longer exist on the live workflow (legacy lock).
+  const livePending = state.pendingNodeIds.filter((id) => workflow.nodes.some((n) => n.id === id))
+
   const signoff = findWorkflowNodeByLabelPatterns(workflow, [
     "estimate signed by shop manager",
     "signed by shop manager",
   ])
-  if (signoff && !state.completedNodeIds.includes(signoff.id)) {
-    const pending = state.pendingNodeIds.includes(signoff.id)
+  if (signoff && !liveCompleted.has(signoff.id)) {
+    const pending = livePending.includes(signoff.id)
     return {
       allowed: false,
       reason: pending
@@ -424,7 +453,7 @@ export function canSendEstimateToCustomer(
   if (customerNode) {
     const inc = incomingEdges(workflow, customerNode.id)
     for (const edge of inc) {
-      if (edge.approval !== "approved" && !state.completedNodeIds.includes(edge.fromId)) {
+      if (edge.approval !== "approved" && !liveCompleted.has(edge.fromId)) {
         const fromNode = nodeById(workflow, edge.fromId)
         return {
           allowed: false,
@@ -434,23 +463,32 @@ export function canSendEstimateToCustomer(
     }
   }
 
-  if (state.pendingNodeIds.length > 0) {
-    const labels = state.pendingNodeIds
-      .map((id) => nodeById(workflow, id)?.label ?? id)
-      .join(", ")
+  if (livePending.length > 0) {
+    const labels = livePending.map((id) => nodeById(workflow, id)?.label ?? id).join(", ")
     return { allowed: false, reason: `Pending approval: ${labels}` }
   }
 
   return { allowed: true }
 }
 
-export function canBypassEstimateApprovals(profileRole: string | null | undefined, metadata: unknown): boolean {
-  const role = (profileRole ?? "").trim().toLowerCase()
-  if (role === "admin" || role === "corporate_management" || role === "office_manager") return true
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return false
-  const raw = (metadata as Record<string, unknown>).estimate_approval_bypass_v1
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false
-  return (raw as Record<string, unknown>).enabled === true
+export function canBypassEstimateApprovals(
+  profileRole: string | null | undefined,
+  metadata: unknown,
+  opts?: { userId?: string | null; accountOwnerUserId?: string | null; workflow?: BusinessWorkflowDoc | null },
+): boolean {
+  let estimateBypassEnabled = false
+  if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+    const raw = (metadata as Record<string, unknown>).estimate_approval_bypass_v1
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      estimateBypassEnabled = (raw as Record<string, unknown>).enabled === true
+    }
+  }
+  return canBypassWorkflowProcessGates(profileRole, {
+    userId: opts?.userId,
+    accountOwnerUserId: opts?.accountOwnerUserId,
+    processOverseerUserIds: opts?.workflow?.processOverseerUserIds ?? null,
+    estimateBypassEnabled,
+  })
 }
 
 export function computeEstimateWorkflowActions(input: {
@@ -466,8 +504,8 @@ export function computeEstimateWorkflowActions(input: {
   const { workflow, orgChart, externalContacts, linkableUsers, state, quoteHasLineItems, canBypassApprovals } = input
   const customerCompleted = input.customerCompletedNodeIds ?? []
   const actions: WorkflowActionButton[] = []
-  const completed = new Set(state.completedNodeIds)
-  const pending = new Set(state.pendingNodeIds)
+  const completed = quoteLiveCompletedIds(workflow, state)
+  const pending = new Set(state.pendingNodeIds.filter((id) => workflow.nodes.some((n) => n.id === id)))
 
   if (!quoteHasLineItems) return actions
 
@@ -541,9 +579,9 @@ export function computeEstimateWorkflowActions(input: {
     })
   }
 
-  const customerGate = canSendEstimateToCustomer(workflow, state)
+  const customerGate = canSendEstimateToCustomer(workflow, state, { bypass: Boolean(canBypassApprovals) })
   const customerNode = findWorkflowNodeByLabelPatterns(workflow, ["sent to customer", "send to customer"])
-  if (canBypassApprovals && !customerGate.allowed && state.pendingNodeIds.length > 0) {
+  if (canBypassApprovals && !customerGate.allowed && pending.size > 0) {
     actions.push({
       kind: "bypass_approval",
       nodeId: state.pendingNodeIds[0] ?? "bypass",

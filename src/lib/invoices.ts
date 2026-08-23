@@ -86,12 +86,24 @@ function isRecord(x: unknown): x is Record<string, unknown> {
   return x !== null && typeof x === "object" && !Array.isArray(x)
 }
 
-export function generateInvoiceNumber(): string {
+import {
+  bumpDocumentNumberMeta,
+  formatDocumentNumber,
+  parseDocumentNumberSettings,
+} from "./documentNumberFormat"
+
+export function generateInvoiceNumber(meta?: Record<string, unknown> | null): string {
+  if (meta && typeof meta === "object") {
+    const settings = parseDocumentNumberSettings(meta, "invoice")
+    return formatDocumentNumber(settings)
+  }
   const d = new Date()
   const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`
   const suffix = Math.random().toString(36).slice(2, 6).toUpperCase()
   return `INV-${ymd}-${suffix}`
 }
+
+export { bumpDocumentNumberMeta, formatDocumentNumber, parseDocumentNumberSettings }
 
 export function parseInvoices(raw: unknown): InvoiceRecord[] {
   if (!Array.isArray(raw)) return []

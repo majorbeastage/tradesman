@@ -22,6 +22,7 @@ import type {
 } from "../../lib/businessPublicProfile"
 import {
   DEFAULT_BUSINESS_PROFILE_THEME,
+  WEBSITE_FREEFORM_DESIGN_WIDTH,
   defaultWebsiteFeatureCards,
   defaultWebsiteHomeSectionOrder,
   defaultWebsiteNavBar,
@@ -85,6 +86,8 @@ export type WebsiteCanvasEditorProps = {
   onReorderHomeSection?: (fromId: string, toId: string) => void
   /** Assign image URL onto a freeform canvas photo item. */
   onDropImageOnCanvasItem?: (itemId: string, imageUrl: string) => void
+  /** Drop photo onto empty canvas — create a photo field at approximate design coords. */
+  onCreatePhotoAtDrop?: (imageUrl: string, offsetX: number, offsetY: number) => void
 }
 
 type ContactFormProps = {
@@ -683,6 +686,8 @@ function CanvasEditable({
   enableMoveResize = false,
   offsetX = 0,
   offsetY = 0,
+  /** When set, stored offsets are design-space; screen deltas are divided by this scale. */
+  positionScale = 1,
 }: {
   targetId: string
   editMode?: boolean
@@ -699,6 +704,7 @@ function CanvasEditable({
   enableMoveResize?: boolean
   offsetX?: number
   offsetY?: number
+  positionScale?: number
 }) {
   if (!editMode) {
     if (Tag === "a") {
@@ -717,8 +723,11 @@ function CanvasEditable({
   }
   const selected = selectedTargetId === targetId
   const Comp = Tag === "a" ? "span" : Tag
+  const scale = positionScale > 0 ? positionScale : 1
   const ox = offsetX || 0
   const oy = offsetY || 0
+  const screenOx = ox * scale
+  const screenOy = oy * scale
   const { transform: _styleTransform, ...styleWithoutTransform } = style ?? {}
 
   const startMove = (e: ReactPointerEvent) => {
@@ -738,9 +747,9 @@ function CanvasEditable({
       /* ignore */
     }
     const onMove = (ev: PointerEvent) => {
-      const nextX = Math.max(-600, Math.min(600, Math.round(ox0 + (ev.clientX - startX))))
-      const nextY = Math.max(-600, Math.min(600, Math.round(oy0 + (ev.clientY - startY))))
-      target.style.transform = `translate(${nextX}px, ${nextY}px)`
+      const nextX = Math.max(-900, Math.min(900, Math.round(ox0 + (ev.clientX - startX) / scale)))
+      const nextY = Math.max(-400, Math.min(2800, Math.round(oy0 + (ev.clientY - startY) / scale)))
+      target.style.transform = `translate(${nextX * scale}px, ${nextY * scale}px)`
       target.dataset.dragX = String(nextX)
       target.dataset.dragY = String(nextY)
     }
@@ -771,14 +780,14 @@ function CanvasEditable({
     const startX = e.clientX
     const startW = el?.getBoundingClientRect().width ?? 200
     const onMove = (ev: PointerEvent) => {
-      const w = Math.max(80, Math.round(startW + (ev.clientX - startX)))
-      if (el) el.style.maxWidth = `${w}px`
-      ;(e.currentTarget as HTMLElement).dataset.resizeW = String(w)
+      const wScreen = Math.max(80 * scale, Math.round(startW + (ev.clientX - startX)))
+      if (el) el.style.maxWidth = `${wScreen}px`
+      ;(e.currentTarget as HTMLElement).dataset.resizeW = String(Math.round(wScreen / scale))
     }
     const onUp = () => {
       window.removeEventListener("pointermove", onMove)
       window.removeEventListener("pointerup", onUp)
-      const w = Number((e.currentTarget as HTMLElement).dataset.resizeW ?? startW)
+      const w = Number((e.currentTarget as HTMLElement).dataset.resizeW ?? Math.round(startW / scale))
       onPatchTextStyle(targetId, { maxWidth: w })
     }
     window.addEventListener("pointermove", onMove)
@@ -791,7 +800,7 @@ function CanvasEditable({
     position: styleWithoutTransform.position ?? (enableMoveResize ? "relative" : undefined),
     // Prefer caller display (e.g. freeform block width) over inline-block shrink-wrap.
     display: styleWithoutTransform.display ?? (enableMoveResize && !styleWithoutTransform.width ? "inline-block" : styleWithoutTransform.display),
-    transform: enableMoveResize ? `translate(${ox}px, ${oy}px)` : _styleTransform,
+    transform: enableMoveResize ? `translate(${screenOx}px, ${screenOy}px)` : _styleTransform,
     touchAction: enableMoveResize ? "none" : undefined,
     userSelect: enableMoveResize ? "none" : undefined,
   }
@@ -845,13 +854,48 @@ function FreeformCanvasLayer({
   /** When true, only scroll-fixed items; when false, skip pinned items. */
   pinnedOnly?: boolean
 }) {
+  const layerRef = useRef<HTMLDivElement | null>(null)
+  const [layerWidth, setLayerWidth] = useState(WEBSITE_FREEFORM_DESIGN_WIDTH)
+  useEffect(() => {
+    const el = layerRef.current
+    if (!el || typeof ResizeObserver === "undefined") return
+    const apply = () => setLayerWidth(Math.max(320, Math.round(el.clientWidth || WEBSITE_FREEFORM_DESIGN_WIDTH)))
+    apply()
+    const ro = new ResizeObserver(apply)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [items.length, pinnedOnly])
+  const scale = layerWidth / WEBSITE_FREEFORM_DESIGN_WIDTH
   const filtered = items.filter((item) => {
     const pinned = Boolean(textStyles[`canvas.${item.id}`]?.scrollFixed)
     return pinnedOnly ? pinned : !pinned
   })
-  if (!filtered.length) return null
+  if (!filtered.length && !(editMode && editor?.onCreatePhotoAtDrop && !pinnedOnly)) return null
   return (
-    <div className={`bp-freeform-layer${pinnedOnly ? " bp-freeform-layer-pinned" : ""}`}>
+    <div
+      ref={layerRef}
+      className={`bp-freeform-layer${pinnedOnly ? " bp-freeform-layer-pinned" : ""}`}
+      onDragOver={(e) => {
+        if (!editMode || pinnedOnly || !editor?.onCreatePhotoAtDrop) return
+        e.preventDefault()
+      }}
+      onDrop={(e) => {
+        if (!editMode || pinnedOnly || !editor?.onCreatePhotoAtDrop) return
+        const t = e.target as HTMLElement
+        if (t.closest?.('[data-edit-target^="canvas."]')) return
+        e.preventDefault()
+        e.stopPropagation()
+        const dropUrl = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain")
+        if (!dropUrl?.startsWith("http")) return
+        const rect = layerRef.current?.getBoundingClientRect()
+        if (!rect) return
+        const localX = e.clientX - rect.left - rect.width / 2
+        const localY = e.clientY - rect.top - 140
+        const ox = Math.max(-900, Math.min(900, Math.round(localX / scale)))
+        const oy = Math.max(-400, Math.min(2800, Math.round(localY / scale)))
+        editor.onCreatePhotoAtDrop(dropUrl.trim(), ox, oy)
+      }}
+    >
       {filtered.map((item) => {
         const targetId = `canvas.${item.id}`
         const st = textStyles[targetId] ?? {}
@@ -872,12 +916,12 @@ function FreeformCanvasLayer({
               className={`bp-freeform-item${editMode ? " bp-edit-target" : ""}${selected ? " bp-edit-selected" : ""}${pinnedClass}`}
               data-edit-target={targetId}
               style={{
-                width,
-                height: height || 150,
-                transform: `translate(${ox}px, ${oy}px)`,
+                width: width * scale,
+                height: (height || 150) * scale,
+                transform: `translate(${ox * scale}px, ${oy * scale}px)`,
                 left: "50%",
-                marginLeft: -width / 2,
-                top: 140,
+                marginLeft: -(width * scale) / 2,
+                top: 140 * scale,
               }}
               onClick={(e) => {
                 if (!editMode) return
@@ -909,9 +953,9 @@ function FreeformCanvasLayer({
                   /* ignore */
                 }
                 const onMove = (ev: PointerEvent) => {
-                  const nextX = Math.max(-700, Math.min(700, Math.round(ox0 + (ev.clientX - startX))))
-                  const nextY = Math.max(-200, Math.min(2400, Math.round(oy0 + (ev.clientY - startY))))
-                  el.style.transform = `translate(${nextX}px, ${nextY}px)`
+                  const nextX = Math.max(-900, Math.min(900, Math.round(ox0 + (ev.clientX - startX) / scale)))
+                  const nextY = Math.max(-400, Math.min(2800, Math.round(oy0 + (ev.clientY - startY) / scale)))
+                  el.style.transform = `translate(${nextX * scale}px, ${nextY * scale}px)`
                   el.dataset.dragX = String(nextX)
                   el.dataset.dragY = String(nextY)
                 }
@@ -1047,19 +1091,21 @@ function FreeformCanvasLayer({
             enableMoveResize={editMode}
             offsetX={ox}
             offsetY={oy}
+            positionScale={scale}
             style={{
               ...textCss,
               boxSizing: "border-box",
               left: "50%",
-              marginLeft: -width / 2,
-              top: 140,
-              width,
-              maxWidth: width,
-              minWidth: width,
+              marginLeft: -(width * scale) / 2,
+              top: 140 * scale,
+              width: width * scale,
+              maxWidth: width * scale,
+              minWidth: width * scale,
               position: st.scrollFixed ? "fixed" : "absolute",
               display: "block",
               marginTop: 0,
               zIndex: st.scrollFixed ? 45 : 5,
+              transform: editMode ? undefined : `translate(${ox * scale}px, ${oy * scale}px)`,
               background: st.showFieldBackground
                 ? st.fieldBackgroundColor || "rgba(255,255,255,0.88)"
                 : "transparent",

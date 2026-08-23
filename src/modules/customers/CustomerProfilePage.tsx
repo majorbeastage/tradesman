@@ -49,7 +49,7 @@ import CustomerCoiQuickActions, { CustomerEventCoiButton } from "../../component
 import { leadFitBadgeEl } from "../../lib/leadFitUi"
 import { getFreshAccessToken, forceRefreshAccessToken } from "../../lib/authPlatformApi"
 import { platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
-import { loadAccountWorkflowBundleFromMetadata, mergeQuoteInternalWorkflowMetadata, parseQuoteInternalWorkflow } from "../../lib/estimateWorkflowRuntime"
+import { canBypassEstimateApprovals, loadAccountWorkflowBundleFromMetadata, mergeQuoteInternalWorkflowMetadata, parseQuoteInternalWorkflow } from "../../lib/estimateWorkflowRuntime"
 import { loadCustomerWorkflowSnapshotFromProfile, mergeCustomerWorkflowMeta, resolveWorkflowNodeDepartmentKey } from "../../lib/customerWorkflowRouting"
 import { CustomerWorkflowStatusPanel } from "../../components/CustomerWorkflowStatusPanel"
 import CustomerWorkflowProgressViewer from "../../components/CustomerWorkflowProgressViewer"
@@ -1098,7 +1098,19 @@ export default function CustomerProfilePage({ setPage }: Props) {
   }
 
   const selfOmPolicy = parseOmCalendarPolicy(profileMetadata)
-  const allowWorkflowBypass = selfOmPolicy.allow_bypass_workflow_approval === true
+  const allowWorkflowBypass =
+    selfOmPolicy.allow_bypass_workflow_approval === true ||
+    canBypassEstimateApprovals(null, profileMetadata, {
+      userId: user?.id ?? null,
+      accountOwnerUserId: customerOwnerUserId,
+      workflow: workflowBundle?.workflow ?? null,
+    }) ||
+    Boolean(user?.id && customerOwnerUserId && user.id === customerOwnerUserId)
+
+  async function bypassCurrentWorkflowStep() {
+    if (!inferredWorkflow?.currentNodeId) return
+    await completeWorkflowStepManually(inferredWorkflow.currentNodeId)
+  }
 
   const contactHeaderActions = (
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -1498,6 +1510,7 @@ export default function CustomerProfilePage({ setPage }: Props) {
                 inferred={inferredWorkflow}
                 calendarContext={workflowCalendarContext}
                 allowBypass={allowWorkflowBypass}
+                onBypassStep={() => void bypassCurrentWorkflowStep()}
                 rollbackBusy={workflowRollbackBusy}
                 onOpenWorkflowChart={() => setWorkflowChartOpen(true)}
                 onOpenCurrentItem={

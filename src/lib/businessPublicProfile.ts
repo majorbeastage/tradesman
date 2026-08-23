@@ -191,7 +191,10 @@ export type WebsiteTextStyle = {
   fontStyle?: string
   letterSpacing?: string
   textTransform?: "none" | "uppercase" | "capitalize"
-  /** Canvas nudge (px) — Carrd-style drag position. */
+  /**
+   * Canvas nudge in design-space pixels (reference width 1200).
+   * Live/preview scale these by containerWidth / WEBSITE_FREEFORM_DESIGN_WIDTH.
+   */
   offsetX?: number
   offsetY?: number
   /** Optional max width for wrapping / resize. */
@@ -230,6 +233,9 @@ export const WEBSITE_FONT_OPTIONS = [
 ] as const
 
 export const WEBSITE_FONT_SIZE_OPTIONS = ["12px", "14px", "16px", "18px", "22px", "28px", "36px", "48px", "64px"] as const
+
+/** Freeform placement is authored at this width; render scales to the live container. */
+export const WEBSITE_FREEFORM_DESIGN_WIDTH = 1200
 
 /** Home-page blocks the editor can turn off entirely. */
 export const WEBSITE_HOME_SECTION_OPTIONS = [
@@ -528,8 +534,9 @@ export function parseWebsiteTextStyles(raw: unknown): WebsiteTextStyles {
     if (o.textTransform === "none" || o.textTransform === "uppercase" || o.textTransform === "capitalize") {
       style.textTransform = o.textTransform
     }
-    if (typeof o.offsetX === "number" && Number.isFinite(o.offsetX)) style.offsetX = Math.max(-600, Math.min(600, Math.round(o.offsetX)))
-    if (typeof o.offsetY === "number" && Number.isFinite(o.offsetY)) style.offsetY = Math.max(-600, Math.min(600, Math.round(o.offsetY)))
+    // Wide clamps so deep-page / wide placements survive save (must match editor drag limits).
+    if (typeof o.offsetX === "number" && Number.isFinite(o.offsetX)) style.offsetX = Math.max(-900, Math.min(900, Math.round(o.offsetX)))
+    if (typeof o.offsetY === "number" && Number.isFinite(o.offsetY)) style.offsetY = Math.max(-400, Math.min(2800, Math.round(o.offsetY)))
     if (typeof o.maxWidth === "number" && Number.isFinite(o.maxWidth)) style.maxWidth = Math.max(80, Math.min(1200, Math.round(o.maxWidth)))
     if (isWebsiteBuiltInLinkTarget(o.linkTarget) && o.linkTarget !== "none") style.linkTarget = o.linkTarget
     if (typeof o.imageSize === "number" && Number.isFinite(o.imageSize)) {
