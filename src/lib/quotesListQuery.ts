@@ -156,7 +156,8 @@ async function fetchQuoteRows(
     }
     const { data, error } = await q
     if (!error) {
-      return { rows: normalizeQuoteRows((data ?? []) as QuoteDbRow[], mode), error: null }
+      const raw = (data ?? []) as unknown as QuoteDbRow[]
+      return { rows: normalizeQuoteRows(raw, mode), error: null }
     }
 
     const msg = error.message ?? ""
