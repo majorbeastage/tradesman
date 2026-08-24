@@ -71,7 +71,33 @@ export type CustomerReceiptPickerRow = {
   service_address: string
 }
 
+export function formatCustomerReceiptPickerLabel(c: CustomerReceiptPickerRow): string {
+  const name = (c.display_name ?? "").trim() || c.id
+  const contact = c.phone?.trim() || c.email?.trim() || c.service_address?.trim()
+  return contact ? `${name} · ${contact}` : name
+}
+
+export function filterCustomerReceiptPickerRows(
+  rows: CustomerReceiptPickerRow[],
+  query: string,
+  limit = 40,
+): CustomerReceiptPickerRow[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return rows.slice(0, limit)
+  return rows
+    .filter(
+      (c) =>
+        c.display_name.toLowerCase().includes(q) ||
+        c.phone.toLowerCase().includes(q) ||
+        c.email.toLowerCase().includes(q) ||
+        c.service_address.toLowerCase().includes(q) ||
+        c.id.toLowerCase().includes(q),
+    )
+    .slice(0, limit)
+}
+
 const CUSTOM_RECEIPTS_META_KEY = "custom_receipts"
+const RECEIPT_CUSTOMER_IN_CHUNK = 80
 
 function isRecord(x: unknown): x is Record<string, unknown> {
   return x !== null && typeof x === "object" && !Array.isArray(x)
@@ -406,33 +432,57 @@ export async function loadCustomersForCustomReceipt(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<CustomerReceiptPickerRow[]> {
+  const ownerId = userId.trim()
+  if (!ownerId) return []
+
   const { data, error } = await supabase
     .from("customers")
-    .select("id, display_name, service_address, job_pipeline_status, metadata, customer_identifiers ( type, value )")
-    .eq("user_id", userId)
+    .select("id, display_name, service_address, job_pipeline_status, metadata")
+    .eq("user_id", ownerId)
     .order("display_name", { ascending: true })
     .limit(3000)
   if (error) throw error
-  return (data ?? [])
-    .filter((row) =>
-      isCustomerEligibleForSchedulePicker({
-        metadata: (row as { metadata?: unknown }).metadata,
-        job_pipeline_status: (row as { job_pipeline_status?: string | null }).job_pipeline_status,
-      }),
-    )
-    .map((row) => {
-    const ids = (row as { customer_identifiers?: Array<{ type?: string; value?: string | null }> }).customer_identifiers ?? []
-    const phone = ids.find((i) => i.type === "phone")?.value?.trim() ?? ""
-    const email = ids.find((i) => i.type === "email")?.value?.trim() ?? ""
+
+  const eligible = (data ?? []).filter((row) =>
+    isCustomerEligibleForSchedulePicker({
+      metadata: (row as { metadata?: unknown }).metadata,
+      job_pipeline_status: (row as { job_pipeline_status?: string | null }).job_pipeline_status,
+    }),
+  )
+
+  const phoneByCustomer = new Map<string, string>()
+  const emailByCustomer = new Map<string, string>()
+  const ids = eligible.map((row) => String((row as { id: string }).id))
+  for (let i = 0; i < ids.length; i += RECEIPT_CUSTOMER_IN_CHUNK) {
+    const chunk = ids.slice(i, i + RECEIPT_CUSTOMER_IN_CHUNK)
+    const { data: identRows, error: identErr } = await supabase
+      .from("customer_identifiers")
+      .select("customer_id, type, value")
+      .eq("user_id", ownerId)
+      .in("customer_id", chunk)
+      .in("type", ["phone", "email"])
+    if (identErr) break
+    for (const ident of identRows ?? []) {
+      const cid = String((ident as { customer_id?: string }).customer_id ?? "").trim()
+      const type = String((ident as { type?: string }).type ?? "").toLowerCase()
+      const value = String((ident as { value?: string | null }).value ?? "").trim()
+      if (!cid || !value) continue
+      if (type === "phone" && !phoneByCustomer.has(cid)) phoneByCustomer.set(cid, value)
+      if (type === "email" && !emailByCustomer.has(cid)) emailByCustomer.set(cid, value)
+    }
+  }
+
+  return eligible.map((row) => {
+    const id = String((row as { id: string }).id)
     const service_address =
       typeof (row as { service_address?: string | null }).service_address === "string"
         ? String((row as { service_address?: string | null }).service_address).trim()
         : ""
     return {
-      id: String((row as { id: string }).id),
+      id,
       display_name: String((row as { display_name?: string | null }).display_name ?? "").trim() || "Customer",
-      phone,
-      email,
+      phone: phoneByCustomer.get(id) ?? "",
+      email: emailByCustomer.get(id) ?? "",
       service_address,
     }
   })

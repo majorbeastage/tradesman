@@ -5,6 +5,8 @@ import {
   buildCustomReceiptPdfBytes,
   customReceiptDraftToFormState,
   defaultCustomReceiptFormState,
+  filterCustomerReceiptPickerRows,
+  formatCustomerReceiptPickerLabel,
   formStateToCustomReceiptDraft,
   loadCustomReceiptsForCustomer,
   loadCustomersForCustomReceipt,
@@ -18,6 +20,8 @@ import {
 import { downloadPdfBlob, uint8ArrayToBase64 } from "../lib/documentPdf"
 import { useSandboxTrainingMode } from "../lib/sandboxTrainingUi"
 import { useAuth } from "../contexts/AuthContext"
+import { useCustomerDataScope } from "../hooks/useCustomerDataScope"
+import { useEffectiveUserId } from "../contexts/PortalViewContext"
 import { outboundMessagesJsonBody } from "../lib/platformToolsJsonBody"
 import { uploadBytesForOutbound } from "../lib/uploadCommAttachment"
 
@@ -43,8 +47,13 @@ export default function CustomReceiptModal({
 }: CustomReceiptModalProps) {
   const sandboxTraining = useSandboxTrainingMode()
   const { session } = useAuth()
+  const { dataUserId } = useCustomerDataScope()
+  const effectiveUserId = useEffectiveUserId()
+  const accountUserId = (dataUserId || effectiveUserId || userId || "").trim()
   const [form, setForm] = useState<CustomReceiptFormState>(() => defaultCustomReceiptFormState())
   const [customers, setCustomers] = useState<CustomerReceiptPickerRow[]>([])
+  const [customersLoading, setCustomersLoading] = useState(false)
+  const [customerSearch, setCustomerSearch] = useState("")
   const [savedReceipts, setSavedReceipts] = useState<CustomReceiptDraft[]>([])
   const [loadedDraftId, setLoadedDraftId] = useState<string>("")
   const [newDesc, setNewDesc] = useState("")
@@ -61,6 +70,7 @@ export default function CustomReceiptModal({
     if (!open) return
     setNotice(null)
     setLoadedDraftId("")
+    setCustomerSearch("")
     const base = defaultCustomReceiptFormState()
     if (initialCustomerId?.trim()) base.customerId = initialCustomerId.trim()
     setForm(base)
@@ -68,20 +78,32 @@ export default function CustomReceiptModal({
     setNewQty("1")
     setNewUnit("0")
     setNewKind("misc")
-    if (!supabase || !userId) return
+    if (!supabase || !accountUserId) return
+    setCustomersLoading(true)
     void (async () => {
       try {
-        const rows = await loadCustomersForCustomReceipt(supabase, userId)
+        const rows = await loadCustomersForCustomReceipt(supabase, accountUserId)
         setCustomers(rows)
         if (initialCustomerId?.trim()) {
           const match = rows.find((c) => c.id === initialCustomerId.trim())
-          if (match) applyCustomerRow(match)
+          if (match) {
+            applyCustomerRow(match)
+            setCustomerSearch(formatCustomerReceiptPickerLabel(match))
+          }
         }
       } catch (e) {
+        setCustomers([])
         setNotice(e instanceof Error ? e.message : String(e))
+      } finally {
+        setCustomersLoading(false)
       }
     })()
-  }, [open, supabase, userId, initialCustomerId])
+  }, [open, supabase, accountUserId, initialCustomerId])
+
+  const filteredCustomers = useMemo(
+    () => filterCustomerReceiptPickerRows(customers, customerSearch),
+    [customers, customerSearch],
+  )
 
   function applyCustomerRow(row: CustomerReceiptPickerRow) {
     setForm((prev) => ({
@@ -110,7 +132,7 @@ export default function CustomReceiptModal({
   if (!open) return null
 
   async function handleDownload() {
-    if (!supabase || !userId) return
+    if (!supabase || !accountUserId) return
     if (!form.customerName.trim()) {
       setNotice("Enter a customer name.")
       return
@@ -118,7 +140,7 @@ export default function CustomReceiptModal({
     setBusy(true)
     setNotice(null)
     try {
-      const template = await loadReceiptTemplateSettings(supabase, userId)
+      const template = await loadReceiptTemplateSettings(supabase, accountUserId)
       const bytes = await buildCustomReceiptPdfBytes(form, template, { sandboxWatermark: sandboxTraining })
       const slug = form.customerName.trim().replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 24) || "receipt"
       downloadPdfBlob(bytes, `receipt-${slug}.pdf`)
@@ -131,7 +153,7 @@ export default function CustomReceiptModal({
   }
 
   async function handleSaveToCustomer() {
-    if (!supabase || !userId) return
+    if (!supabase || !accountUserId) return
     const cid = form.customerId.trim()
     if (!cid) {
       setNotice("Link a customer from the dropdown to save this receipt on their profile.")
@@ -147,7 +169,7 @@ export default function CustomReceiptModal({
       const { data } = await supabase.from("customers").select("metadata").eq("id", cid).maybeSingle()
       const existing = savedReceipts.find((r) => r.id === loadedDraftId) ?? null
       const draft = formStateToCustomReceiptDraft(form, existing)
-      const next = await saveCustomReceiptToCustomerProfile(supabase, userId, cid, draft, data?.metadata)
+      const next = await saveCustomReceiptToCustomerProfile(supabase, accountUserId, cid, draft, data?.metadata)
       setSavedReceipts(next)
       setLoadedDraftId(draft.id)
       setNotice("Saved to customer profile.")
@@ -160,7 +182,7 @@ export default function CustomReceiptModal({
 
   async function handleSend(channel: "email" | "sms" | "both") {
     setSendMenuOpen(false)
-    if (!supabase || !userId) return
+    if (!supabase || !accountUserId) return
     const cid = form.customerId.trim()
     if (!cid) {
       setNotice("Select a customer first to send this receipt.")
@@ -190,7 +212,7 @@ export default function CustomReceiptModal({
     setSending(true)
     setNotice(null)
     try {
-      const template = await loadReceiptTemplateSettings(supabase, userId)
+      const template = await loadReceiptTemplateSettings(supabase, accountUserId)
       const bytes = await buildCustomReceiptPdfBytes(form, template, { sandboxWatermark: sandboxTraining })
       if (!bytes.length) throw new Error("Receipt PDF is empty.")
       const slug = form.customerName.trim().replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 24) || "receipt"
@@ -205,7 +227,7 @@ export default function CustomReceiptModal({
             to: email,
             subject: `Receipt from ${template.businessLabel}`,
             body: `Hi ${form.customerName.trim()},\n\nPlease find your receipt attached.${jobLine}\n\nThank you.`,
-            userId,
+            userId: accountUserId,
             customerId: cid,
             requireAttachments: true,
             attachments: [{ filename, content: uint8ArrayToBase64(bytes) }],
@@ -216,7 +238,7 @@ export default function CustomReceiptModal({
       }
 
       if (wantSms) {
-        const url = await uploadBytesForOutbound(userId, bytes, filename, "custom-receipt-sms", "application/pdf")
+        const url = await uploadBytesForOutbound(accountUserId, bytes, filename, "custom-receipt-sms", "application/pdf")
         if (!url) throw new Error("Could not upload the receipt for text.")
         const res = await fetch("/api/outbound-messages?__channel=sms", {
           method: "POST",
@@ -224,7 +246,7 @@ export default function CustomReceiptModal({
           body: outboundMessagesJsonBody({
             to: phone,
             body: `Hi ${form.customerName.trim()}, here is your receipt.`,
-            userId,
+            userId: accountUserId,
             customerId: cid,
             mediaPublicUrls: [url],
           }),
@@ -322,28 +344,110 @@ export default function CustomReceiptModal({
         <div style={{ display: "grid", gap: 12 }}>
           <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.text }}>
             Link customer (optional)
-            <select
-              value={form.customerId}
+            <input
+              type="search"
+              autoComplete="off"
+              placeholder="Type to search customers…"
+              value={customerSearch}
               onChange={(e) => {
-                const id = e.target.value
-                if (!id) {
+                const v = e.target.value
+                setCustomerSearch(v)
+                if (!form.customerId) return
+                const row = customers.find((c) => c.id === form.customerId)
+                const label = row ? formatCustomerReceiptPickerLabel(row) : ""
+                if (label && v.trim().toLowerCase() !== label.trim().toLowerCase()) {
                   setForm((prev) => ({ ...prev, customerId: "" }))
                   setSavedReceipts([])
                   setLoadedDraftId("")
-                  return
                 }
-                const row = customers.find((c) => c.id === id)
-                if (row) applyCustomerRow(row)
               }}
               style={{ ...theme.formInput, fontSize: 14 }}
+            />
+            <div
+              role="listbox"
+              aria-label="Matching customers"
+              style={{
+                maxHeight: 160,
+                overflowY: "auto",
+                border: `1px solid ${theme.border}`,
+                borderRadius: 8,
+                background: "#fafafa",
+              }}
             >
-              <option value="">— Manual entry —</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.display_name}
-                </option>
-              ))}
-            </select>
+              <button
+                type="button"
+                role="option"
+                aria-selected={!form.customerId}
+                onClick={() => {
+                  setForm((prev) => ({ ...prev, customerId: "" }))
+                  setCustomerSearch("")
+                  setSavedReceipts([])
+                  setLoadedDraftId("")
+                }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "10px 14px",
+                  fontSize: 14,
+                  border: "none",
+                  borderBottom: `1px solid ${theme.border}`,
+                  background: !form.customerId ? "#eff6ff" : "transparent",
+                  cursor: "pointer",
+                  color: "#64748b",
+                  fontWeight: !form.customerId ? 700 : 500,
+                }}
+              >
+                — Manual entry —
+              </button>
+              {customersLoading ? (
+                <div style={{ padding: "12px 14px", fontSize: 13, color: "#64748b" }}>Loading customers…</div>
+              ) : customers.length === 0 ? (
+                <div style={{ padding: "12px 14px", fontSize: 13, color: "#64748b" }}>
+                  No customers loaded. You can still enter details manually below.
+                </div>
+              ) : filteredCustomers.length === 0 ? (
+                <div style={{ padding: "12px 14px", fontSize: 13, color: "#64748b" }}>No matches.</div>
+              ) : (
+                filteredCustomers.map((c) => {
+                  const label = formatCustomerReceiptPickerLabel(c)
+                  const selected = form.customerId === c.id
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      onClick={() => {
+                        applyCustomerRow(c)
+                        setCustomerSearch(label)
+                      }}
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        textAlign: "left",
+                        padding: "10px 14px",
+                        fontSize: 14,
+                        border: "none",
+                        borderBottom: `1px solid ${theme.border}`,
+                        background: selected ? "#eff6ff" : "transparent",
+                        cursor: "pointer",
+                        color: theme.text,
+                        fontWeight: selected ? 700 : 500,
+                      }}
+                    >
+                      {label}
+                    </button>
+                  )
+                })
+              )}
+            </div>
+            {!customersLoading && customers.length > 0 ? (
+              <span style={{ fontSize: 12, color: "#64748b", fontWeight: 500 }}>
+                {customers.length} customer{customers.length === 1 ? "" : "s"} available
+                {customerSearch.trim() ? ` · showing ${filteredCustomers.length} match${filteredCustomers.length === 1 ? "" : "es"}` : ""}
+              </span>
+            ) : null}
           </label>
 
           {savedReceipts.length > 0 ? (

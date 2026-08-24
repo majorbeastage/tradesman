@@ -128,7 +128,7 @@ import {
   type SchedulingAddWizardPrefill,
 } from "../../lib/workflowNavigation"
 import { resolveDemoTeamPolicyFromOwnerMetadata } from "../../lib/sandboxDemoTeamPolicies"
-import { loadCustomersForCustomReceipt, type CustomerReceiptPickerRow } from "../../lib/customReceipt"
+import { loadCustomersForCustomReceipt, formatCustomerReceiptPickerLabel, type CustomerReceiptPickerRow } from "../../lib/customReceipt"
 import {
   loadEntityAttachmentsForCalendarEvent,
   deleteEntityAttachmentRow,
@@ -188,12 +188,6 @@ function formatJobTypeSelectLabel(jt: JobType): string {
     return `${jt.name} · ${hours === 1 ? "1 hr" : `${hours} hr`}`
   }
   return `${jt.name} · ${mins} min`
-}
-
-function formatAddCustomerPickerLabel(c: CustomerReceiptPickerRow): string {
-  const name = (c.display_name ?? "").trim() || c.id
-  const contact = c.phone?.trim() || c.email?.trim() || c.service_address?.trim()
-  return contact ? `${name} · ${contact}` : name
 }
 
 function isAddRecurrencePortalItem(item: PortalSettingItem): boolean {
@@ -3486,7 +3480,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     if (!showAddItem) return
     if (!addCustomerId) return
     const row = addCustomerOptions.find((c) => c.id === addCustomerId)
-    if (row) setAddCustomerSearch(formatAddCustomerPickerLabel(row))
+    if (row) setAddCustomerSearch(formatCustomerReceiptPickerLabel(row))
   }, [showAddItem, addCustomerId, addCustomerOptions])
 
   useEffect(() => {
@@ -4919,7 +4913,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                     setAddCustomerSearch(v)
                     if (!addCustomerId) return
                     const row = addCustomerOptions.find((c) => c.id === addCustomerId)
-                    const label = row ? formatAddCustomerPickerLabel(row) : ""
+                    const label = row ? formatCustomerReceiptPickerLabel(row) : ""
                     if (label && v.trim().toLowerCase() !== label.trim().toLowerCase()) {
                       setAddCustomerId(null)
                     }
@@ -4968,7 +4962,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
                     <div style={{ padding: "12px 14px", fontSize: 13, color: "#64748b" }}>No matches.</div>
                   ) : (
                     filteredAddCustomers.map((c) => {
-                      const label = formatAddCustomerPickerLabel(c)
+                      const label = formatCustomerReceiptPickerLabel(c)
                       const selected = addCustomerId === c.id
                       return (
                         <button
