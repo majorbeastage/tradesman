@@ -95,6 +95,7 @@ import {
 } from "../../lib/quoteItemMath"
 import { carryQuoteToConversationValues } from "../../lib/automaticRepliesCarryOver"
 import { insertQuoteItemRowSafe, updateQuoteItemRowSafe } from "../../lib/quoteItemsDb"
+import { isQuotesListTimeoutError, loadQuotesList } from "../../lib/quotesListQuery"
 import { platformToolsFetchOrigins, platformToolsJsonBody, readPlatformToolsJsonBody } from "../../lib/platformToolsJsonBody"
 import {
   type EstimateLinePresetRow,
@@ -2242,111 +2243,15 @@ export default function QuotesPage(_props: QuotesPageProps) {
   async function loadQuotes() {
     if (!userId || !supabase) return
     setQuotesError("")
-    // Keep this list query light: never nest conversations→messages here (that times out on busy accounts).
-    // Thread messages load in openQuote() for the selected estimate only.
-    const selectWith = `
-        id,
-        status,
-        created_at,
-        updated_at,
-        customer_id,
-        conversation_id,
-        job_type_id,
-        scheduled_at,
-        removed_at,
-        customers (
-          display_name,
-          customer_identifiers (
-            type,
-            value
-          )
-        )
-      `
-    const selectWithNoJobType = `
-        id,
-        status,
-        created_at,
-        updated_at,
-        customer_id,
-        conversation_id,
-        scheduled_at,
-        removed_at,
-        customers (
-          display_name,
-          customer_identifiers (
-            type,
-            value
-          )
-        )
-      `
-    const selectWithout = `
-        id,
-        status,
-        created_at,
-        updated_at,
-        customer_id,
-        conversation_id,
-        customers (
-          display_name,
-          customer_identifiers (
-            type,
-            value
-          )
-        )
-      `
-    const listFirst = await supabase
-      .from("quotes")
-      .select(selectWith)
-      .eq("user_id", userId)
-      .is("scheduled_at", null)
-      .is("removed_at", null)
-      .order("updated_at", { ascending: false })
-      .limit(500)
-
-    let data: any[] | null = listFirst.data
-    let error = listFirst.error
-
-    if (error && supabaseQuotesMissingJobTypeIdColumn(error.message)) {
-      const r = await supabase
-        .from("quotes")
-        .select(selectWithNoJobType)
-        .eq("user_id", userId)
-        .is("scheduled_at", null)
-        .is("removed_at", null)
-        .order("updated_at", { ascending: false })
-        .limit(500)
-      data = r.data
-      error = r.error
-      if (data) {
-        data = data.map((q: any) => ({ ...q, job_type_id: q.job_type_id ?? null }))
-      }
-    }
-
-    if (error && (error.message?.includes("scheduled_at") || error.message?.includes("removed_at"))) {
-      const res = await supabase
-        .from("quotes")
-        .select(selectWithout)
-        .eq("user_id", userId)
-        .order("updated_at", { ascending: false })
-        .limit(500)
-      if (res.error) {
-        setQuotesError(res.error.message)
-        setQuotes([])
-        return
-      }
-      data = (res.data || []).map((q: any) => ({
-        ...q,
-        scheduled_at: q.scheduled_at ?? null,
-        removed_at: q.removed_at ?? null,
-        job_type_id: q.job_type_id ?? null,
-      }))
-      error = null
-    } else if (error) {
-      setQuotesError(error.message)
+    // Flat quotes rows + batched customer/phone hydrates. Nested customers→identifiers
+    // (and previously conversations→messages) times out on busy accounts.
+    const { quotes: rows, error } = await loadQuotesList(supabase, userId)
+    if (error) {
+      setQuotesError(error)
       setQuotes([])
       return
     }
-    setQuotes(data || [])
+    setQuotes(rows as QuoteRow[])
   }
 
   useEffect(() => {
@@ -6054,12 +5959,11 @@ export default function QuotesPage(_props: QuotesPageProps) {
 
         {quotesError && (
           <p style={{ color: "#b91c1c", marginBottom: "12px", fontSize: "14px", whiteSpace: "pre-wrap" }}>
-            {quotesError}
-            {quotesError.toLowerCase().includes("job_type_id")
-              ? " Run supabase-quotes-table.sql in the Supabase SQL Editor to add quotes.job_type_id."
-              : quotesError.toLowerCase().includes("timeout") || quotesError.toLowerCase().includes("canceling statement")
-                ? " The estimates list query timed out (often from too much nested data). Refresh after the latest app update; if it persists, run supabase/quotes-list-performance-indexes.sql in the Supabase SQL Editor."
-                : " Create the quotes table in Supabase (run supabase-quotes-table.sql) if the table is missing."}
+            {isQuotesListTimeoutError(quotesError)
+              ? "Estimates took too long to load. Refresh the page. If this keeps happening, contact support."
+              : quotesError.toLowerCase().includes("job_type_id")
+                ? `${quotesError} Run supabase-quotes-table.sql in the Supabase SQL Editor to add quotes.job_type_id.`
+                : `${quotesError} Create the quotes table in Supabase (run supabase-quotes-table.sql) if the table is missing.`}
           </p>
         )}
 
