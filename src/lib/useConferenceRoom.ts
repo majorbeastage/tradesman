@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import type { RealtimeChannel } from "@supabase/supabase-js"
 import { supabase } from "./supabase"
 import { recordMissedCall } from "./missedCalls"
+import { acquireCallMedia } from "./mediaRecorderMime"
 
 /**
  * Multi-party internal team calls (audio + video) over WebRTC — no Twilio.
@@ -377,12 +378,18 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
   )
 
   const acquireMedia = useCallback(async (video: boolean) => {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video })
+    const stream = await acquireCallMedia(video)
     localStreamRef.current = stream
     cameraTrackRef.current = stream.getVideoTracks()[0] ?? null
-    if (video) {
+    if (video && cameraTrackRef.current) {
       setSelfStream(stream)
       setCameraOn(true)
+    } else {
+      setSelfStream(new MediaStream(stream.getAudioTracks()))
+      setCameraOn(false)
+      if (video && !cameraTrackRef.current) {
+        setError("Camera is unavailable on this device. Continuing with audio.")
+      }
     }
     setMuted(false)
     return stream
@@ -661,13 +668,36 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
     const stream = localStreamRef.current
     if (!stream) return
     const videoTracks = stream.getVideoTracks()
-    if (videoTracks.length === 0) return
+    if (videoTracks.length === 0) {
+      void (async () => {
+        try {
+          const cam = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "user" },
+            audio: false,
+          })
+          const track = cam.getVideoTracks()[0]
+          if (!track) {
+            setError("Camera is unavailable on this device.")
+            return
+          }
+          stream.addTrack(track)
+          cameraTrackRef.current = track
+          setSelfStream(new MediaStream([...stream.getAudioTracks(), track]))
+          await replaceOutgoingVideo(track)
+          setCameraOn(true)
+          setIsVideo(true)
+        } catch (e) {
+          setError(e instanceof Error ? e.message : "Could not start the camera.")
+        }
+      })()
+      return
+    }
     setCameraOn((c) => {
       const next = !c
       videoTracks.forEach((t) => (t.enabled = next))
       return next
     })
-  }, [])
+  }, [replaceOutgoingVideo])
 
   // Personal inbox: listen for incoming invites / cancel / declined.
   useEffect(() => {

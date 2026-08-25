@@ -37,6 +37,8 @@ export type VoiceAutoAttendantSettings = {
   unknownCallerShowTradesmanId: boolean
   /** Include name + callback number steps in recommended template. */
   collectContactInfo: boolean
+  /** AI opening line before the first question. Empty string skips it. */
+  introPrompt: string
 }
 
 let stepIdCounter = 0
@@ -73,6 +75,16 @@ export const RECOMMENDED_SCREENING_STEPS: VoiceScreeningStep[] = [
   },
 ]
 
+export const DEFAULT_INTRO_PROMPT =
+  "Thanks for calling. To help us route your call, please answer a few quick questions."
+
+export const INTRO_PROMPT_MAX_LENGTH = 500
+
+function parseIntroPrompt(raw: unknown): string {
+  if (typeof raw !== "string") return DEFAULT_INTRO_PROMPT
+  return raw.slice(0, INTRO_PROMPT_MAX_LENGTH)
+}
+
 export const DEFAULT_VOICE_AUTO_ATTENDANT: VoiceAutoAttendantSettings = {
   enabled: false,
   mode: "off",
@@ -82,6 +94,7 @@ export const DEFAULT_VOICE_AUTO_ATTENDANT: VoiceAutoAttendantSettings = {
   menuSteps: [...RECOMMENDED_SCREENING_STEPS],
   unknownCallerShowTradesmanId: false,
   collectContactInfo: true,
+  introPrompt: DEFAULT_INTRO_PROMPT,
 }
 
 function parseStep(raw: unknown): VoiceScreeningStep | null {
@@ -155,6 +168,7 @@ export function parseVoiceAutoAttendant(raw: unknown): VoiceAutoAttendantSetting
     menuSteps: menuSteps.length > 0 ? menuSteps : [...RECOMMENDED_SCREENING_STEPS],
     unknownCallerShowTradesmanId: o.unknownCallerShowTradesmanId === true,
     collectContactInfo: o.collectContactInfo !== false,
+    introPrompt: parseIntroPrompt(o.introPrompt),
   }
 }
 

@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useRef, Fragment, type ReactNode } from "react"
 import { supabase } from "../../lib/supabase"
+import { acquireMicrophoneStream, audioExtensionForMime, createAudioMediaRecorder } from "../../lib/mediaRecorderMime"
 import { platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
 import { carryConversationAutoRepliesToQuoteValues } from "../../lib/automaticRepliesCarryOver"
 import { usePortalConfigForPage, useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
@@ -887,9 +888,8 @@ function ConversationsPageInner(_props: ConversationsPageProps) {
       return
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm"
-      const recorder = new MediaRecorder(stream, { mimeType })
+      const stream = await acquireMicrophoneStream()
+      const recorder = createAudioMediaRecorder(stream)
       autoRepliesRecordedChunksRef.current = []
       autoRepliesMediaStreamRef.current = stream
       autoRepliesMediaRecorderRef.current = recorder
@@ -897,12 +897,13 @@ function ConversationsPageInner(_props: ConversationsPageProps) {
         if (event.data.size > 0) autoRepliesRecordedChunksRef.current.push(event.data)
       }
       recorder.onstop = async () => {
-        const blob = new Blob(autoRepliesRecordedChunksRef.current, { type: recorder.mimeType || "audio/webm" })
+        const mimeType = recorder.mimeType || "audio/mp4"
+        const blob = new Blob(autoRepliesRecordedChunksRef.current, { type: mimeType })
         autoRepliesMediaStreamRef.current?.getTracks().forEach((track) => track.stop())
         autoRepliesMediaStreamRef.current = null
         autoRepliesMediaRecorderRef.current = null
         setAutoRepliesRecordingBusy(false)
-        if (blob.size) await uploadConversationsAutoVoiceBlob(blob, "webm", blob.type || "audio/webm")
+        if (blob.size) await uploadConversationsAutoVoiceBlob(blob, audioExtensionForMime(mimeType), mimeType)
       }
       recorder.start()
       setAutoRepliesRecordingBusy(true)

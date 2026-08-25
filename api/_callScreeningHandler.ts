@@ -13,6 +13,7 @@ import {
   normalizePhone,
   pickFirstString,
   toTwilioE164,
+  twilioPlayLikelySupportedRecordingUrl,
 } from "./_communications.js"
 import {
   activeScreeningSteps,
@@ -64,9 +65,12 @@ function screeningBaseQuery(req: VercelRequest, channel: CommunicationChannel | 
 }
 
 function promptVerb(settings: VoiceAutoAttendantSettings, step: { prompt: string; recordingUrl?: string }): string {
-  const useRecording =
-    (settings.mode === "recorded_menu" || settings.mode === "record_own_menu") && step.recordingUrl?.trim()
-  if (useRecording) return `<Play>${xmlEscape(step.recordingUrl!.trim())}</Play>`
+  const url = step.recordingUrl?.trim() || ""
+  const wantsRecording =
+    (settings.mode === "recorded_menu" || settings.mode === "record_own_menu") && !!url
+  if (wantsRecording && twilioPlayLikelySupportedRecordingUrl(url)) {
+    return `<Play>${xmlEscape(url)}</Play>`
+  }
   return `<Say ${SAY}>${xmlEscape(step.prompt)}</Say>`
 }
 
@@ -425,7 +429,7 @@ export async function callScreeningHandler(req: VercelRequest, res: VercelRespon
   actionQ.set("step", "0")
   actionQ.set("answers", encodeScreeningAnswers(answers))
   const actionUrl = `${origin}/api/call-screening?${actionQ.toString()}`
-  const intro = "Thanks for calling. To help us route your call, please answer a few quick questions."
+  const intro = settings.introPrompt.trim()
   sendTwiml(
     res,
     twimlResponse(
@@ -435,7 +439,7 @@ export async function callScreeningHandler(req: VercelRequest, res: VercelRespon
         promptText: firstPrompt,
         recordingUrl: first.recordingUrl,
         responseTimeoutSeconds: first.responseTimeoutSeconds,
-        intro,
+        intro: intro || undefined,
         speechHints,
       }),
     ),

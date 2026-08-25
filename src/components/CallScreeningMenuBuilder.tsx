@@ -8,6 +8,7 @@ import {
 import { useLocale } from "../i18n/LocaleContext"
 import { voiceStudioUserRequest } from "../lib/voicePromptStudio"
 import { AttendantStepRecorder } from "./AttendantStepRecorder"
+import { isTwilioPlaySafeAudioUrl } from "../lib/audioToTwilioWav"
 
 type PlatformVoicePrompt = {
   id: string
@@ -273,6 +274,9 @@ export function CallScreeningMenuBuilder({ mode, steps, collectContactInfo, onCh
                   placeholder="https://…"
                 />
                 {step.recordingUrl ? <audio controls preload="none" src={step.recordingUrl} style={{ width: "100%" }} /> : null}
+                {step.recordingUrl && !isTwilioPlaySafeAudioUrl(step.recordingUrl) ? (
+                  <span style={{ fontSize: 11, color: "#b45309" }}>{t("account.callScreening.recordConvertHelp")}</span>
+                ) : null}
               </label>
             ) : null}
 

@@ -50,6 +50,12 @@
     <!-- Capacitor Geolocation (team maps / dispatch); required for the system location dialog -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- getUserMedia / WebView camera & mic (job photos, voicemail greetings, video calls) -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <!-- Android 13+ (API 33+): runtime notification permission -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- FCM / push (merged with plugin manifests; declared here for clarity) -->

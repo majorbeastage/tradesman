@@ -41,3 +41,12 @@ export function sessionExpiredError(): Error {
   ;(err as Error & { code?: string }).code = SESSION_EXPIRED_ERROR_CODE
   return err
 }
+
+/** Postgres statement_timeout (SQLSTATE 57014) — common on large shops under RLS. */
+export function isStatementTimeoutError(err: unknown): boolean {
+  const code =
+    err && typeof err === "object" && "code" in err ? String((err as { code?: unknown }).code ?? "") : ""
+  if (code === "57014") return true
+  const msg = formatAppError(err).toLowerCase()
+  return msg.includes("statement timeout") || msg.includes("57014")
+}

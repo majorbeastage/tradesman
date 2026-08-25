@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react"
 import { BusinessProfilePublicSite, type PublicBusinessProfileData } from "../public/BusinessProfilePublicSite"
-import { WEBSITE_BUILDER_PREVIEW_STORAGE_KEY } from "../../lib/businessPublicProfile"
+import {
+  WEBSITE_BUILDER_PREVIEW_CHANNEL,
+  WEBSITE_BUILDER_PREVIEW_MESSAGE,
+  WEBSITE_BUILDER_PREVIEW_STORAGE_KEY,
+} from "../../lib/businessPublicProfile"
 
 function readPreviewPayload(): PublicBusinessProfileData | null {
   try {
-    // localStorage survives window.open(..., "noopener") — sessionStorage does not.
     const raw =
       localStorage.getItem(WEBSITE_BUILDER_PREVIEW_STORAGE_KEY) ||
       sessionStorage.getItem(WEBSITE_BUILDER_PREVIEW_STORAGE_KEY)
@@ -20,10 +23,36 @@ export default function WebsiteBuilderPopoutPage() {
   const [data, setData] = useState<PublicBusinessProfileData | null>(() => readPreviewPayload())
 
   useEffect(() => {
-    if (data?.ok) return
-    const again = readPreviewPayload()
-    if (again?.ok) setData(again)
-  }, [data?.ok])
+    const apply = () => {
+      const next = readPreviewPayload()
+      if (next?.ok) setData(next)
+    }
+    apply()
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === WEBSITE_BUILDER_PREVIEW_STORAGE_KEY || e.key === null) apply()
+    }
+    const onMessage = (e: MessageEvent) => {
+      if (e.data?.type === WEBSITE_BUILDER_PREVIEW_MESSAGE) apply()
+    }
+    window.addEventListener("storage", onStorage)
+    window.addEventListener("message", onMessage)
+    let bc: BroadcastChannel | null = null
+    try {
+      bc = new BroadcastChannel(WEBSITE_BUILDER_PREVIEW_CHANNEL)
+      bc.onmessage = apply
+    } catch {
+      /* ignore */
+    }
+    return () => {
+      window.removeEventListener("storage", onStorage)
+      window.removeEventListener("message", onMessage)
+      try {
+        bc?.close()
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [])
 
   if (!data?.ok) {
     return (
@@ -54,7 +83,7 @@ export default function WebsiteBuilderPopoutPage() {
           fontFamily: "system-ui, sans-serif",
         }}
       >
-        <strong style={{ fontSize: 13 }}>Website preview (unsaved changes included)</strong>
+        <strong style={{ fontSize: 13 }}>Website preview (updates as you edit)</strong>
         <button
           type="button"
           onClick={() => window.close()}

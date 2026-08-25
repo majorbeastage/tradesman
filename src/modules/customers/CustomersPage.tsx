@@ -17,7 +17,7 @@ import {
 } from "../../lib/customerUrgency"
 import { getFreshAccessToken, forceRefreshAccessToken } from "../../lib/authPlatformApi"
 import { formatAppError, isAuthSessionError } from "../../lib/formatAppError"
-import { loadOwnedCustomerRows } from "../../lib/loadOwnedCustomerRows"
+import { loadOwnedCustomerRows, pageOwnerScopedCustomerIds } from "../../lib/loadOwnedCustomerRows"
 import { platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 import ShareContactModal from "../../components/ShareContactModal"
@@ -831,13 +831,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     const activeIds = new Set<string>()
     const bookedIds = new Set<string>()
 
-    const addActive = (r: { data?: { customer_id?: string }[] | null; error?: { message?: string } | null }) => {
-      if (!r.error && r.data) r.data.forEach((row) => row.customer_id && activeIds.add(row.customer_id))
-    }
-    const addBooked = (r: { data?: { customer_id?: string }[] | null; error?: { message?: string } | null }) => {
-      if (!r.error && r.data) r.data.forEach((row) => row.customer_id && bookedIds.add(row.customer_id))
-    }
-
     try {
     if (sharingScope === "assignee_only" && viewerUserId && dataUserId !== viewerUserId) {
       const assignedBooked = await loadAssigneeCalendarCustomerIds(supabase, dataUserId, viewerUserId, {
@@ -845,45 +838,30 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       })
       assignedBooked.forEach((id) => bookedIds.add(id))
     } else {
-      let eventsRes = await supabase
-        .from("calendar_events")
-        .select("customer_id")
-        .eq("user_id", dataUserId)
-        .is("removed_at", null)
-        .is("completed_at", null)
-      if (eventsRes.error) {
-        eventsRes = await supabase
-          .from("calendar_events")
-          .select("customer_id")
-          .eq("user_id", dataUserId)
-          .is("removed_at", null)
-      }
-      addBooked(eventsRes)
+      const booked = await pageOwnerScopedCustomerIds(supabase, "calendar_events", dataUserId, [
+        "removed_at",
+        "completed_at",
+      ])
+      booked.forEach((id) => bookedIds.add(id))
     }
 
-    const leadsRes = await supabase.from("leads").select("customer_id").eq("user_id", dataUserId).is("removed_at", null).is("converted_at", null)
-    const leadsResFallback = leadsRes.error
-      ? await supabase.from("leads").select("customer_id").eq("user_id", dataUserId).is("removed_at", null)
-      : leadsRes
-    addActive(leadsResFallback)
+    const leadActive = await pageOwnerScopedCustomerIds(supabase, "leads", dataUserId, ["removed_at", "converted_at"])
+    leadActive.forEach((id) => activeIds.add(id))
 
-    const convosRes = await supabase.from("conversations").select("customer_id").eq("user_id", dataUserId).is("removed_at", null)
-    addActive(convosRes)
+    const convos = await pageOwnerScopedCustomerIds(supabase, "conversations", dataUserId, ["removed_at"])
+    convos.forEach((id) => activeIds.add(id))
 
-    const quotesRes = await supabase.from("quotes").select("customer_id").eq("user_id", dataUserId).is("removed_at", null).is("scheduled_at", null)
-    addActive(quotesRes)
+    const quotes = await pageOwnerScopedCustomerIds(supabase, "quotes", dataUserId, ["removed_at", "scheduled_at"])
+    quotes.forEach((id) => activeIds.add(id))
 
-    /** Customers referenced by leads, quotes, conversations, or calendar (any history). */
     const relatedIds = new Set<string>()
     const [allLeads, allConvos, allQuotes, allEvents] = await Promise.all([
-      supabase.from("leads").select("customer_id").eq("user_id", dataUserId),
-      supabase.from("conversations").select("customer_id").eq("user_id", dataUserId),
-      supabase.from("quotes").select("customer_id").eq("user_id", dataUserId),
-      supabase.from("calendar_events").select("customer_id").eq("user_id", dataUserId),
+      pageOwnerScopedCustomerIds(supabase, "leads", dataUserId),
+      pageOwnerScopedCustomerIds(supabase, "conversations", dataUserId),
+      pageOwnerScopedCustomerIds(supabase, "quotes", dataUserId),
+      pageOwnerScopedCustomerIds(supabase, "calendar_events", dataUserId),
     ])
-    ;[allLeads.data, allConvos.data, allQuotes.data, allEvents.data].forEach((data) => {
-      if (data) data.forEach((row: { customer_id?: string }) => row.customer_id && relatedIds.add(row.customer_id))
-    })
+    ;[allLeads, allConvos, allQuotes, allEvents].forEach((ids) => ids.forEach((id) => relatedIds.add(id)))
 
     const owned = await loadOwnedCustomerRows(supabase, dataUserId)
     if (gen !== customersLoadGenRef.current) return
@@ -927,7 +905,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       .select("customer_id, created_at")
       .eq("user_id", dataUserId)
       .order("created_at", { ascending: false })
-      .limit(5000)
+      .limit(800)
 
     const latestMsByCustomer = buildLatestEventMsByCustomer(
       remapEventsToCanonicalCustomers(recentComm, orgMaps.canonicalIdByCustomerId),
@@ -1399,6 +1377,14 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     if (!setPage) return
     queueCustomerProfile(customerId)
     setPage("customer-profile")
+  }
+
+  function selectQuickViewTab(tab: CustomerQuickViewTabId, customerId: string) {
+    if (tab === "full_profile" && setPage) {
+      openFullCustomerProfile(customerId)
+      return
+    }
+    setQuickViewTab(tab)
   }
 
   function handleQuickViewCreateAction(tab: CustomerQuickViewTabId) {
@@ -3113,7 +3099,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                             {isMobile ? (
                               <CustomerQuickViewTabRail
                                 active={quickViewTab}
-                                onChange={setQuickViewTab}
+                                onChange={(tab) => selectQuickViewTab(tab, c.id)}
                                 isMobile={isMobile}
                                 visibleTabIds={visibleQuickViewTabIds}
                                 onCreateAction={setPage ? handleQuickViewCreateAction : undefined}
@@ -3577,7 +3563,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                       supabase={supabase}
                                       userId={userId}
                                       profileMetadata={accountProfileMetadata}
-                                      onGoToTab={setQuickViewTab}
+                                      onGoToTab={(tab) => selectQuickViewTab(tab, c.id)}
                                       setPage={setPage}
                                       onOpenQuote={(quoteId) => queueQuotesOpenQuote(quoteId)}
                                       onCustomerMetadataUpdated={(metadata) => {
@@ -3944,7 +3930,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                 {!isMobile ? (
                                   <CustomerQuickViewTabRail
                                     active={quickViewTab}
-                                    onChange={setQuickViewTab}
+                                    onChange={(tab) => selectQuickViewTab(tab, c.id)}
                                     isMobile={isMobile}
                                     visibleTabIds={visibleQuickViewTabIds}
                                     onCreateAction={setPage ? handleQuickViewCreateAction : undefined}

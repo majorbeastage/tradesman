@@ -19,10 +19,12 @@ import type {
   WebsiteSubPages,
   WebsiteTextStyle,
   WebsiteTextStyles,
+  WebsiteLayoutViewport,
 } from "../../lib/businessPublicProfile"
 import {
   DEFAULT_BUSINESS_PROFILE_THEME,
   WEBSITE_FREEFORM_DESIGN_WIDTH,
+  WEBSITE_MOBILE_LAYOUT_MAX_PX,
   websiteDesignScale,
   clampWebsiteOffsetX,
   clampWebsiteOffsetY,
@@ -33,9 +35,11 @@ import {
   defaultWebsiteSubPages,
   emptyWebsiteHomeSections,
   resolveWebsiteSlotImage,
+  resolveWebsiteTextStylesForViewport,
   websiteCustomPagePathId,
   websiteTextStyleToCss,
 } from "../../lib/businessPublicProfile"
+import { isWebsiteEditTargetHidden } from "../../lib/websiteBuilderEdit"
 
 export type PublicBusinessProfileData = {
   ok: true
@@ -71,6 +75,8 @@ export type PublicBusinessProfileData = {
   featureCards?: WebsiteContentCard[]
   serviceCards?: WebsiteContentCard[]
   textStyles?: WebsiteTextStyles
+  /** Independent phone layout. When empty, the live site falls back to desktop styles. */
+  textStylesMobile?: WebsiteTextStyles
   homeSectionOrder?: WebsiteHomeSectionId[]
   fixedBackground?: boolean
   /** Client footer line (no Design.com / third-party watermarks). */
@@ -134,12 +140,16 @@ function bandSurfaceStyle(band: WebsiteScrollBand): CSSProperties {
   return style
 }
 
-function imageSlotVisualStyle(style: WebsiteTextStyle | undefined): {
+function imageSlotVisualStyle(
+  style: WebsiteTextStyle | undefined,
+  scale = 1,
+): {
   wrap: CSSProperties
   img: CSSProperties
   tint: CSSProperties | null
 } {
-  const size = style?.imageSize ?? 120
+  const s = scale > 0 ? scale : 1
+  const size = (style?.imageSize ?? 120) * s
   const free = style?.scaleMode === "free"
   const zoom = (style?.cropZoom ?? 100) / 100
   const posX = style?.cropX ?? 50
@@ -149,7 +159,7 @@ function imageSlotVisualStyle(style: WebsiteTextStyle | undefined): {
     overflow: "hidden",
     width: free ? size : size,
     height: free ? Math.round(size * 0.75) : size,
-    maxWidth: style?.maxWidth,
+    maxWidth: typeof style?.maxWidth === "number" ? style.maxWidth * s : style?.maxWidth,
   }
   const img: CSSProperties = {
     width: "100%",
@@ -650,7 +660,7 @@ function ProfileHeader({
           <h1 style={{ margin: "0 0 8px", fontSize: hero ? "clamp(28px, 4vw, 42px)" : 30, fontWeight: 900, lineHeight: 1.15 }}>
             {data.businessName}
           </h1>
-          {data.tagline ? (
+          {data.tagline && !isWebsiteEditTargetHidden(data.textStyles, "hero.tagline") ? (
             <p style={{ margin: 0, fontSize: hero ? 18 : 16, lineHeight: 1.5, opacity: hero ? 0.95 : 0.82, maxWidth: 720 }}>
               {data.tagline}
             </p>
@@ -691,6 +701,8 @@ function CanvasEditable({
   offsetY = 0,
   /** When set, stored offsets are design-space; screen deltas are divided by this scale. */
   positionScale = 1,
+  /** Centered freeform items grow around the midpoint; start = grow from the opposite edge. */
+  resizeAnchor = "start",
 }: {
   targetId: string
   editMode?: boolean
@@ -708,6 +720,7 @@ function CanvasEditable({
   offsetX?: number
   offsetY?: number
   positionScale?: number
+  resizeAnchor?: "start" | "center"
 }) {
   if (!editMode) {
     const scale = positionScale > 0 ? positionScale : 1
@@ -787,31 +800,61 @@ function CanvasEditable({
     target.addEventListener("pointercancel", onUp)
   }
 
-  const startResize = (e: ReactPointerEvent) => {
+  const startResize = (edge: "se" | "sw") => (e: ReactPointerEvent) => {
     if (!enableMoveResize || !onPatchTextStyle) return
     e.preventDefault()
     e.stopPropagation()
     onSelectTarget?.(targetId)
-    const el = (e.currentTarget as HTMLElement).parentElement
+    const handle = e.currentTarget as HTMLElement
+    const el = handle.parentElement
     const startX = e.clientX
     const startW = el?.getBoundingClientRect().width ?? 200
+    const ox0 = ox
+    try {
+      handle.setPointerCapture(e.pointerId)
+    } catch {
+      /* ignore */
+    }
     const onMove = (ev: PointerEvent) => {
-      const wDesign = Math.max(80, Math.round((startW + (ev.clientX - startX)) / scale))
+      const dxDesign = (ev.clientX - startX) / scale
+      const wDesign =
+        edge === "sw"
+          ? Math.max(80, Math.round(startW / scale - dxDesign))
+          : Math.max(80, Math.round((startW + (ev.clientX - startX)) / scale))
+      const nextOx =
+        resizeAnchor === "center"
+          ? clampWebsiteOffsetX(ox0 + dxDesign / 2)
+          : edge === "sw"
+            ? clampWebsiteOffsetX(ox0 + dxDesign)
+            : ox0
       if (el) {
         el.style.width = `${wDesign * scale}px`
         el.style.maxWidth = `${wDesign * scale}px`
         el.style.minWidth = `${Math.min(80 * scale, wDesign * scale)}px`
+        if (resizeAnchor === "center") el.style.marginLeft = `${(-(wDesign * scale)) / 2}px`
+        el.style.transform = `translate(${nextOx * scale}px, ${screenOy}px)`
       }
-      ;(e.currentTarget as HTMLElement).dataset.resizeW = String(wDesign)
+      handle.dataset.resizeW = String(wDesign)
+      handle.dataset.resizeX = String(nextOx)
     }
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove)
-      window.removeEventListener("pointerup", onUp)
-      const w = Number((e.currentTarget as HTMLElement).dataset.resizeW ?? Math.round(startW / scale))
-      onPatchTextStyle(targetId, { maxWidth: w })
+    const onUp = (ev: PointerEvent) => {
+      handle.removeEventListener("pointermove", onMove)
+      handle.removeEventListener("pointerup", onUp)
+      handle.removeEventListener("pointercancel", onUp)
+      try {
+        handle.releasePointerCapture(ev.pointerId)
+      } catch {
+        /* ignore */
+      }
+      const w = Number(handle.dataset.resizeW ?? Math.round(startW / scale))
+      const nextOx = Number(handle.dataset.resizeX ?? ox0)
+      const patch: Partial<WebsiteTextStyle> = { maxWidth: w }
+      if (edge === "sw" || resizeAnchor === "center") patch.offsetX = nextOx
+      onPatchTextStyle(targetId, patch)
     }
-    window.addEventListener("pointermove", onMove)
-    window.addEventListener("pointerup", onUp)
+    handle.addEventListener("pointermove", onMove)
+    handle.addEventListener("pointerup", onUp)
+    handle.addEventListener("pointercancel", onUp)
   }
 
   const baseStyle: CSSProperties = {
@@ -847,12 +890,20 @@ function CanvasEditable({
     >
       {children}
       {selected && enableMoveResize ? (
-        <span
-          data-resize-handle
-          className="bp-edit-resize"
-          title="Drag to resize width"
-          onPointerDown={startResize}
-        />
+        <>
+          <span
+            data-resize-handle
+            className="bp-edit-resize bp-edit-resize-sw"
+            title="Drag to resize from the left"
+            onPointerDown={startResize("sw")}
+          />
+          <span
+            data-resize-handle
+            className="bp-edit-resize bp-edit-resize-se"
+            title="Drag to resize from the right"
+            onPointerDown={startResize("se")}
+          />
+        </>
       ) : null}
     </Comp>
   )
@@ -879,7 +930,11 @@ function FreeformCanvasLayer({
   useEffect(() => {
     const el = layerRef.current
     if (!el || typeof ResizeObserver === "undefined") return
-    const apply = () => setLayerWidth(Math.max(320, Math.round(el.clientWidth || WEBSITE_FREEFORM_DESIGN_WIDTH)))
+    const apply = () => {
+      // Layer CSS caps at 1200; never treat a wider parent as a stretch rail.
+      const raw = Math.max(320, Math.round(el.clientWidth || WEBSITE_FREEFORM_DESIGN_WIDTH))
+      setLayerWidth(Math.min(raw, WEBSITE_FREEFORM_DESIGN_WIDTH))
+    }
     apply()
     const ro = new ResizeObserver(apply)
     ro.observe(el)
@@ -1046,42 +1101,67 @@ function FreeformCanvasLayer({
                 <div className="bp-freeform-photo bp-freeform-photo-empty">Drop photo</div>
               )}
               {editMode && selected ? (
-                <span
-                  data-resize-handle
-                  className="bp-edit-resize"
-                  title="Drag to resize"
-                  onPointerDown={(e) => {
-                    if (!editor?.onPatchTextStyle) return
-                    e.preventDefault()
-                    e.stopPropagation()
-                    const startX = e.clientX
-                    const startY = e.clientY
-                    const startW = width
-                    const startH = height || 150
-                    const parent = (e.currentTarget as HTMLElement).parentElement
-                    const onMove = (ev: PointerEvent) => {
-                      const w = Math.max(60, Math.round(startW + (ev.clientX - startX) / scale))
-                      const h = Math.max(60, Math.round(startH + (ev.clientY - startY) / scale))
-                      if (parent) {
-                        parent.style.width = `${w * scale}px`
-                        parent.style.height = `${h * scale}px`
-                        parent.style.marginLeft = `${(-(w * scale)) / 2}px`
-                      }
-                      ;(e.currentTarget as HTMLElement).dataset.rw = String(w)
-                      ;(e.currentTarget as HTMLElement).dataset.rh = String(h)
-                    }
-                    const onUp = () => {
-                      window.removeEventListener("pointermove", onMove)
-                      window.removeEventListener("pointerup", onUp)
-                      editor.onPatchTextStyle?.(targetId, {
-                        maxWidth: Number((e.currentTarget as HTMLElement).dataset.rw ?? startW),
-                        imageSize: Number((e.currentTarget as HTMLElement).dataset.rh ?? startH),
-                      })
-                    }
-                    window.addEventListener("pointermove", onMove)
-                    window.addEventListener("pointerup", onUp)
-                  }}
-                />
+                <>
+                  {(["sw", "se"] as const).map((edge) => (
+                    <span
+                      key={edge}
+                      data-resize-handle
+                      className={`bp-edit-resize bp-edit-resize-${edge}`}
+                      title={edge === "sw" ? "Drag to resize from the left" : "Drag to resize from the right"}
+                      onPointerDown={(e) => {
+                        if (!editor?.onPatchTextStyle) return
+                        e.preventDefault()
+                        e.stopPropagation()
+                        const handle = e.currentTarget as HTMLElement
+                        const startX = e.clientX
+                        const startY = e.clientY
+                        const startW = width
+                        const startH = height || 150
+                        const ox0 = ox
+                        const parent = handle.parentElement
+                        try {
+                          handle.setPointerCapture(e.pointerId)
+                        } catch {
+                          /* ignore */
+                        }
+                        const onMove = (ev: PointerEvent) => {
+                          const dxDesign = (ev.clientX - startX) / scale
+                          const dyDesign = (ev.clientY - startY) / scale
+                          const w = Math.max(60, Math.round(edge === "sw" ? startW - dxDesign : startW + dxDesign))
+                          const h = Math.max(60, Math.round(startH + dyDesign))
+                          const nextOx = clampWebsiteOffsetX(ox0 + dxDesign / 2)
+                          if (parent) {
+                            parent.style.width = `${w * scale}px`
+                            parent.style.height = `${h * scale}px`
+                            parent.style.marginLeft = `${(-(w * scale)) / 2}px`
+                            parent.style.transform = `translate(${nextOx * scale}px, ${oy * scale}px)`
+                          }
+                          handle.dataset.rw = String(w)
+                          handle.dataset.rh = String(h)
+                          handle.dataset.rx = String(nextOx)
+                        }
+                        const onUp = (ev: PointerEvent) => {
+                          handle.removeEventListener("pointermove", onMove)
+                          handle.removeEventListener("pointerup", onUp)
+                          handle.removeEventListener("pointercancel", onUp)
+                          try {
+                            handle.releasePointerCapture(ev.pointerId)
+                          } catch {
+                            /* ignore */
+                          }
+                          editor.onPatchTextStyle?.(targetId, {
+                            maxWidth: Number(handle.dataset.rw ?? startW),
+                            imageSize: Number(handle.dataset.rh ?? startH),
+                            offsetX: Number(handle.dataset.rx ?? ox0),
+                          })
+                        }
+                        handle.addEventListener("pointermove", onMove)
+                        handle.addEventListener("pointerup", onUp)
+                        handle.addEventListener("pointercancel", onUp)
+                      }}
+                    />
+                  ))}
+                </>
               ) : null}
             </div>
           )
@@ -1113,6 +1193,7 @@ function FreeformCanvasLayer({
             offsetX={ox}
             offsetY={oy}
             positionScale={scale}
+            resizeAnchor="center"
             style={{
               ...textCss,
               boxSizing: "border-box",
@@ -1192,6 +1273,7 @@ function ShowcaseLayout({
     ? headline.split(/\n+/).map((x) => x.trim()).filter(Boolean)
     : [headline].filter(Boolean)
   const displayLines = headlineLines.length ? headlineLines : [data.businessName]
+  const fieldHidden = (id: string) => isWebsiteEditTargetHidden(textStyles, id)
   const bands =
     data.scrollBands && data.scrollBands.length
       ? data.scrollBands
@@ -1248,8 +1330,9 @@ function ShowcaseLayout({
     const root = shellRef.current
     if (!root || typeof ResizeObserver === "undefined") return
     const apply = () => {
+      // Same 1200 design rail as freeform (wide viewports stay scale 1).
       const w = Math.max(320, Math.round(root.clientWidth || WEBSITE_FREEFORM_DESIGN_WIDTH))
-      setDesignScale(websiteDesignScale(w))
+      setDesignScale(websiteDesignScale(Math.min(w, WEBSITE_FREEFORM_DESIGN_WIDTH)))
     }
     apply()
     const ro = new ResizeObserver(apply)
@@ -1441,6 +1524,7 @@ function ShowcaseLayout({
 
   const contactBlock = (
     <div className="bp-showcase-band-inner">
+      {!fieldHidden("contact_page.title") ? (
       <CanvasEditable
         as="h2"
         targetId="contact_page.title"
@@ -1448,6 +1532,7 @@ function ShowcaseLayout({
       >
         {subPages.contact.title || "Contact Us"}
       </CanvasEditable>
+      ) : null}
       <p className="bp-showcase-band-body" style={{ marginBottom: 16 }}>
         Reach {data.businessName} directly — calls, email, and requests go to this business.
       </p>
@@ -1496,6 +1581,7 @@ function ShowcaseLayout({
         >
           <div className="bp-showcase-hero-inner">
             <div className="bp-showcase-hero-copy">
+              {!fieldHidden("hero.headline") ? (
               <CanvasEditable as="div" targetId="hero.headline" {...textChrome("hero.headline")}>
                 {displayLines.map((line) => (
                   <h1 key={line} style={typographyOnly("hero.headline")}>
@@ -1503,7 +1589,8 @@ function ShowcaseLayout({
                   </h1>
                 ))}
               </CanvasEditable>
-              {data.tagline ? (
+              ) : null}
+              {!fieldHidden("hero.tagline") && data.tagline ? (
                 <CanvasEditable
                   as="p"
                   targetId="hero.tagline"
@@ -1512,7 +1599,7 @@ function ShowcaseLayout({
                 >
                   {data.tagline}
                 </CanvasEditable>
-              ) : editMode ? (
+              ) : !fieldHidden("hero.tagline") && editMode ? (
                 <CanvasEditable
                   as="p"
                   targetId="hero.tagline"
@@ -1523,7 +1610,7 @@ function ShowcaseLayout({
                 </CanvasEditable>
               ) : null}
               <div className="bp-showcase-cta-row">
-                {subPages.contact.enabled || data.showContactForm || data.email || telHref || editMode ? (
+                {!fieldHidden("hero.cta") && (subPages.contact.enabled || data.showContactForm || data.email || telHref || editMode) ? (
                   (() => {
                     const cta = resolveBuiltInHref(textStyles["hero.cta"]?.linkTarget, "contact")
                     return (
@@ -1569,6 +1656,7 @@ function ShowcaseLayout({
               style={bandSurfaceStyle(band)}
             >
               <div className="bp-showcase-band-inner">
+                {!fieldHidden("band.services.title") ? (
                 <CanvasEditable
                   as="h2"
                   targetId="band.services.title"
@@ -1576,6 +1664,7 @@ function ShowcaseLayout({
                 >
                   {title}
                 </CanvasEditable>
+                ) : null}
                 <div className="bp-showcase-service-trio">
                   {serviceCards.slice(0, 3).map((card, i) => {
                     const slotTarget = `slot.service_${i + 1}`
@@ -1584,7 +1673,7 @@ function ShowcaseLayout({
                     const vis = imageSlotVisualStyle({
                       imageSize: st.imageSize ?? 180,
                       ...st,
-                    })
+                    }, designScale)
                     const photoH =
                       typeof st.imageSize === "number"
                         ? st.imageSize
@@ -1601,7 +1690,7 @@ function ShowcaseLayout({
                           style={{
                             ...slotChrome.style,
                             display: "block",
-                            width: st.scaleMode === "free" && st.maxWidth ? st.maxWidth : "100%",
+                            width: st.scaleMode === "free" && st.maxWidth ? st.maxWidth * (designScale > 0 ? designScale : 1) : "100%",
                             maxWidth: "100%",
                           }}
                         >
@@ -1665,12 +1754,16 @@ function ShowcaseLayout({
                           {editMode ? "Drop photo" : null}
                         </div>
                       )}
+                      {!fieldHidden(`service.${i}.title`) ? (
                       <CanvasEditable as="h3" targetId={`service.${i}.title`} {...textChrome(`service.${i}.title`)}>
                         {card.title || "Service"}
                       </CanvasEditable>
+                      ) : null}
+                      {!fieldHidden(`service.${i}.body`) ? (
                       <CanvasEditable as="p" targetId={`service.${i}.body`} {...textChrome(`service.${i}.body`)}>
                         {card.body || "Add a short description…"}
                       </CanvasEditable>
+                      ) : null}
                     </article>
                   )})}
                 </div>
@@ -1691,6 +1784,7 @@ function ShowcaseLayout({
             style={bandSurfaceStyle(band)}
           >
             <div className="bp-showcase-band-inner">
+              {!fieldHidden("band.about.title") ? (
               <CanvasEditable
                 as="h2"
                 targetId="band.about.title"
@@ -1699,6 +1793,8 @@ function ShowcaseLayout({
               >
                 {title}
               </CanvasEditable>
+              ) : null}
+              {!fieldHidden("band.about.body") ? (
               <CanvasEditable
                 as="p"
                 targetId="band.about.body"
@@ -1708,6 +1804,7 @@ function ShowcaseLayout({
               >
                 {body || (editMode ? "Add about text…" : "")}
               </CanvasEditable>
+              ) : null}
               {(feature1 || feature2 || featureCards.length || editMode) && band.id === "about" ? (
                 <div className="bp-showcase-feature-row">
                   {featureCards.slice(0, 2).map((card, idx) => {
@@ -1715,7 +1812,7 @@ function ShowcaseLayout({
                     const slotId = idx === 0 ? "feature_1" : "feature_2"
                     const slotTarget = `slot.${slotId}`
                     const slotChrome = textChrome(slotTarget)
-                    const vis = imageSlotVisualStyle(textStyles[slotTarget])
+                    const vis = imageSlotVisualStyle(textStyles[slotTarget], designScale)
                     return (
                       <div key={card.id || idx} className="bp-showcase-feature-item">
                         {url ? (
@@ -1764,6 +1861,7 @@ function ShowcaseLayout({
                           </div>
                         ) : null}
                         <div>
+                          {!fieldHidden(`feature.${idx}.title`) ? (
                           <CanvasEditable
                             as="strong"
                             targetId={`feature.${idx}.title`}
@@ -1771,6 +1869,8 @@ function ShowcaseLayout({
                           >
                             {card.title}
                           </CanvasEditable>
+                          ) : null}
+                          {!fieldHidden(`feature.${idx}.body`) ? (
                           <CanvasEditable
                             as="p"
                             targetId={`feature.${idx}.body`}
@@ -1778,6 +1878,7 @@ function ShowcaseLayout({
                           >
                             {card.body}
                           </CanvasEditable>
+                          ) : null}
                         </div>
                       </div>
                     )
@@ -1871,9 +1972,12 @@ function ShowcaseLayout({
     activePage === "about" && subPages.about.enabled ? (
       <section className="bp-showcase-band bp-showcase-band-light">
         <div className="bp-showcase-band-inner" style={{ maxWidth: 800 }}>
+          {!fieldHidden("about_page.title") ? (
           <CanvasEditable as="h2" targetId="about_page.title" {...textChrome("about_page.title")}>
             {subPages.about.title || "About Us"}
           </CanvasEditable>
+          ) : null}
+          {!fieldHidden("about_page.body") ? (
           <CanvasEditable
             as="p"
             targetId="about_page.body"
@@ -1883,6 +1987,7 @@ function ShowcaseLayout({
           >
             {aboutBody || (editMode ? "Add About Us copy…" : "")}
           </CanvasEditable>
+          ) : null}
         </div>
       </section>
     ) : activePage === "contact" && subPages.contact.enabled ? (
@@ -2093,6 +2198,7 @@ function GalleryLayout({
 export function BusinessProfilePublicSite({
   data,
   previewMode = false,
+  layoutViewport = "auto",
   activePage = "home",
   onNavigatePage,
   editor,
@@ -2100,6 +2206,8 @@ export function BusinessProfilePublicSite({
   data: PublicBusinessProfileData
   /** When true, fixed background is scoped to the preview scroll frame. */
   previewMode?: boolean
+  /** Builder passes desktop/mobile; live site uses the browser width. */
+  layoutViewport?: WebsiteLayoutViewport | "auto"
   activePage?: WebsitePublicPageId
   onNavigatePage?: (page: WebsitePublicPageId) => void
   /** Builder canvas: click / right-click targets. */
@@ -2108,6 +2216,26 @@ export function BusinessProfilePublicSite({
   const theme = useMemo(() => ({ ...DEFAULT_BUSINESS_PROFILE_THEME, ...(data.theme ?? {}) }), [data.theme])
   const templateId = data.templateId ?? "hair_plumbing"
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null)
+  const [autoViewport, setAutoViewport] = useState<WebsiteLayoutViewport>("desktop")
+
+  useEffect(() => {
+    if (layoutViewport === "desktop" || layoutViewport === "mobile") return
+    const mq = window.matchMedia(`(max-width: ${WEBSITE_MOBILE_LAYOUT_MAX_PX}px)`)
+    const apply = () => setAutoViewport(mq.matches ? "mobile" : "desktop")
+    apply()
+    mq.addEventListener("change", apply)
+    return () => mq.removeEventListener("change", apply)
+  }, [layoutViewport])
+
+  const viewport: WebsiteLayoutViewport =
+    layoutViewport === "mobile" || layoutViewport === "desktop" ? layoutViewport : autoViewport
+  const layoutData = useMemo(
+    () => ({
+      ...data,
+      textStyles: resolveWebsiteTextStylesForViewport(data.textStyles, data.textStylesMobile, viewport),
+    }),
+    [data, viewport],
+  )
 
   useEffect(() => {
     if (previewMode || typeof document === "undefined") return
@@ -2157,7 +2285,7 @@ export function BusinessProfilePublicSite({
     ...themeVars(theme),
   }
 
-  const layoutProps = { data, theme, onPhotoClick: openPhoto }
+  const layoutProps = { data: layoutData, theme, onPhotoClick: openPhoto }
 
   return (
     <div style={shell}>
@@ -2239,16 +2367,22 @@ export function BusinessProfilePublicSite({
         .bp-edit-placeholder { opacity: 0.55; font-style: italic; }
         .bp-edit-resize {
           position: absolute;
-          right: -6px;
           bottom: -6px;
           width: 14px;
           height: 14px;
           border-radius: 3px;
           background: #2563eb;
           border: 2px solid #fff;
-          cursor: nwse-resize;
           z-index: 5;
           box-shadow: 0 1px 4px rgba(15,23,42,0.35);
+        }
+        .bp-edit-resize-se {
+          right: -6px;
+          cursor: nwse-resize;
+        }
+        .bp-edit-resize-sw {
+          left: -6px;
+          cursor: nesw-resize;
         }
         .bp-showcase-scroll-bg {
           position: absolute; inset: 0; z-index: 0;
@@ -2645,6 +2779,7 @@ export function BusinessProfilePublicSite({
       />
         </div>
       )}
+      {!isWebsiteEditTargetHidden(layoutData.textStyles, "footer.copyright") ? (
       <CanvasEditable
           as="div"
           targetId="footer.copyright"
@@ -2654,18 +2789,19 @@ export function BusinessProfilePublicSite({
           onTargetContextMenu={editor?.onTargetContextMenu}
           onPatchTextStyle={editor?.onPatchTextStyle}
           enableMoveResize={Boolean(previewMode && editor?.onSelectTarget)}
-          offsetX={data.textStyles?.["footer.copyright"]?.offsetX ?? 0}
-          offsetY={data.textStyles?.["footer.copyright"]?.offsetY ?? 0}
+          offsetX={layoutData.textStyles?.["footer.copyright"]?.offsetX ?? 0}
+          offsetY={layoutData.textStyles?.["footer.copyright"]?.offsetY ?? 0}
           positionScale={1}
           className="bp-client-footer"
           style={(() => {
-            const css = websiteTextStyleToCss(data.textStyles?.["footer.copyright"]) as CSSProperties
+            const css = websiteTextStyleToCss(layoutData.textStyles?.["footer.copyright"]) as CSSProperties
             const { transform: _t, ...rest } = css
             return rest
           })()}
         >
           {data.footerCopyright?.trim() || `© ${new Date().getFullYear()} ${data.businessName}. All rights reserved.`}
         </CanvasEditable>
+      ) : null}
       {data.showPoweredBy === true ? <PoweredByFooter /> : null}
       {lightbox ? <PhotoLightbox src={lightbox.src} alt={lightbox.alt} onClose={() => setLightbox(null)} /> : null}
     </div>

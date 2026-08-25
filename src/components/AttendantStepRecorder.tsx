@@ -1,19 +1,21 @@
 import { useRef, useState } from "react"
-import { supabase } from "../lib/supabase"
+import { uploadAttendantAudio } from "../lib/attendantRecordingUpload"
+import { acquireMicrophoneStream, createAudioMediaRecorder } from "../lib/mediaRecorderMime"
 import { useAuth } from "../contexts/AuthContext"
+import { useLocale } from "../i18n/LocaleContext"
 import { theme } from "../styles/theme"
-
-const VOICEMAIL_GREETING_BUCKET = "voicemail-greetings"
 
 type Props = {
   onRecorded: (publicUrl: string) => void
 }
 
 export function AttendantStepRecorder({ onRecorded }: Props) {
+  const { t } = useLocale()
   const { user } = useAuth()
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<BlobPart[]>([])
   const streamRef = useRef<MediaStream | null>(null)
+  const fileRef = useRef<HTMLInputElement | null>(null)
   const [recording, setRecording] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState("")
@@ -21,30 +23,27 @@ export function AttendantStepRecorder({ onRecorded }: Props) {
   async function startRecording() {
     setError("")
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      setError("This browser cannot record audio. Use Chrome, Safari, or Edge and allow microphone access.")
+      setError(t("account.callScreening.recordBrowserError"))
       return
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const stream = await acquireMicrophoneStream()
       streamRef.current = stream
-      const preferred = ["audio/webm;codecs=opus", "audio/mp4", "audio/ogg;codecs=opus"].find((type) =>
-        MediaRecorder.isTypeSupported(type),
-      )
-      const recorder = new MediaRecorder(stream, preferred ? { mimeType: preferred } : undefined)
+      const recorder = createAudioMediaRecorder(stream)
       chunksRef.current = []
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data)
       }
       recorder.onstop = () => {
-        stream.getTracks().forEach((t) => t.stop())
+        stream.getTracks().forEach((track) => track.stop())
         streamRef.current = null
-        void uploadRecording(recorder.mimeType || "audio/webm")
+        void saveBlob(new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" }), recorder.mimeType || "audio/webm")
       }
       recorderRef.current = recorder
       recorder.start()
       setRecording(true)
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Microphone access was denied.")
+      setError(e instanceof Error ? e.message : t("account.callScreening.recordMicDenied"))
     }
   }
 
@@ -54,32 +53,31 @@ export function AttendantStepRecorder({ onRecorded }: Props) {
     setRecording(false)
   }
 
-  async function uploadRecording(mimeType: string) {
-    if (!supabase || !user?.id) {
-      setError("Sign in again to save your recording.")
+  async function saveBlob(blob: Blob, mimeType: string) {
+    if (!user?.id) {
+      setError(t("account.callScreening.recordSignIn"))
       return
     }
-    const blob = new Blob(chunksRef.current, { type: mimeType })
     if (!blob.size) {
-      setError("Recording was empty. Try again and speak after tapping Record.")
+      setError(t("account.callScreening.recordEmpty"))
       return
     }
     setUploading(true)
     setError("")
     try {
-      const ext = mimeType.includes("mp4") ? "m4a" : mimeType.includes("ogg") ? "ogg" : "webm"
-      const filePath = `${user.id}/auto-attendant/${Date.now()}.${ext}`
-      const { error: uploadError } = await supabase.storage
-        .from(VOICEMAIL_GREETING_BUCKET)
-        .upload(filePath, blob, { upsert: true, contentType: mimeType })
-      if (uploadError) throw uploadError
-      const { data } = supabase.storage.from(VOICEMAIL_GREETING_BUCKET).getPublicUrl(filePath)
-      onRecorded(data.publicUrl)
+      const publicUrl = await uploadAttendantAudio(user.id, blob, mimeType)
+      onRecorded(publicUrl)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setUploading(false)
     }
+  }
+
+  async function onPickFile(file: File | undefined) {
+    if (!file) return
+    await saveBlob(file, file.type || "audio/mpeg")
+    if (fileRef.current) fileRef.current.value = ""
   }
 
   return (
@@ -101,7 +99,7 @@ export function AttendantStepRecorder({ onRecorded }: Props) {
               cursor: uploading ? "wait" : "pointer",
             }}
           >
-            {uploading ? "Saving…" : "Record my question"}
+            {uploading ? t("account.callScreening.recordSaving") : t("account.callScreening.recordButton")}
           </button>
         ) : (
           <button
@@ -118,13 +116,35 @@ export function AttendantStepRecorder({ onRecorded }: Props) {
               cursor: "pointer",
             }}
           >
-            Stop & save
+            {t("account.callScreening.recordStop")}
           </button>
         )}
-        <span style={{ fontSize: 11, color: "#64748b" }}>
-          Uses your microphone in the browser. On mobile, allow mic access when prompted.
-        </span>
+        <button
+          type="button"
+          disabled={uploading || recording}
+          onClick={() => fileRef.current?.click()}
+          style={{
+            padding: "8px 12px",
+            borderRadius: 8,
+            border: `1px solid ${theme.border}`,
+            background: "#fff",
+            color: theme.text,
+            fontWeight: 600,
+            fontSize: 12,
+            cursor: uploading || recording ? "default" : "pointer",
+          }}
+        >
+          {t("account.callScreening.recordUpload")}
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="audio/mpeg,audio/wav,audio/x-wav,audio/mp4,audio/webm,.mp3,.wav,.m4a,.webm"
+          hidden
+          onChange={(e) => void onPickFile(e.target.files?.[0])}
+        />
       </div>
+      <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.45 }}>{t("account.callScreening.recordConvertHelp")}</span>
       {error ? <p style={{ margin: 0, fontSize: 12, color: "#b91c1c" }}>{error}</p> : null}
     </div>
   )

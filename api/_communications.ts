@@ -505,12 +505,14 @@ function xmlEscape(value: string): string {
     .replace(/'/g, "&apos;")
 }
 
-/** Twilio <Play> is reliable for MP3/WAV; WebM/Opus from in-browser record often sounds like static or fails. */
+/** Twilio <Play> is reliable for MP3/WAV/GSM. Browser WebM/Opus/M4A/AAC often sounds like static. */
 export function twilioPlayLikelySupportedRecordingUrl(url: string): boolean {
-  const path = url.trim().split("?")[0].toLowerCase()
-  if (/\.webm($|\?)/.test(path) || /\.opus($|\?)/.test(path)) return false
-  if (/\.ogg($|\?)/.test(path)) return false
-  return true
+  const raw = url.trim()
+  if (!raw) return false
+  const path = raw.split("?")[0].toLowerCase()
+  if (path.includes("/api/voice-prompt-audio")) return true
+  if (path.includes("api.twilio.com") && path.includes("/recordings/")) return true
+  return /\.(mp3|wav|wave|gsm)$/.test(path)
 }
 
 export function buildVoicemailTwiml(params: {

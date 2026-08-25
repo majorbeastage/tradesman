@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useMemo, useRef, type ChangeEvent, type CSSProperties, type RefObject } from "react"
 import { supabase, supabaseAnonKey, supabaseUrl } from "../../lib/supabase"
+import { acquireMicrophoneStream, audioExtensionForMime, createAudioMediaRecorder } from "../../lib/mediaRecorderMime"
 import {
   formatDurationFieldFromMinutes,
   parseDurationFieldToMinutes,
@@ -2072,9 +2073,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
       return
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm"
-      const recorder = new MediaRecorder(stream, { mimeType })
+      const stream = await acquireMicrophoneStream()
+      const recorder = createAudioMediaRecorder(stream)
       quoteAutoRepliesRecordedChunksRef.current = []
       quoteAutoRepliesMediaStreamRef.current = stream
       quoteAutoRepliesMediaRecorderRef.current = recorder
@@ -2082,11 +2082,12 @@ export default function QuotesPage(_props: QuotesPageProps) {
         if (event.data.size > 0) quoteAutoRepliesRecordedChunksRef.current.push(event.data)
       }
       recorder.onstop = async () => {
-        const blob = new Blob(quoteAutoRepliesRecordedChunksRef.current, { type: recorder.mimeType || "audio/webm" })
+        const mimeType = recorder.mimeType || "audio/mp4"
+        const blob = new Blob(quoteAutoRepliesRecordedChunksRef.current, { type: mimeType })
         quoteAutoRepliesMediaStreamRef.current?.getTracks().forEach((track) => track.stop())
         quoteAutoRepliesMediaStreamRef.current = null
         quoteAutoRepliesMediaRecorderRef.current = null
-        await uploadQuoteAutoVoiceBlob(blob, "webm", blob.type || "audio/webm")
+        await uploadQuoteAutoVoiceBlob(blob, audioExtensionForMime(mimeType), mimeType)
       }
       recorder.start()
       setQuoteAutoRepliesRecordingBusy(true)

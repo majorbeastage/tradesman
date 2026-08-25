@@ -23,7 +23,8 @@ export default function GlobalAssistantFab() {
   if (!ga || ga.reportModalOpen) return null
   const showMic = ga.micFabVisible
   const showTrain = ga.canTrainVocabulary
-  if (!showMic && !showTrain) return null
+  const showMicBtn = showMic && ga.speechSupported
+  if (!showMicBtn && !showTrain) return null
 
   const {
     voiceListening,
@@ -113,7 +114,7 @@ export default function GlobalAssistantFab() {
             </svg>
           </button>
         ) : null}
-        {showMic && (voiceListening || canSend) ? (
+        {showMicBtn && (voiceListening || canSend) ? (
           <button
             type="button"
             title="Send command (Go)"
@@ -147,7 +148,7 @@ export default function GlobalAssistantFab() {
             </svg>
           </button>
         ) : null}
-        {showMic ? (
+        {showMicBtn ? (
           <button
             type="button"
             className={voiceListening ? "tradesman-global-assistant-fab--listening" : undefined}

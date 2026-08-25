@@ -58,6 +58,10 @@ verify_jwt = false
 [functions.push-test]
 verify_jwt = false
 
+# delete-own-account: App Store 5.1.1(v) self-serve deletion. Validates Bearer with getUser() inside.
+[functions.delete-own-account]
+verify_jwt = false
+
 [functions.notify-internal-message]
 verify_jwt = false
 

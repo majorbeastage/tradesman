@@ -50,7 +50,7 @@ export const ACCOUNT_SETTINGS_CATEGORIES: AccountSettingsCategory[] = [
       text: "#854d0e",
       chip: "#fef9c3",
     },
-    sectionIds: ["mobile_app", "app_scheme", "google_reserve", "ai_automations", "password_reset"],
+    sectionIds: ["mobile_app", "app_scheme", "google_reserve", "ai_automations", "password_reset", "delete_account"],
   },
 ]
 

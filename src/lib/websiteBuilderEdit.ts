@@ -1,10 +1,11 @@
 import type {
   BusinessPublicProfileSettings,
   WebsiteHomeSectionId,
+  WebsiteLayoutViewport,
   WebsiteTextStyle,
   WebsiteTextStyles,
 } from "./businessPublicProfile"
-import { WEBSITE_HOME_SECTION_OPTIONS } from "./businessPublicProfile"
+import { cloneWebsiteTextStyles, WEBSITE_HOME_SECTION_OPTIONS } from "./businessPublicProfile"
 
 /** Stable ids for click-to-edit targets on the Classic / showcase canvas. */
 export type WebsiteEditTargetId =
@@ -259,6 +260,65 @@ export function sectionIdFromEditTarget(targetId: string): WebsiteHomeSectionId 
   if (!targetId.startsWith("section.")) return null
   const id = targetId.slice("section.".length) as WebsiteHomeSectionId
   return WEBSITE_HOME_SECTION_OPTIONS.some((o) => o.id === id) ? id : null
+}
+
+export function isWebsiteEditTargetHidden(styles: WebsiteTextStyles | undefined, targetId: string): boolean {
+  return styles?.[targetId]?.hidden === true
+}
+
+export function patchWebsiteLayoutStyle(
+  settings: BusinessPublicProfileSettings,
+  viewport: WebsiteLayoutViewport,
+  targetId: string,
+  patch: Partial<WebsiteTextStyle>,
+): BusinessPublicProfileSettings {
+  if (viewport === "mobile") {
+    const base =
+      Object.keys(settings.textStylesMobile ?? {}).length > 0
+        ? settings.textStylesMobile
+        : cloneWebsiteTextStyles(settings.textStyles)
+    return { ...settings, textStylesMobile: patchWebsiteTextStyle(base, targetId, patch) }
+  }
+  return { ...settings, textStyles: patchWebsiteTextStyle(settings.textStyles, targetId, patch) }
+}
+
+export function seedCanvasStyleBothLayouts(
+  settings: BusinessPublicProfileSettings,
+  targetId: string,
+  patch: Partial<WebsiteTextStyle>,
+): BusinessPublicProfileSettings {
+  return {
+    ...settings,
+    textStyles: patchWebsiteTextStyle(settings.textStyles, targetId, patch),
+    textStylesMobile: patchWebsiteTextStyle(
+      Object.keys(settings.textStylesMobile ?? {}).length > 0
+        ? settings.textStylesMobile
+        : cloneWebsiteTextStyles(settings.textStyles),
+      targetId,
+      patch,
+    ),
+  }
+}
+
+export function hideWebsiteEditTarget(
+  settings: BusinessPublicProfileSettings,
+  targetId: string,
+  viewport: WebsiteLayoutViewport = "desktop",
+): BusinessPublicProfileSettings {
+  return patchWebsiteLayoutStyle(settings, viewport, targetId, { hidden: true })
+}
+
+export function showWebsiteEditTarget(
+  settings: BusinessPublicProfileSettings,
+  targetId: string,
+  viewport: WebsiteLayoutViewport = "desktop",
+): BusinessPublicProfileSettings {
+  return patchWebsiteLayoutStyle(settings, viewport, targetId, { hidden: undefined })
+}
+
+export function hiddenWebsiteEditTargetIds(styles: WebsiteTextStyles | undefined): string[] {
+  if (!styles) return []
+  return Object.keys(styles).filter((id) => styles[id]?.hidden === true)
 }
 
 export function hideSectionFromSettings(

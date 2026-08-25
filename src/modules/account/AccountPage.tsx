@@ -28,6 +28,7 @@ import { usePortalConfigForPage } from "../../contexts/OfficeManagerScopeContext
 import { getAccountSectionVisible, getOrderedAccountPortalSections } from "../../types/portal-builder"
 import { useLocale } from "../../i18n/LocaleContext"
 import MobileAppPreferencesCard from "../../components/MobileAppPreferencesCard"
+import DeleteAccountCard from "../../components/DeleteAccountCard"
 import NotificationSettingsCard from "../../components/NotificationSettingsCard"
 import AppSchemePicker from "../../components/AppSchemePicker"
 import GoogleReserveSettingsCard from "./GoogleReserveSettingsCard"
@@ -51,6 +52,11 @@ import {
   mytSettingsSectionOrder,
   type AccountSettingsCategory,
 } from "./accountSettingsLayout"
+import {
+  acquireMicrophoneStream,
+  audioExtensionForMime,
+  createAudioMediaRecorder,
+} from "../../lib/mediaRecorderMime"
 
 type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun"
 
@@ -296,6 +302,7 @@ export function AccountProfilePanel({
   const portalReadOnly = usePortalViewReadOnly()
   const showAccountSection = (sectionId: string) => {
     if (sectionId === "team_members") return !adminContext
+    if (sectionId === "delete_account") return !adminContext && !!user?.id && user.id === profileUserId
     return adminContext || getAccountSectionVisible(portalConfig, sectionId)
   }
   const orderedAccountSectionIds = useMemo(
@@ -343,6 +350,7 @@ export function AccountProfilePanel({
     voicemail_bundle: false,
     ai_automations: false,
     password_reset: false,
+    delete_account: false,
   })
   const toggleFold = (key: keyof typeof foldOpen) => () => setFoldOpen((prev) => ({ ...prev, [key]: !prev[key] }))
 
@@ -826,9 +834,8 @@ export function AccountProfilePanel({
     setMessage("")
     setError("")
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm"
-      const recorder = new MediaRecorder(stream, { mimeType })
+      const stream = await acquireMicrophoneStream()
+      const recorder = createAudioMediaRecorder(stream)
       recordedChunksRef.current = []
       mediaStreamRef.current = stream
       mediaRecorderRef.current = recorder
@@ -836,13 +843,14 @@ export function AccountProfilePanel({
         if (event.data.size > 0) recordedChunksRef.current.push(event.data)
       }
       recorder.onstop = async () => {
-        const blob = new Blob(recordedChunksRef.current, { type: recorder.mimeType || "audio/webm" })
+        const mimeType = recorder.mimeType || "audio/mp4"
+        const blob = new Blob(recordedChunksRef.current, { type: mimeType })
         mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
         mediaStreamRef.current = null
         mediaRecorderRef.current = null
         setRecordingGreeting(false)
         if (!blob.size) return
-        await uploadGreetingFile(blob, "webm", blob.type || "audio/webm")
+        await uploadGreetingFile(blob, audioExtensionForMime(mimeType), mimeType)
       }
       recorder.start()
       setRecordingGreeting(true)
@@ -1797,6 +1805,21 @@ export function AccountProfilePanel({
                           {resetting ? t("account.password.sending") : t("account.password.sendLink")}
                         </button>
                       </div>
+                    </AccountFold>
+                  </Fragment>
+                )
+              }
+              if (sectionId === "delete_account") {
+                const systemCat = cat ?? accountSettingsCategoryForSection("delete_account")
+                return (
+                  <Fragment key={sectionId}>
+                    <AccountFold
+                      title={t("account.delete.title")}
+                      open={foldOpen.delete_account}
+                      onToggle={toggleFold("delete_account")}
+                      category={systemCat}
+                    >
+                      <DeleteAccountCard />
                     </AccountFold>
                   </Fragment>
                 )

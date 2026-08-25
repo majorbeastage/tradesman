@@ -21,6 +21,8 @@ import {
   DEFAULT_BUSINESS_PROFILE_THEME,
   WEBSITE_BAND_TEXTURE_OPTIONS,
   WEBSITE_BUILT_IN_LINK_OPTIONS,
+  WEBSITE_BUILDER_PREVIEW_CHANNEL,
+  WEBSITE_BUILDER_PREVIEW_MESSAGE,
   WEBSITE_BUILDER_PREVIEW_STORAGE_KEY,
   WEBSITE_FONT_OPTIONS,
   WEBSITE_FONT_SIZE_OPTIONS,
@@ -53,12 +55,16 @@ import { BusinessProfileTemplatePicker } from "../../components/BusinessProfileT
 import {
   getCanvasItemIdFromTarget,
   getWebsiteTextValue,
+  hiddenWebsiteEditTargetIds,
   hideSectionFromSettings,
-  patchWebsiteTextStyle,
+  hideWebsiteEditTarget,
+  patchWebsiteLayoutStyle,
   resolveWebsiteEditTargetKind,
   sectionIdFromEditTarget,
+  seedCanvasStyleBothLayouts,
   setWebsiteTextValue,
   showSectionInSettings,
+  showWebsiteEditTarget,
   websiteEditTargetKind,
   websiteEditTargetLabel,
 } from "../../lib/websiteBuilderEdit"
@@ -432,6 +438,7 @@ export default function WebsiteBuilderPage() {
       featureCards: settings.featureCards,
       serviceCards: settings.serviceCards,
       textStyles: settings.textStyles,
+      textStylesMobile: settings.textStylesMobile,
       homeSectionOrder: settings.homeSectionOrder,
       fixedBackground: settings.fixedBackground,
       footerCopyright: settings.footerCopyright || undefined,
@@ -440,17 +447,47 @@ export default function WebsiteBuilderPage() {
     }
   }, [settings, contact, slug])
 
+  const popoutRef = useRef<Window | null>(null)
+
+  const publishPreview = useCallback(
+    (target?: Window | null) => {
+      try {
+        const payload = JSON.stringify(previewData)
+        localStorage.setItem(WEBSITE_BUILDER_PREVIEW_STORAGE_KEY, payload)
+        sessionStorage.setItem(WEBSITE_BUILDER_PREVIEW_STORAGE_KEY, payload)
+      } catch {
+        return false
+      }
+      try {
+        const bc = new BroadcastChannel(WEBSITE_BUILDER_PREVIEW_CHANNEL)
+        bc.postMessage({ type: WEBSITE_BUILDER_PREVIEW_MESSAGE })
+        bc.close()
+      } catch {
+        /* ignore */
+      }
+      const w = target ?? popoutRef.current
+      try {
+        if (w && !w.closed) w.postMessage({ type: WEBSITE_BUILDER_PREVIEW_MESSAGE }, window.location.origin)
+      } catch {
+        /* ignore */
+      }
+      return true
+    },
+    [previewData],
+  )
+
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      void publishPreview()
+    }, 250)
+    return () => window.clearTimeout(t)
+  }, [publishPreview])
+
   function openPopoutPreview() {
-    try {
-      const payload = JSON.stringify(previewData)
-      // localStorage is shared across windows; sessionStorage is not when open() uses noopener.
-      localStorage.setItem(WEBSITE_BUILDER_PREVIEW_STORAGE_KEY, payload)
-      sessionStorage.setItem(WEBSITE_BUILDER_PREVIEW_STORAGE_KEY, payload)
-    } catch {
+    if (!publishPreview()) {
       setError("Could not open preview window (storage blocked).")
       return
     }
-    // Do not pass noopener — it returns null and isolates storage from the opener.
     const w = window.open(
       "/website-builder-preview",
       "tradesman-website-preview",
@@ -458,19 +495,20 @@ export default function WebsiteBuilderPage() {
     )
     if (!w) setError("Pop-out blocked — allow pop-ups for this site, then try again.")
     else {
+      popoutRef.current = w
       try {
         w.focus()
       } catch {
         /* ignore */
       }
+      window.setTimeout(() => {
+        void publishPreview(w)
+      }, 80)
     }
   }
 
   function patchTextStyle(targetId: string, patch: Partial<WebsiteTextStyle>) {
-    setSettings((s) => ({
-      ...s,
-      textStyles: patchWebsiteTextStyle(s.textStyles, targetId, patch),
-    }))
+    setSettings((s) => patchWebsiteLayoutStyle(s, previewDevice, targetId, patch))
   }
 
   function moveSection(fromId: WebsiteHomeSectionId, direction: -1 | 1) {
@@ -690,21 +728,26 @@ export default function WebsiteBuilderPage() {
     const id = `t_${Date.now().toString(36)}`
     const targetId = `canvas.${id}`
     const stack = settings.canvasItems.length
-    setSettings((s) => ({
-      ...s,
-      canvasItems: [
-        ...s.canvasItems,
-        { id, kind: "text" as const, text: "New text — click to edit" },
-      ].slice(0, 24),
-      textStyles: patchWebsiteTextStyle(s.textStyles, targetId, {
-        offsetX: 0,
-        offsetY: 40 + stack * 28,
-        maxWidth: 280,
-        fontSize: "22px",
-        fontWeight: "700",
-        showFieldBackground: false,
-      }),
-    }))
+    setSettings((s) =>
+      seedCanvasStyleBothLayouts(
+        {
+          ...s,
+          canvasItems: [
+            ...s.canvasItems,
+            { id, kind: "text" as const, text: "New text — click to edit" },
+          ].slice(0, 24),
+        },
+        targetId,
+        {
+          offsetX: 0,
+          offsetY: 40 + stack * 28,
+          maxWidth: 280,
+          fontSize: "22px",
+          fontWeight: "700",
+          showFieldBackground: false,
+        },
+      ),
+    )
     setSelectedTargetId(targetId)
     setMessage("Text field added — drag it on the page, edit copy in the panel above.")
   }
@@ -712,19 +755,24 @@ export default function WebsiteBuilderPage() {
   function addPhotoFieldAt(imageUrl: string | null, offsetX: number, offsetY: number) {
     const id = `p_${Date.now().toString(36)}`
     const targetId = `canvas.${id}`
-    setSettings((s) => ({
-      ...s,
-      canvasItems: [
-        ...s.canvasItems,
-        { id, kind: "photo" as const, imageUrl: imageUrl?.trim() || null },
-      ].slice(0, 24),
-      textStyles: patchWebsiteTextStyle(s.textStyles, targetId, {
-        offsetX,
-        offsetY,
-        maxWidth: 200,
-        imageSize: 150,
-      }),
-    }))
+    setSettings((s) =>
+      seedCanvasStyleBothLayouts(
+        {
+          ...s,
+          canvasItems: [
+            ...s.canvasItems,
+            { id, kind: "photo" as const, imageUrl: imageUrl?.trim() || null },
+          ].slice(0, 24),
+        },
+        targetId,
+        {
+          offsetX,
+          offsetY,
+          maxWidth: 200,
+          imageSize: 150,
+        },
+      ),
+    )
     setSelectedTargetId(targetId)
     setMessage(imageUrl ? "Photo added on the page — drag to reposition." : "Photo field added — drop a tray photo onto it.")
   }
@@ -742,11 +790,14 @@ export default function WebsiteBuilderPage() {
   function removeCanvasItem(itemId: string) {
     setSettings((s) => {
       const textStyles = { ...s.textStyles }
+      const textStylesMobile = { ...s.textStylesMobile }
       delete textStyles[`canvas.${itemId}`]
+      delete textStylesMobile[`canvas.${itemId}`]
       return {
         ...s,
         canvasItems: s.canvasItems.filter((c) => c.id !== itemId),
         textStyles,
+        textStylesMobile,
       }
     })
     setSelectedTargetId(null)
@@ -820,7 +871,11 @@ export default function WebsiteBuilderPage() {
       const slot = selectedTargetId.slice("slot.".length) as WebsiteImageSlotId
       assignSlot(slot, null)
       setContextMenu(null)
+      return
     }
+    setSettings((s) => hideWebsiteEditTarget(s, selectedTargetId, previewDevice))
+    setSelectedTargetId(null)
+    setContextMenu(null)
   }
 
   const selectedKind = selectedTargetId
@@ -832,8 +887,10 @@ export default function WebsiteBuilderPage() {
     : null
   const selectedText =
     selectedTargetId && selectedKind === "text" ? getWebsiteTextValue(settings, selectedTargetId) : ""
-  const selectedStyle = selectedTargetId ? settings.textStyles[selectedTargetId] ?? {} : {}
+  const layoutStyles = previewDevice === "mobile" ? settings.textStylesMobile : settings.textStyles
+  const selectedStyle = selectedTargetId ? layoutStyles[selectedTargetId] ?? {} : {}
   const hiddenSections = WEBSITE_HOME_SECTION_OPTIONS.filter((o) => settings.homeSections[o.id] === false)
+  const hiddenFields = hiddenWebsiteEditTargetIds(layoutStyles)
   const navBar = settings.navBar ?? defaultWebsiteNavBar()
   const showTemplatesAtTop = !settings.enabled || !settings.publishedSlug
   const brandSwatches: Array<{ label: string; color: string }> = [
@@ -937,7 +994,15 @@ export default function WebsiteBuilderPage() {
     return <p style={{ margin: 24, color: "#64748b" }}>Loading website builder…</p>
   }
 
-  const previewWidth = previewDevice === "mobile" ? 390 : WEBSITE_FREEFORM_DESIGN_WIDTH
+  const previewEditor = {
+    selectedTargetId,
+    onSelectTarget,
+    onTargetContextMenu,
+    onDropImageOnSlot,
+    onDropImageOnCanvasItem,
+    onCreatePhotoAtDrop,
+    onPatchTextStyle: patchTextStyle,
+  }
 
   return (
     <div className="wb-root">
@@ -967,6 +1032,32 @@ export default function WebsiteBuilderPage() {
           flex: 1;
           min-height: 0;
           overflow: auto;
+        }
+        .wb-phone-stage {
+          display: flex;
+          justify-content: center;
+          align-items: flex-start;
+          padding: 20px 12px 32px;
+          box-sizing: border-box;
+          min-height: 100%;
+        }
+        .wb-phone-frame {
+          width: 390px;
+          height: 844px;
+          flex-shrink: 0;
+          border-radius: 36px;
+          border: 10px solid #1e293b;
+          box-shadow: 0 20px 50px rgba(0,0,0,0.45);
+          overflow: hidden;
+          background: #111;
+          position: relative;
+        }
+        .wb-phone-screen {
+          width: 100%;
+          height: 100%;
+          overflow: auto;
+          overflow-x: hidden;
+          background: #111;
         }
         @media (max-width: 960px) {
           .wb-root {
@@ -1074,12 +1165,7 @@ export default function WebsiteBuilderPage() {
                 <input
                   type="color"
                   value={selectedStyle.color || settings.theme.fontColor}
-                  onChange={(e) =>
-                    setSettings((s) => ({
-                      ...s,
-                      textStyles: patchWebsiteTextStyle(s.textStyles, selectedTargetId, { color: e.target.value }),
-                    }))
-                  }
+                  onChange={(e) => patchTextStyle(selectedTargetId, { color: e.target.value })}
                   style={{ width: "100%", height: 34, borderRadius: 8, border: `1px solid ${theme.border}` }}
                 />
               </label>
@@ -1087,14 +1173,7 @@ export default function WebsiteBuilderPage() {
                 Size
                 <select
                   value={selectedStyle.fontSize || ""}
-                  onChange={(e) =>
-                    setSettings((s) => ({
-                      ...s,
-                      textStyles: patchWebsiteTextStyle(s.textStyles, selectedTargetId, {
-                        fontSize: e.target.value || undefined,
-                      }),
-                    }))
-                  }
+                  onChange={(e) => patchTextStyle(selectedTargetId, { fontSize: e.target.value || undefined })}
                   style={field}
                 >
                   <option value="">Default</option>
@@ -1135,14 +1214,7 @@ export default function WebsiteBuilderPage() {
               Font
               <select
                   value={selectedStyle.fontFamily || ""}
-                  onChange={(e) =>
-                    setSettings((s) => ({
-                      ...s,
-                      textStyles: patchWebsiteTextStyle(s.textStyles, selectedTargetId, {
-                        fontFamily: e.target.value || undefined,
-                      }),
-                    }))
-                  }
+                  onChange={(e) => patchTextStyle(selectedTargetId, { fontFamily: e.target.value || undefined })}
                   style={field}
                 >
                 <option value="">Default</option>
@@ -1195,12 +1267,9 @@ export default function WebsiteBuilderPage() {
               <button
                 type="button"
                 onClick={() =>
-                  setSettings((s) => ({
-                    ...s,
-                    textStyles: patchWebsiteTextStyle(s.textStyles, selectedTargetId, {
-                      fontWeight: selectedStyle.fontWeight === "700" ? "400" : "700",
-                    }),
-                  }))
+                  patchTextStyle(selectedTargetId, {
+                    fontWeight: selectedStyle.fontWeight === "700" ? "400" : "700",
+                  })
                 }
                 style={{
                   padding: "6px 10px",
@@ -1216,12 +1285,9 @@ export default function WebsiteBuilderPage() {
               <button
                 type="button"
                 onClick={() =>
-                  setSettings((s) => ({
-                    ...s,
-                    textStyles: patchWebsiteTextStyle(s.textStyles, selectedTargetId, {
-                      fontStyle: selectedStyle.fontStyle === "italic" ? "normal" : "italic",
-                    }),
-                  }))
+                  patchTextStyle(selectedTargetId, {
+                    fontStyle: selectedStyle.fontStyle === "italic" ? "normal" : "italic",
+                  })
                 }
                 style={{
                   padding: "6px 10px",
@@ -1235,10 +1301,13 @@ export default function WebsiteBuilderPage() {
               >
                 Italic
               </button>
-              {selectedCanvasItem ? (
+              {selectedTargetId && selectedKind === "text" ? (
                 <button
                   type="button"
-                  onClick={() => removeCanvasItem(selectedCanvasItem.id)}
+                  onClick={() => {
+                    if (selectedCanvasItem) removeCanvasItem(selectedCanvasItem.id)
+                    else removeSelected()
+                  }}
                   style={{
                     padding: "6px 10px",
                     borderRadius: 8,
@@ -1274,12 +1343,7 @@ export default function WebsiteBuilderPage() {
                 value={(selectedStyle.linkTarget as WebsiteBuiltInLinkTarget | undefined) || (selectedTargetId === "hero.cta" ? "contact" : "none")}
                 onChange={(e) => {
                   const value = e.target.value as WebsiteBuiltInLinkTarget
-                  setSettings((s) => ({
-                    ...s,
-                    textStyles: patchWebsiteTextStyle(s.textStyles, selectedTargetId, {
-                      linkTarget: value === "none" ? undefined : value,
-                    }),
-                  }))
+                  patchTextStyle(selectedTargetId, { linkTarget: value === "none" ? undefined : value })
                 }}
                 style={field}
               >
@@ -2250,6 +2314,33 @@ export default function WebsiteBuilderPage() {
               ))}
             </div>
           )}
+          <div style={{ fontSize: 12, fontWeight: 900, color: EDITOR_INK, marginTop: 10 }}>Hidden fields</div>
+          {hiddenFields.length === 0 ? (
+            <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>
+              Right-click any headline, tagline, or button → Remove field. Restore it here.
+            </p>
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {hiddenFields.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setSettings((s) => showWebsiteEditTarget(s, id, previewDevice))}
+                  style={{
+                    padding: "6px 10px",
+                    borderRadius: 999,
+                    border: `1px solid ${theme.border}`,
+                    background: "#fff",
+                    fontSize: 11,
+                    fontWeight: 800,
+                    cursor: "pointer",
+                  }}
+                >
+                  + {websiteEditTargetLabel(id)}
+                </button>
+              ))}
+            </div>
+          )}
         </details>
 
         <details style={sectionCard}>
@@ -2528,48 +2619,60 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
               </button>
             ))}
           </div>
+          <p style={{ margin: "8px 0 0", fontSize: 11, color: "rgba(255,255,255,0.72)", lineHeight: 1.4 }}>
+            {previewDevice === "mobile"
+              ? "Editing the Mobile layout. Moves and style changes here stay on phones and do not change Desktop."
+              : "Editing the Desktop layout. Moves and style changes here stay on wide screens and do not change Mobile."}
+          </p>
         </div>
 
         <div
+          className="wb-preview-scroll"
           style={{
-            padding: previewDevice === "mobile" ? "16px 0 32px" : 0,
-            display: "flex",
-            justifyContent: "center",
             flex: 1,
             minHeight: 0,
+            minWidth: 0,
+            overflow: "auto",
             boxSizing: "border-box",
+            background: "#0b1220",
           }}
         >
-          <div
-            className="wb-preview-scroll"
-            style={{
-              width: previewWidth,
-              maxWidth: "100%",
-              height: "100%",
-              borderRadius: previewDevice === "mobile" ? 24 : 0,
-              overflow: "auto",
-              border: previewDevice === "mobile" ? "10px solid #1e293b" : "none",
-              boxShadow: previewDevice === "mobile" ? "0 20px 50px rgba(0,0,0,0.45)" : "none",
-              background: "#111",
-              position: "relative",
-            }}
-          >
-            <BusinessProfilePublicSite
-              data={previewData}
-              previewMode
-              activePage={previewPage}
-              onNavigatePage={setPreviewPage}
-              editor={{
-                selectedTargetId,
-                onSelectTarget,
-                onTargetContextMenu,
-                onDropImageOnSlot,
-                onDropImageOnCanvasItem,
-                onCreatePhotoAtDrop,
-                onPatchTextStyle: patchTextStyle,
+          {previewDevice === "mobile" ? (
+            <div className="wb-phone-stage">
+              <div className="wb-phone-frame">
+                <div className="wb-phone-screen">
+                  <BusinessProfilePublicSite
+                    data={previewData}
+                    previewMode
+                    layoutViewport="mobile"
+                    activePage={previewPage}
+                    onNavigatePage={setPreviewPage}
+                    editor={previewEditor}
+                  />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div
+              style={{
+                width: WEBSITE_FREEFORM_DESIGN_WIDTH,
+                minWidth: WEBSITE_FREEFORM_DESIGN_WIDTH,
+                minHeight: "100%",
+                margin: "0 auto",
+                background: "#111",
+                position: "relative",
               }}
-            />
-          </div>
+            >
+              <BusinessProfilePublicSite
+                data={previewData}
+                previewMode
+                layoutViewport="desktop"
+                activePage={previewPage}
+                onNavigatePage={setPreviewPage}
+                editor={previewEditor}
+              />
+            </div>
+          )}
         </div>
 
         {contextMenu ? (
@@ -2638,7 +2741,7 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                   }}
                   onClick={() => {
                     const id = contextMenu.targetId
-                    const cur = settings.textStyles[id]?.fontSize || "22px"
+                    const cur = layoutStyles[id]?.fontSize || "22px"
                     const idx = WEBSITE_FONT_SIZE_OPTIONS.indexOf(cur as (typeof WEBSITE_FONT_SIZE_OPTIONS)[number])
                     const next = WEBSITE_FONT_SIZE_OPTIONS[Math.min(WEBSITE_FONT_SIZE_OPTIONS.length - 1, Math.max(0, idx) + 1)]
                     patchTextStyle(id, { fontSize: next })
@@ -2665,7 +2768,7 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                   }}
                   onClick={() => {
                     const id = contextMenu.targetId
-                    const cur = settings.textStyles[id]?.fontSize || "22px"
+                    const cur = layoutStyles[id]?.fontSize || "22px"
                     const idx = WEBSITE_FONT_SIZE_OPTIONS.indexOf(cur as (typeof WEBSITE_FONT_SIZE_OPTIONS)[number])
                     const next = WEBSITE_FONT_SIZE_OPTIONS[Math.max(0, (idx < 0 ? 4 : idx) - 1)]
                     patchTextStyle(id, { fontSize: next })
@@ -2715,12 +2818,12 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                   }}
                   onClick={() => {
                     const id = contextMenu.targetId
-                    const on = settings.textStyles[id]?.scrollFixed === true
+                    const on = layoutStyles[id]?.scrollFixed === true
                     patchTextStyle(id, { scrollFixed: !on })
                     setContextMenu(null)
                   }}
                 >
-                  {settings.textStyles[contextMenu.targetId]?.scrollFixed
+                  {layoutStyles[contextMenu.targetId]?.scrollFixed
                     ? "Unpin (scroll with page)"
                     : "Pin (fixed while scrolling)"}
                 </button>
@@ -2746,13 +2849,13 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                   }}
                   onClick={() => {
                     const id = contextMenu.targetId
-                    const cur = settings.textStyles[id]?.scaleMode || "fixed"
+                    const cur = layoutStyles[id]?.scaleMode || "fixed"
                     patchTextStyle(id, { scaleMode: cur === "free" ? "fixed" : "free" })
                     setSelectedTargetId(id)
                     setContextMenu(null)
                   }}
                 >
-                  {(settings.textStyles[contextMenu.targetId]?.scaleMode || "fixed") === "free"
+                  {(layoutStyles[contextMenu.targetId]?.scaleMode || "fixed") === "free"
                     ? "Use fixed scale"
                     : "Use free scale"}
                 </button>
@@ -2774,7 +2877,7 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                   }}
                   onClick={() => {
                     const id = contextMenu.targetId
-                    const cur = settings.textStyles[id]?.imageSize ?? settings.textStyles[id]?.maxWidth ?? 120
+                    const cur = layoutStyles[id]?.imageSize ?? layoutStyles[id]?.maxWidth ?? 120
                     patchTextStyle(id, { imageSize: Math.min(640, cur + 24), maxWidth: Math.min(640, cur + 24) })
                     setContextMenu(null)
                   }}
@@ -2799,7 +2902,7 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                   }}
                   onClick={() => {
                     const id = contextMenu.targetId
-                    const cur = settings.textStyles[id]?.imageSize ?? settings.textStyles[id]?.maxWidth ?? 120
+                    const cur = layoutStyles[id]?.imageSize ?? layoutStyles[id]?.maxWidth ?? 120
                     patchTextStyle(id, { imageSize: Math.max(40, cur - 24), maxWidth: Math.max(40, cur - 24) })
                     setContextMenu(null)
                   }}
@@ -2850,7 +2953,7 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                     const id = contextMenu.targetId
                     patchTextStyle(id, {
                       tintColor: settings.theme.primaryColor,
-                      tintOpacity: Math.min(100, (settings.textStyles[id]?.tintOpacity ?? 0) + 20 || 35),
+                      tintOpacity: Math.min(100, (layoutStyles[id]?.tintOpacity ?? 0) + 20 || 35),
                     })
                     setSelectedTargetId(id)
                     setContextMenu(null)
@@ -2876,13 +2979,13 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                   }}
                   onClick={() => {
                     const id = contextMenu.targetId
-                    const on = settings.textStyles[id]?.scrollFixed === true
+                    const on = layoutStyles[id]?.scrollFixed === true
                     patchTextStyle(id, { scrollFixed: !on })
                     setSelectedTargetId(id)
                     setContextMenu(null)
                   }}
                 >
-                  {settings.textStyles[contextMenu.targetId]?.scrollFixed
+                  {layoutStyles[contextMenu.targetId]?.scrollFixed
                     ? "Unpin (scroll with page)"
                     : "Pin (fixed while scrolling)"}
                 </button>
@@ -2890,7 +2993,8 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
             ) : null}
             {(resolveWebsiteEditTargetKind(contextMenu.targetId, settings.canvasItems) === "section" ||
               resolveWebsiteEditTargetKind(contextMenu.targetId, settings.canvasItems) === "image" ||
-              getCanvasItemIdFromTarget(contextMenu.targetId)) && (
+              getCanvasItemIdFromTarget(contextMenu.targetId) ||
+              resolveWebsiteEditTargetKind(contextMenu.targetId, settings.canvasItems) === "text") && (
               <button
                 type="button"
                 style={{
@@ -2922,14 +3026,19 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                   if (tid.startsWith("slot.")) {
                     assignSlot(tid.slice("slot.".length) as WebsiteImageSlotId, null)
                     setSelectedTargetId(null)
+                    return
                   }
+                  setSettings((s) => hideWebsiteEditTarget(s, tid, previewDevice))
+                  setSelectedTargetId(null)
                 }}
               >
                 {getCanvasItemIdFromTarget(contextMenu.targetId)
                   ? "Remove field"
                   : resolveWebsiteEditTargetKind(contextMenu.targetId, settings.canvasItems) === "image"
                     ? "Clear image"
-                    : "Remove section"}
+                    : resolveWebsiteEditTargetKind(contextMenu.targetId, settings.canvasItems) === "section"
+                      ? "Remove section"
+                      : "Remove field"}
               </button>
             )}
           </div>

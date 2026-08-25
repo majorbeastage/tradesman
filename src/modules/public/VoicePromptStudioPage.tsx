@@ -6,6 +6,7 @@ import {
   type VoicePromptRecording,
   type VoiceStudioSnapshot,
 } from "../../lib/voicePromptStudio"
+import { createAudioMediaRecorder } from "../../lib/mediaRecorderMime"
 
 type LocalTake = {
   blob: Blob
@@ -117,8 +118,7 @@ export default function VoicePromptStudioPage({ publicToken }: { publicToken: st
     }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
-      const preferred = ["audio/webm;codecs=opus", "audio/mp4", "audio/ogg;codecs=opus"].find((type) => MediaRecorder.isTypeSupported(type))
-      const recorder = new MediaRecorder(stream, preferred ? { mimeType: preferred } : undefined)
+      const recorder = createAudioMediaRecorder(stream)
       const startedAt = Date.now()
       chunksRef.current = []
       streamRef.current = stream
@@ -127,7 +127,7 @@ export default function VoicePromptStudioPage({ publicToken }: { publicToken: st
         if (event.data.size > 0) chunksRef.current.push(event.data)
       }
       recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" })
+        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/mp4" })
         const previous = takes[promptId]
         if (previous) URL.revokeObjectURL(previous.url)
         setTakes((current) => ({

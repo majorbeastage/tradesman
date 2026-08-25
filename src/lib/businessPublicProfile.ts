@@ -219,11 +219,34 @@ export type WebsiteTextStyle = {
   fieldBackgroundColor?: string
   /** Keep this element fixed on screen while the page scrolls. */
   scrollFixed?: boolean
+  /** Hide this built-in field from the live site and editor canvas. */
+  hidden?: boolean
 }
 
 export type WebsiteTextStyles = Partial<Record<string, WebsiteTextStyle>>
 
+export type WebsiteLayoutViewport = "desktop" | "mobile"
+
+export const WEBSITE_MOBILE_LAYOUT_MAX_PX = 767
+
+export function cloneWebsiteTextStyles(styles: WebsiteTextStyles): WebsiteTextStyles {
+  return parseWebsiteTextStyles(styles)
+}
+
+export function resolveWebsiteTextStylesForViewport(
+  desktop: WebsiteTextStyles | undefined,
+  mobile: WebsiteTextStyles | undefined,
+  viewport: WebsiteLayoutViewport,
+): WebsiteTextStyles {
+  const desk = desktop ?? {}
+  if (viewport !== "mobile") return desk
+  const mob = mobile ?? {}
+  return Object.keys(mob).length > 0 ? mob : desk
+}
+
 export const WEBSITE_BUILDER_PREVIEW_STORAGE_KEY = "tradesman_website_builder_preview_v1"
+export const WEBSITE_BUILDER_PREVIEW_CHANNEL = "tradesman_website_builder_preview_v1"
+export const WEBSITE_BUILDER_PREVIEW_MESSAGE = "tradesman-website-builder-preview"
 
 export const WEBSITE_FONT_OPTIONS = [
   { id: "Oswald", label: "Oswald (headlines)", stack: '"Oswald", system-ui, sans-serif' },
@@ -588,6 +611,7 @@ export function parseWebsiteTextStyles(raw: unknown): WebsiteTextStyles {
       style.fieldBackgroundColor = o.fieldBackgroundColor.trim().toLowerCase()
     }
     if (o.scrollFixed === true) style.scrollFixed = true
+    if (o.hidden === true) style.hidden = true
     if (Object.keys(style).length) out[key.trim().slice(0, 80)] = style
   }
   return out
@@ -799,8 +823,10 @@ export type BusinessPublicProfileSettings = {
   featureCards: WebsiteContentCard[]
   /** Specialty / service cards (title + body + image slot). */
   serviceCards: WebsiteContentCard[]
-  /** Per-element typography overrides (click-to-edit in builder). */
+  /** Per-element typography overrides (click-to-edit in builder). Desktop layout. */
   textStyles: WebsiteTextStyles
+  /** Independent mobile layout (positions, sizes, visibility). */
+  textStylesMobile: WebsiteTextStyles
   /** Home section render order (drag reorder in builder). */
   homeSectionOrder: WebsiteHomeSectionId[]
   /** Fixed background stays put while content scrolls (Classic). */
@@ -857,6 +883,7 @@ export function emptyBusinessPublicProfileSettings(): BusinessPublicProfileSetti
     featureCards: [],
     serviceCards: [],
     textStyles: {},
+    textStylesMobile: {},
     homeSectionOrder: defaultWebsiteHomeSectionOrder(),
     fixedBackground: true,
     footerCopyright: "",
@@ -1012,6 +1039,10 @@ export function parseBusinessPublicProfileSettings(metadata: unknown): BusinessP
     featureCards: parseWebsiteContentCards(o.featureCards, defaultWebsiteFeatureCards(), 4),
     serviceCards: parseWebsiteContentCards(o.serviceCards, defaultWebsiteServiceCards(), 6),
     textStyles: parseWebsiteTextStyles(o.textStyles),
+    textStylesMobile:
+      o.textStylesMobile == null
+        ? parseWebsiteTextStyles(o.textStyles)
+        : parseWebsiteTextStyles(o.textStylesMobile),
     homeSectionOrder: parseWebsiteHomeSectionOrder(o.homeSectionOrder),
     fixedBackground: o.fixedBackground !== false,
     footerCopyright: readNestedProfileString(o, "footerCopyright", "footer_copyright").slice(0, 200),
@@ -1075,6 +1106,9 @@ export function mergeBusinessPublicProfileMetadata(
       featureCards: parseWebsiteContentCards(settings.featureCards, defaultWebsiteFeatureCards(), 4),
       serviceCards: parseWebsiteContentCards(settings.serviceCards, defaultWebsiteServiceCards(), 6),
       textStyles: parseWebsiteTextStyles(settings.textStyles),
+      textStylesMobile: parseWebsiteTextStyles(
+        Object.keys(settings.textStylesMobile ?? {}).length > 0 ? settings.textStylesMobile : settings.textStyles,
+      ),
       homeSectionOrder: parseWebsiteHomeSectionOrder(settings.homeSectionOrder),
       fixedBackground: settings.fixedBackground !== false,
       footerCopyright: settings.footerCopyright.trim().slice(0, 200),

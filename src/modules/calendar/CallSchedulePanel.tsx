@@ -51,6 +51,7 @@ import { loadOrgRosterForUser, type OrgRosterEntry } from "../../lib/orgRoster"
 import { canUsePortalViewBar } from "../../lib/portalViewRules"
 import { CallForwardAdvancedOptions } from "../../components/CallForwardAdvancedOptions"
 import { useLocale } from "../../i18n/LocaleContext"
+import { INTRO_PROMPT_MAX_LENGTH } from "../../lib/voiceAutoAttendant"
 
 type ScheduleView = "week" | "month" | "day" | "year"
 
@@ -814,6 +815,23 @@ function FunctionEditModal({
                 <option value="record_own_menu">{t("account.callScreening.modeRecordOwn")}</option>
               </select>
             </label>
+            <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 700 }}>
+              {t("account.callScreening.openingLine")}
+              <textarea
+                value={draft.autoAttendant.introPrompt}
+                disabled={!draft.autoAttendant.enabled}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    autoAttendant: { ...draft.autoAttendant, introPrompt: e.target.value.slice(0, INTRO_PROMPT_MAX_LENGTH) },
+                  })
+                }
+                rows={3}
+                style={{ padding: "8px 10px", borderRadius: 8, border: `1px solid ${theme.border}`, resize: "vertical", fontWeight: 500 }}
+                placeholder={t("account.callScreening.openingLinePlaceholder")}
+              />
+              <span style={{ fontWeight: 500, color: "#64748b" }}>{t("account.callScreening.openingLineHelp")}</span>
+            </label>
             <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600 }}>
               <input
                 type="checkbox"
@@ -1337,6 +1355,7 @@ export function CallSchedulePanel({ profileUserId, onOpenMyT }: Props) {
         spamScreenEnabled: toSave.autoAttendant.spamScreenEnabled,
         forwardGoodLeads: toSave.autoAttendant.forwardGoodLeads,
         unknownCallerShowTradesmanId: toSave.autoAttendant.unknownCallerShowTradesmanId,
+        introPrompt: toSave.autoAttendant.introPrompt,
       },
       scheduleVisual: toSave.scheduleVisual,
     })

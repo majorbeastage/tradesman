@@ -3,12 +3,15 @@ import { supabase } from "../lib/supabase"
 import { theme } from "../styles/theme"
 import {
   DEFAULT_VOICE_AUTO_ATTENDANT,
+  INTRO_PROMPT_MAX_LENGTH,
   mergeVoiceAutoAttendantMetadata,
   parseVoiceAutoAttendant,
   recommendedResponseTimeoutSeconds,
   type VoiceAutoAttendantMode,
   type VoiceAutoAttendantSettings,
 } from "../lib/voiceAutoAttendant"
+import { reencodeAttendantRecordingUrl } from "../lib/attendantRecordingUpload"
+import { isTwilioPlaySafeAudioUrl } from "../lib/audioToTwilioWav"
 import { voiceStudioUserRequest } from "../lib/voicePromptStudio"
 import { useLocale } from "../i18n/LocaleContext"
 import { CallScreeningMenuBuilder } from "./CallScreeningMenuBuilder"
@@ -22,6 +25,7 @@ export function CallScreeningSettingsPanel({ profileUserId }: Props) {
   const { t } = useLocale()
   const [settings, setSettings] = useState<VoiceAutoAttendantSettings>(DEFAULT_VOICE_AUTO_ATTENDANT)
   const [menuDraft, setMenuDraft] = useState(DEFAULT_VOICE_AUTO_ATTENDANT.menuSteps)
+  const [introDraft, setIntroDraft] = useState(DEFAULT_VOICE_AUTO_ATTENDANT.introPrompt)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState("")
@@ -38,6 +42,7 @@ export function CallScreeningSettingsPanel({ profileUserId }: Props) {
     const parsed = parseVoiceAutoAttendant(meta.voice_auto_attendant_v1)
     setSettings(parsed)
     setMenuDraft(parsed.menuSteps)
+    setIntroDraft(parsed.introPrompt)
     setMenuDirty(false)
     setLoading(false)
   }, [profileUserId])
@@ -66,6 +71,7 @@ export function CallScreeningSettingsPanel({ profileUserId }: Props) {
     }
     setSettings(next)
     setMenuDraft(next.menuSteps)
+    setIntroDraft(next.introPrompt)
     setMenuDirty(false)
     setMessage(t("account.callScreening.saved"))
   }
@@ -80,6 +86,16 @@ export function CallScreeningSettingsPanel({ profileUserId }: Props) {
       ...step,
       responseTimeoutSeconds: recommendedResponseTimeoutSeconds(step.kind, step.prompt),
     }))
+    if (settings.mode === "record_own_menu") {
+      timedSteps = await Promise.all(
+        timedSteps.map(async (step) => {
+          const url = step.recordingUrl?.trim()
+          if (!url || isTwilioPlaySafeAudioUrl(url)) return step
+          const converted = await reencodeAttendantRecordingUrl(profileUserId, url)
+          return converted !== url ? { ...step, recordingUrl: converted } : step
+        }),
+      )
+    }
     try {
       const payload = await voiceStudioUserRequest("client-analyze-auto-attendant", {
         steps: menuDraft.map(({ id, kind, prompt }) => ({ id, kind, prompt })),
@@ -98,7 +114,11 @@ export function CallScreeningSettingsPanel({ profileUserId }: Props) {
       // The local recommendation keeps call timing safe if the AI service is temporarily unavailable.
     }
     setSaving(false)
-    await persist({ ...settings, menuSteps: timedSteps })
+    await persist({
+      ...settings,
+      introPrompt: introDraft.slice(0, INTRO_PROMPT_MAX_LENGTH),
+      menuSteps: timedSteps,
+    })
   }
 
   if (loading) return <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>{t("common.loading")}</p>
@@ -129,6 +149,21 @@ export function CallScreeningSettingsPanel({ profileUserId }: Props) {
               <option value="recorded_menu">{t("account.callScreening.modeRecorded")}</option>
               <option value="record_own_menu">{t("account.callScreening.modeRecordOwn")}</option>
             </select>
+          </label>
+
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 600 }}>{t("account.callScreening.openingLine")}</span>
+            <textarea
+              value={introDraft}
+              onChange={(e) => {
+                setIntroDraft(e.target.value.slice(0, INTRO_PROMPT_MAX_LENGTH))
+                setMenuDirty(true)
+              }}
+              rows={3}
+              style={{ ...theme.formInput, resize: "vertical", minHeight: 72, maxWidth: 640 }}
+              placeholder={t("account.callScreening.openingLinePlaceholder")}
+            />
+            <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.45 }}>{t("account.callScreening.openingLineHelp")}</span>
           </label>
 
           <div
