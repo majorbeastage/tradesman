@@ -22,6 +22,7 @@ import {
   useOfficeManagerScopeOptional,
 } from "../../contexts/OfficeManagerScopeContext"
 import { useEffectiveClientId, useEffectivePortalConfig } from "../../contexts/PortalViewContext"
+import { isQueryableProfileUserId } from "../../lib/portalViewRules"
 import { usePortalTabs } from "../../hooks/usePortalTabs"
 import { theme } from "../../styles/theme"
 import { useIsMobile } from "../../hooks/useIsMobile"
@@ -77,6 +78,10 @@ function buildPortalTabsFromConfig(portalConfig: PortalConfig | null): Array<{ t
   return visible.length > 0 ? visible : undefined
 }
 
+function omDataUserId(selected: string | null | undefined, authId: string | undefined): string | null {
+  return isQueryableProfileUserId(selected) ? selected : (authId ?? null)
+}
+
 const OM_QUOTES_TOOLBAR_ACTIONS: { id: string; label: string }[] = [
   { id: "auto_response", label: "Automatic replies" },
   { id: "settings", label: "Settings" },
@@ -113,7 +118,7 @@ function ManagedUserTabEditor() {
   }, [ctx?.scopedPortalConfig, uid])
 
   const save = useCallback(async () => {
-    if (!uid || !supabase || !ctx) return
+    if (!uid || !isQueryableProfileUserId(uid) || !supabase || !ctx) return
     setSaving(true)
     setMsg("")
     const { data, error: fetchErr } = await supabase.from("profiles").select("portal_config").eq("id", uid).single()
@@ -142,7 +147,7 @@ function ManagedUserTabEditor() {
     await ctx.refreshScopedPortalConfig()
   }, [ctx, localTabs, uid])
 
-  if (!ctx || !uid || selected?.isSelf) return null
+  if (!ctx || !uid || !isQueryableProfileUserId(uid) || selected?.isSelf) return null
 
   return (
     <div style={{ marginLeft: 8, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-start" }}>
@@ -239,7 +244,7 @@ function ManagedUserOmToolbarEditor() {
   }, [ctx?.scopedPortalConfig, uid])
 
   const save = useCallback(async () => {
-    if (!uid || !supabase || !ctx) return
+    if (!uid || !isQueryableProfileUserId(uid) || !supabase || !ctx) return
     setSaving(true)
     setMsg("")
     const { data, error: fetchErr } = await supabase.from("profiles").select("portal_config").eq("id", uid).single()
@@ -280,7 +285,7 @@ function ManagedUserOmToolbarEditor() {
     await ctx.refreshScopedPortalConfig()
   }, [ctx, calendarVisible, quotesVisible, conversationsVisible, uid])
 
-  if (!ctx || !uid || selected?.isSelf) return null
+  if (!ctx || !uid || !isQueryableProfileUserId(uid) || selected?.isSelf) return null
 
   return (
     <div style={{ marginLeft: 8 }}>
@@ -398,6 +403,7 @@ function OfficeManagerAppContent() {
   const { t } = useLocale()
   const { tabs: portalTabs } = usePortalTabs(effectiveClientId, "office_manager")
   const scope = useOfficeManagerScopeOptional()
+  const scopedDataUserId = omDataUserId(scope?.selectedUserId, user?.id)
   const hasClients = (scope?.clients.length ?? 0) > 0
   const resolvedPortalTabs = useMemo(() => {
     const cfg = scope?.scopedPortalConfig ?? portalConfig
@@ -408,7 +414,8 @@ function OfficeManagerAppContent() {
   const selectedRow = scope?.clients.find((c) => c.userId === scope.selectedUserId) ?? null
   /** Bundled managed users (no Payments tab) do not get separate Helcim / dashboard billing alerts. */
   const separateBillingForScope =
-    Boolean(scope?.selectedUserId) && (selectedRow?.isSelf === true || scope?.scopedPortalConfig?.tabs?.payments === true)
+    Boolean(scopedDataUserId) &&
+    (!scope?.selectedUserId || selectedRow?.isSelf === true || scope?.scopedPortalConfig?.tabs?.payments === true)
   const omPaymentsTabAvailable = hasClients && resolvedPortalTabs.some((t) => t.tab_id === "payments")
   const scopedPortalCfg = scope?.scopedPortalConfig ?? portalConfig
   const calendarTabAvailable = resolvedPortalTabs.some((t) => t.tab_id === "calendar")
@@ -492,7 +499,7 @@ function OfficeManagerAppContent() {
     >
     <GlobalAssistantProvider
       setPage={setPage}
-      profileUserId={scope?.selectedUserId ?? user?.id ?? null}
+      profileUserId={scopedDataUserId}
       profileMetadata={profileMetadata}
       onMetadataPatch={setProfileMetadata}
       platform="office_manager"
@@ -555,7 +562,7 @@ function OfficeManagerAppContent() {
         <>
           <h1 style={{ margin: 0, fontSize: "1.75rem", fontWeight: 700, color: theme.text }}>Office manager</h1>
           <BillingDueDashboardBanner
-            profileUserId={scope?.selectedUserId ?? user?.id}
+            profileUserId={scopedDataUserId}
             separateBillingProfile={separateBillingForScope}
             paymentsTabAvailable={omPaymentsTabAvailable}
             onOpenPayments={omPaymentsTabAvailable ? () => setPage("payments") : undefined}
@@ -574,7 +581,7 @@ function OfficeManagerAppContent() {
             showCustomReceiptShortcut={showCustomReceiptShortcut}
             showEmailClientShortcut={showEmailClientShortcut}
             profileUserId={user?.id ?? null}
-            dashboardDataUserId={scope?.selectedUserId ?? user?.id ?? null}
+            dashboardDataUserId={scopedDataUserId}
             labels={{
               customers: t("dashboard.quickCustomers"),
               estimates: t("dashboard.quickEstimates"),
@@ -624,7 +631,7 @@ function OfficeManagerAppContent() {
           />
           <DashboardTodayWorkPreview
             isMobile={isMobile}
-            dataUserId={scope?.selectedUserId ?? user?.id ?? null}
+            dataUserId={scopedDataUserId}
             viewerUserId={user?.id ?? null}
             setPage={setPage}
             reportingAllowed
@@ -654,7 +661,7 @@ function OfficeManagerAppContent() {
           />
           <DashboardReportsPreview
             isMobile={isMobile}
-            dataUserId={scope?.selectedUserId ?? user?.id ?? null}
+            dataUserId={scopedDataUserId}
             onOpenReporting={() => setPage("reporting")}
             labels={{
               title: t("dashboard.reportsPreviewTitle"),

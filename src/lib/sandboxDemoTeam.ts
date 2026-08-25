@@ -1,5 +1,5 @@
 import type { UserRole } from "../contexts/AuthContext"
-import type { ManageableUserRow } from "./portalViewRules"
+import { isQueryableProfileUserId, type ManageableUserRow } from "./portalViewRules"
 
 export const SANDBOX_DEMO_USER_ID_PREFIX = "sandbox-demo-"
 
@@ -52,14 +52,14 @@ export function isSandboxDemoUserId(id: string | null | undefined): boolean {
   return Boolean(id && id.startsWith(SANDBOX_DEMO_USER_ID_PREFIX))
 }
 
-/** Real Supabase auth user IDs only — excludes sandbox demo persona IDs. */
+/** Real Supabase auth user IDs only — excludes sandbox demo personas and view-as sentinels. */
 export function filterRealUserIds(ids: string[]): string[] {
-  return ids.filter((id) => id && !isSandboxDemoUserId(id))
+  return ids.filter((id) => isQueryableProfileUserId(id))
 }
 
-/** Map sandbox demo preview IDs to the signed-in user for DB reads/writes. */
+/** Map sandbox demo / role-default preview IDs to the signed-in user for DB reads/writes. */
 export function resolveSandboxDataUserId(scopedId: string | null | undefined, authUserId: string): string {
-  if (!scopedId || isSandboxDemoUserId(scopedId)) return authUserId
+  if (!isQueryableProfileUserId(scopedId)) return authUserId
   return scopedId
 }
 

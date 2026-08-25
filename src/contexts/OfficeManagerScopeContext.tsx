@@ -6,7 +6,7 @@ import {
   useEffectiveClientId,
 } from "./PortalViewContext"
 import type { PortalConfig } from "../types/portal-builder"
-import type { ManageableUserRow } from "../lib/portalViewRules"
+import { isPortalViewDefaultTarget, type ManageableUserRow } from "../lib/portalViewRules"
 import { supabase } from "../lib/supabase"
 import {
   loadOrganizationPeers,
@@ -101,7 +101,7 @@ export function useOfficeManagerScopeOptional(): OfficeScopeValue | null {
   if (!pv) return null
   return {
     clients,
-    selectedUserId: pv.targetUserId,
+    selectedUserId: isPortalViewDefaultTarget(pv.targetUserId) ? null : pv.targetUserId,
     setSelectedUserId: pv.setTargetUserId,
     scopedPortalConfig: pv.effectivePortalConfig,
     loadingClients: pv.loadingUsers,

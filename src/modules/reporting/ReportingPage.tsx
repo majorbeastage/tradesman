@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { useAuth } from "../../contexts/AuthContext"
 import { useOfficeManagerScopeOptional } from "../../contexts/OfficeManagerScopeContext"
 import { supabase } from "../../lib/supabase"
+import { isQueryableProfileUserId } from "../../lib/portalViewRules"
 import { normalizeCommunicationUrgency } from "../../lib/customerUrgency"
 import { loadTodayWorkSnapshot, type TodayWorkSnapshot } from "../../lib/todayWorkReport"
 import { isOfficeManagerLikeRole } from "../../lib/profileRoles"
@@ -43,7 +44,9 @@ function downloadCsv(filename: string, rows: string[][]) {
 export default function ReportingPage() {
   const { role, user } = useAuth()
   const omScope = useOfficeManagerScopeOptional()
-  const reportingUserId = omScope?.selectedUserId ?? user?.id ?? null
+  const reportingUserId = isQueryableProfileUserId(omScope?.selectedUserId)
+    ? omScope.selectedUserId
+    : (user?.id ?? null)
 
   const allowed = isOfficeManagerLikeRole(role)
 

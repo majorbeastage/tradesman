@@ -5,8 +5,16 @@ import { isOfficeManagerAssignmentRole, labelForProfileRole, PROFILE_ROLE_LABELS
 /** Session value: preview the default portal layout for the selected role (no specific profile). */
 export const PORTAL_VIEW_DEFAULT_USER = "__role_default__"
 
+/** Permissive UUID shape (any version nibble, including v7). */
+const PROFILE_USER_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 export function isPortalViewDefaultTarget(id: string | null | undefined): boolean {
   return !id || id === PORTAL_VIEW_DEFAULT_USER
+}
+
+/** True when `id` can be sent to Postgres uuid columns (`profiles.id`, `user_id`, …). */
+export function isQueryableProfileUserId(id: string | null | undefined): id is string {
+  return typeof id === "string" && PROFILE_USER_UUID_RE.test(id)
 }
 
 export function defaultPortalConfigForViewRole(viewRole: UserRole): PortalConfig {

@@ -72,7 +72,6 @@ import {
   filterCustomersToSharingScope,
   loadAssigneeCalendarCustomerIds,
 } from "../../lib/orgCustomerSharing"
-import { usePortalViewOptional } from "../../contexts/PortalViewContext"
 import { loadAccountWorkflowBundleFromMetadata } from "../../lib/estimateWorkflowRuntime"
 import { customerMatchesWorkflowScope, parseCustomerWorkflowMeta } from "../../lib/customerWorkflowRouting"
 import { outboundMessagesJsonBody } from "../../lib/platformToolsJsonBody"
@@ -400,8 +399,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const isMobile = useIsMobile()
   const globalAssistant = useGlobalAssistantOptional()
   const omCalendarPolicy = useManagedOmCalendarPolicy()
-  const portalView = usePortalViewOptional()
-  const workflowScopeUserId = portalView?.showViewBar && portalView.targetUserId ? portalView.targetUserId : userId
   const [accountProfileMetadata, setAccountProfileMetadata] = useState<Record<string, unknown> | null>(null)
   const workflowBundle = useMemo(
     () => (accountProfileMetadata ? loadAccountWorkflowBundleFromMetadata(accountProfileMetadata) : null),
@@ -1299,7 +1296,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     const urgOk = !filterUrgency.trim() || urg === filterUrgency
     const searchOk =
       !searchLower || name.includes(searchLower) || contactValues.includes(searchLower)
-    if (omCalendarPolicy.workflow_only_customers && workflowScopeUserId && workflowBundle) {
+    if (omCalendarPolicy.workflow_only_customers && userId && workflowBundle) {
       const meta = parseCustomerWorkflowMeta(c.metadata)
       const snapshot = meta
         ? {
@@ -1313,7 +1310,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
           }
         : null
       const workflowOk = customerMatchesWorkflowScope(snapshot, {
-        userId: workflowScopeUserId,
+        userId,
         departmentLabel: omCalendarPolicy.department_label,
         workflowOnlyCustomers: true,
         workflow: workflowBundle.workflow,

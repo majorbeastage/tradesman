@@ -19,6 +19,7 @@ import {
   filterUsersForViewRole,
   filterUsersForViewRoleInOrg,
   isPortalViewDefaultTarget,
+  isQueryableProfileUserId,
   resolveOrgOwnerFromRoster,
   portalShellForViewRole,
   PORTAL_VIEW_DEFAULT_USER,
@@ -838,8 +839,7 @@ export function usePortalView(): PortalViewValue {
 export function useEffectiveUserId(): string {
   const { userId } = useAuth()
   const ctx = useContext(PortalViewContext)
-  if (ctx?.showViewBar && ctx.targetUserId && !isPortalViewDefaultTarget(ctx.targetUserId)) {
-    if (isSandboxDemoUserId(ctx.targetUserId)) return userId
+  if (ctx?.showViewBar && isQueryableProfileUserId(ctx.targetUserId)) {
     return ctx.targetUserId
   }
   return userId
@@ -872,7 +872,7 @@ export function usePortalViewReadOnly(): boolean {
 export function useEffectiveClientId(): string {
   const { clientId } = useAuth()
   const ctx = useContext(PortalViewContext)
-  if (ctx?.showViewBar && ctx.targetUserId && !isPortalViewDefaultTarget(ctx.targetUserId)) {
+  if (ctx?.showViewBar && isQueryableProfileUserId(ctx.targetUserId)) {
     const row = ctx.manageableUsers.find((u) => u.userId === ctx.targetUserId)
     if (row?.clientId) return row.clientId
   }
