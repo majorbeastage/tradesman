@@ -27,6 +27,9 @@ import {
 import { buildInvoicePdfBytes, loadInvoiceTemplateSettings } from "../../lib/invoicePdfExport"
 import { consumeInvoicesPrefill } from "../../lib/workflowNavigation"
 import { formatDisplayText } from "../../lib/formatDisplayText"
+import { formatAppError, isAuthSessionError } from "../../lib/formatAppError"
+import { getFreshAccessToken } from "../../lib/authPlatformApi"
+import { useCustomerDataScope } from "../../hooks/useCustomerDataScope"
 import {
   DOCUMENT_NUMBER_DIGIT_OPTIONS,
   applyDocumentNumberSettingsToMeta,
@@ -60,10 +63,14 @@ const secondaryBtn: CSSProperties = {
 
 export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) {
   const sandboxTraining = useSandboxTrainingMode()
-  const { session } = useAuth()
+  const { session, signOut } = useAuth()
+  const { dataUserId, loading: customerScopeLoading } = useCustomerDataScope()
+  const customerOwnerId = dataUserId || userId
   const [form, setForm] = useState<InvoiceFormState>(() => defaultInvoiceFormState())
   const [savedInvoices, setSavedInvoices] = useState<InvoiceRecord[]>([])
   const [customers, setCustomers] = useState<CustomerInvoicePickerRow[]>([])
+  const [customersLoading, setCustomersLoading] = useState(false)
+  const [customerLoadKey, setCustomerLoadKey] = useState(0)
   const [quotes, setQuotes] = useState<InvoiceQuotePick[]>([])
   const [busy, setBusy] = useState(false)
   const [uploadBusy, setUploadBusy] = useState(false)
@@ -167,39 +174,72 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
   const subtotal = useMemo(() => invoiceSubtotal(form.lineItems), [form.lineItems])
 
   useEffect(() => {
-    if (!supabase || !userId) return
+    if (!supabase || !userId || customerScopeLoading) return
+    const ownerId = (customerOwnerId || userId).trim()
+    let cancelled = false
+    setCustomersLoading(true)
     void (async () => {
       try {
-        const [inv, cust, status] = await Promise.all([
+        const token = await getFreshAccessToken(supabase, null)
+        const [invRes, custRes, statusRes] = await Promise.allSettled([
           loadInvoicesFromProfile(supabase, userId),
-          loadCustomersForInvoices(supabase, userId),
-          fetchPaymentProviderStatus(userId, session?.access_token ?? null).catch(() => null),
+          ownerId ? loadCustomersForInvoices(supabase, ownerId) : Promise.resolve([]),
+          fetchPaymentProviderStatus(userId, token),
         ])
-        setSavedInvoices(inv)
-        setCustomers(cust)
-        if (status?.defaultProvider) setPaymentProvider(status.defaultProvider)
-        const prefill = consumeInvoicesPrefill()
-        if (prefill?.quoteId) {
-          const next = await buildInvoiceFormFromQuote(supabase, userId, prefill.quoteId, defaultInvoiceFormState())
-          if (prefill.customerId) next.customerId = prefill.customerId
-          setForm(next)
-          setNotice("Loaded line items from estimate.")
-        } else if (prefill?.customerId) {
-          const row = cust.find((c) => c.id === prefill.customerId)
-          if (row) applyCustomer(row)
+        if (cancelled) return
+
+        if (invRes.status === "fulfilled") {
+          setSavedInvoices(invRes.value)
+        } else if (isAuthSessionError(invRes.reason)) {
+          await signOut()
+          return
+        } else {
+          setNotice(formatAppError(invRes.reason))
         }
-      } catch (e) {
-        setNotice(e instanceof Error ? e.message : String(e))
+
+        if (custRes.status === "fulfilled") {
+          setCustomers(custRes.value)
+          const prefill = consumeInvoicesPrefill()
+          if (prefill?.quoteId) {
+            try {
+              const next = await buildInvoiceFormFromQuote(supabase, userId, prefill.quoteId, defaultInvoiceFormState())
+              if (cancelled) return
+              if (prefill.customerId) next.customerId = prefill.customerId
+              setForm(next)
+              setNotice("Loaded line items from estimate.")
+            } catch (e) {
+              if (!cancelled) setNotice(formatAppError(e))
+            }
+          } else if (prefill?.customerId) {
+            const row = custRes.value.find((c) => c.id === prefill.customerId)
+            if (row) applyCustomer(row)
+          }
+        } else if (isAuthSessionError(custRes.reason)) {
+          await signOut()
+          return
+        } else {
+          setNotice(formatAppError(custRes.reason))
+        }
+
+        if (statusRes.status === "fulfilled" && statusRes.value?.defaultProvider) {
+          setPaymentProvider(statusRes.value.defaultProvider)
+        }
+      } finally {
+        if (!cancelled) setCustomersLoading(false)
       }
     })()
-  }, [supabase, userId, session?.access_token])
+    return () => {
+      cancelled = true
+    }
+  }, [supabase, userId, customerOwnerId, customerScopeLoading, customerLoadKey, signOut])
 
   useEffect(() => {
     if (!supabase || !userId) return
-    void loadQuotesForInvoices(supabase, userId, form.customerId.trim() || null)
+    const quoteOwnerId = (customerOwnerId || userId).trim()
+    void loadQuotesForInvoices(supabase, quoteOwnerId, form.customerId.trim() || null)
       .then(setQuotes)
       .catch(() => setQuotes([]))
-  }, [supabase, userId, form.customerId])
+  }, [supabase, userId, customerOwnerId, form.customerId])
 
   function applyCustomer(row: CustomerInvoicePickerRow) {
     setForm((prev) => ({
@@ -221,7 +261,7 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
       setForm(next)
       setNotice("Estimate loaded into invoice.")
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e))
+      setNotice(formatAppError(e))
     } finally {
       setBusy(false)
     }
@@ -242,7 +282,7 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
       setSavedInvoices(next)
       setNotice("Invoice saved.")
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e))
+      setNotice(formatAppError(e))
     } finally {
       setBusy(false)
     }
@@ -258,7 +298,7 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
       downloadPdfBlob(bytes, `${form.invoiceNumber.trim() || "invoice"}.pdf`)
       setNotice("PDF downloaded.")
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e))
+      setNotice(formatAppError(e))
     } finally {
       setBusy(false)
     }
@@ -287,7 +327,7 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
       setForm((prev) => ({ ...prev, attachments: added }))
       setNotice("File attached.")
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e))
+      setNotice(formatAppError(e))
     } finally {
       setUploadBusy(false)
     }
@@ -301,7 +341,7 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
       setNotice("Link a customer before sending.")
       return
     }
-    const token = session?.access_token?.trim()
+    const token = (await getFreshAccessToken(supabase, session))?.trim()
     if (!token) {
       setNotice("Sign in again to send.")
       return
@@ -412,7 +452,7 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
       setForm((prev) => ({ ...prev, status: "sent", paymentRequestId }))
       setNotice(channel === "both" ? "Invoice sent by email and text." : channel === "email" ? "Invoice emailed." : "Invoice texted.")
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e))
+      setNotice(formatAppError(e))
     } finally {
       setSending(false)
     }
@@ -837,7 +877,7 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
 
       {notice ? (
         <p style={{ margin: 0, fontSize: 13, color: notice.includes("sent") || notice.includes("saved") || notice.includes("Loaded") ? "#047857" : "#b45309" }}>
-          {typeof notice === "string" ? notice : "Something went wrong."}
+          {formatDisplayText(notice, "Something went wrong.")}
         </p>
       ) : null}
 
@@ -879,21 +919,41 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
           <label style={{ fontSize: 13 }}>
             <span style={{ fontWeight: 600, display: "block", marginBottom: 4 }}>Customer</span>
-            <select
-              value={form.customerId}
-              onChange={(e) => {
-                const row = customers.find((c) => c.id === e.target.value)
-                if (row) applyCustomer(row)
-              }}
-              style={inputStyle}
-            >
-              <option value="">Select customer…</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.display_name}
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <select
+                value={form.customerId}
+                onChange={(e) => {
+                  const row = customers.find((c) => c.id === e.target.value)
+                  if (row) applyCustomer(row)
+                }}
+                disabled={customersLoading}
+                style={{ ...inputStyle, flex: 1 }}
+              >
+                <option value="">
+                  {customersLoading
+                    ? "Loading customers…"
+                    : customers.length
+                      ? "Select customer…"
+                      : "No customers found"}
                 </option>
-              ))}
-            </select>
+                {customers.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.display_name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => {
+                  setNotice(null)
+                  setCustomerLoadKey((n) => n + 1)
+                }}
+                disabled={customersLoading}
+                style={{ ...secondaryBtn, padding: "8px 10px", flexShrink: 0 }}
+              >
+                Retry
+              </button>
+            </div>
           </label>
           <label style={{ fontSize: 13 }}>
             <span style={{ fontWeight: 600, display: "block", marginBottom: 4 }}>From estimate</span>

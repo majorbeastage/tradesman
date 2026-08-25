@@ -16,6 +16,8 @@ import {
   type CustomersUrgencyAutomationPrefs,
 } from "../../lib/customerUrgency"
 import { getFreshAccessToken, forceRefreshAccessToken } from "../../lib/authPlatformApi"
+import { formatAppError, isAuthSessionError } from "../../lib/formatAppError"
+import { loadOwnedCustomerRows } from "../../lib/loadOwnedCustomerRows"
 import { platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
 import CustomerNotesPanel from "../../components/CustomerNotesPanel"
 import ShareContactModal from "../../components/ShareContactModal"
@@ -64,7 +66,6 @@ import {
   notifyCustomersEmailSync,
 } from "../../lib/workflowNavigation"
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
-import { formatAppError } from "../../lib/formatAppError"
 import { useManagedOmCalendarPolicy } from "../../hooks/useManagedOmCalendarPolicy"
 import { useCustomerDataScope } from "../../hooks/useCustomerDataScope"
 import {
@@ -386,10 +387,11 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     viewerUserId,
     dataUserId: customerDataUserId,
     sharingScope,
+    loading: customerScopeLoading,
   } = useCustomerDataScope()
   const customerOwnerUserId = customerDataUserId || userId
   const emailSig = useEmailComposeSignature(userId)
-  const { session } = useAuth()
+  const { session, signOut } = useAuth()
   const { t } = useLocale()
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const portalConfig = usePortalConfigForPage()
@@ -434,6 +436,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
   const [sortAsc, setSortAsc] = useState(false)
   const [section, setSection] = useState<"active" | "in_process" | "archived" | "promotions">("active")
   const [loadError, setLoadError] = useState<string>("")
+  const [customersListLoading, setCustomersListLoading] = useState(true)
   const [pendingFocusCustomerId, setPendingFocusCustomerId] = useState<string | null>(() => consumeQueuedCustomerFocus())
   const [showAutoReplies, setShowAutoReplies] = useState(false)
   const [showAddCustomer, setShowAddCustomer] = useState(false)
@@ -524,6 +527,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     siblingIdsByCustomerId: new Map(),
     canonicalIdByCustomerId: new Map(),
   })
+  const customersLoadGenRef = useRef(0)
+  const customersLoadBusyRef = useRef(false)
   const autoContactGatherRef = useRef(new Set<string>())
 
   const conversationPortalDefaults = useMemo(() => {
@@ -814,9 +819,13 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     const dataUserId = customerDataUserId || userId
     if (!dataUserId || !supabase) {
       if (!supabase) setLoadError("Supabase not configured.")
+      setCustomersListLoading(false)
       return
     }
-    const client = supabase
+    if (customerScopeLoading) return
+    const gen = ++customersLoadGenRef.current
+    customersLoadBusyRef.current = true
+    setCustomersListLoading(true)
     setLoadError("")
 
     const activeIds = new Set<string>()
@@ -829,6 +838,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       if (!r.error && r.data) r.data.forEach((row) => row.customer_id && bookedIds.add(row.customer_id))
     }
 
+    try {
     if (sharingScope === "assignee_only" && viewerUserId && dataUserId !== viewerUserId) {
       const assignedBooked = await loadAssigneeCalendarCustomerIds(supabase, dataUserId, viewerUserId, {
         incompleteOnly: true,
@@ -865,35 +875,24 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
 
     /** Customers referenced by leads, quotes, conversations, or calendar (any history). */
     const relatedIds = new Set<string>()
-    const [allLeads, allConvos, allQuotes, allEvents, ownedCustomersRes] = await Promise.all([
+    const [allLeads, allConvos, allQuotes, allEvents] = await Promise.all([
       supabase.from("leads").select("customer_id").eq("user_id", dataUserId),
       supabase.from("conversations").select("customer_id").eq("user_id", dataUserId),
       supabase.from("quotes").select("customer_id").eq("user_id", dataUserId),
       supabase.from("calendar_events").select("customer_id").eq("user_id", dataUserId),
-      supabase.from("customers").select("id").eq("user_id", dataUserId),
     ])
     ;[allLeads.data, allConvos.data, allQuotes.data, allEvents.data].forEach((data) => {
       if (data) data.forEach((row: { customer_id?: string }) => row.customer_id && relatedIds.add(row.customer_id))
     })
 
-    const allIds = new Set<string>()
-    if (ownedCustomersRes.error) {
-      setLoadError(ownedCustomersRes.error.message)
-      setActiveCustomers([])
-      setInProcessCustomers([])
-      setArchivedCustomers([])
-      return
-    }
-    for (const row of ownedCustomersRes.data ?? []) {
-      if (row.id) allIds.add(row.id as string)
-    }
-    relatedIds.forEach((id) => allIds.add(id))
+    const owned = await loadOwnedCustomerRows(supabase, dataUserId)
+    if (gen !== customersLoadGenRef.current) return
 
-    const idList = Array.from(allIds)
-    if (idList.length === 0) {
+    if (owned.rows.length === 0) {
       setActiveCustomers([])
       setInProcessCustomers([])
       setArchivedCustomers([])
+      setPromotionalCustomers([])
       return
     }
 
@@ -910,137 +909,9 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
           ? mr.receipt_template_logo_url.trim()
           : ""
     setBrandLogoUrl(logoGuess || null)
+    if (owned.hint) setLoadError(owned.hint)
 
-    const fullSelectPipeline = `
-        id,
-        display_name,
-        updated_at,
-        service_address,
-        service_lat,
-        service_lng,
-        best_contact_method,
-        job_pipeline_status,
-        communication_urgency,
-        last_activity_at,
-        fit_classification,
-        fit_confidence,
-        fit_reason,
-        fit_source,
-        fit_manually_overridden,
-        fit_evaluated_at,
-        metadata,
-        customer_identifiers (
-          type,
-          value
-        )
-      `
-    const fullSelectPipelineNoUrgency = `
-        id,
-        display_name,
-        updated_at,
-        service_address,
-        service_lat,
-        service_lng,
-        best_contact_method,
-        job_pipeline_status,
-        last_activity_at,
-        metadata,
-        customer_identifiers (
-          type,
-          value
-        )
-      `
-    const fullSelectPipelineNoFit = `
-        id,
-        display_name,
-        updated_at,
-        service_address,
-        service_lat,
-        service_lng,
-        best_contact_method,
-        job_pipeline_status,
-        communication_urgency,
-        last_activity_at,
-        metadata,
-        customer_identifiers (
-          type,
-          value
-        )
-      `
-    const fullSelectLegacy = `
-        id,
-        display_name,
-        updated_at,
-        service_address,
-        service_lat,
-        service_lng,
-        customer_identifiers (
-          type,
-          value
-        )
-      `
-    let customers: CustomerRow[] | null = null
-    let error: { message: string } | null = null
-    const selectCustomersByIds = (selectStr: string) =>
-      client.from("customers").select(selectStr).eq("user_id", dataUserId).in("id", idList)
-    {
-      const r0 = await selectCustomersByIds(fullSelectPipeline)
-      error = r0.error
-      customers = (r0.data as CustomerRow[] | null) ?? null
-      if (error && String(error.message || "").toLowerCase().includes("fit_")) {
-        const r1 = await selectCustomersByIds(fullSelectPipelineNoFit)
-        error = r1.error
-        customers = (r1.data as CustomerRow[] | null) ?? null
-        if (!error) {
-          setLoadError((prev) => prev || "Run supabase/customers-lead-fit.sql to enable Lead score on customers.")
-        }
-      }
-      if (error && String(error.message || "").includes("communication_urgency")) {
-        const rU = await selectCustomersByIds(fullSelectPipelineNoUrgency)
-        error = rU.error
-        customers = (rU.data as CustomerRow[] | null) ?? null
-        if (!error) {
-          setLoadError((prev) => prev || "Run supabase/customers-communication-urgency.sql to enable the Urgency column.")
-        }
-      }
-      if (error && String(error.message || "").toLowerCase().includes("metadata")) {
-        const stripMeta = (s: string) => s.replace(/\s*metadata,\s*/g, "")
-        const rM = await selectCustomersByIds(stripMeta(fullSelectPipeline))
-        error = rM.error
-        customers = (rM.data as CustomerRow[] | null) ?? null
-        if (error && String(error.message || "").toLowerCase().includes("fit_")) {
-          const rM2 = await selectCustomersByIds(stripMeta(fullSelectPipelineNoFit))
-          error = rM2.error
-          customers = (rM2.data as CustomerRow[] | null) ?? null
-        }
-        if (error) {
-          const rM3 = await selectCustomersByIds(fullSelectLegacy)
-          error = rM3.error
-          customers = (rM3.data as CustomerRow[] | null) ?? null
-        }
-        if (!error) {
-          setLoadError((prev) => prev || "Run supabase/customers-metadata.sql to store SMS opt-in on customers.")
-        }
-      }
-    }
-    if (error && (error.message.includes("best_contact") || error.message.includes("job_pipeline") || error.message.includes("last_activity"))) {
-      const r2 = await selectCustomersByIds(fullSelectLegacy)
-      if (!r2.error) {
-        customers = (r2.data as unknown as CustomerRow[] | null) ?? null
-        error = null
-        setLoadError("Run supabase/customers-pipeline-columns.sql to enable Best contact, Job status, and Last update columns.")
-      }
-    }
-    if (error) {
-      setLoadError(error.message)
-      setActiveCustomers([])
-      setInProcessCustomers([])
-      setArchivedCustomers([])
-      setPromotionalCustomers([])
-      return
-    }
-
-    let list = (customers || []) as CustomerRow[]
+    let list = owned.rows as CustomerRow[]
 
     const { customers: groupedList, maps: orgMaps } = collapseOrgGroupedCustomers(list)
     orgGroupingRef.current = orgMaps
@@ -1055,7 +926,6 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       .from("communication_events")
       .select("customer_id, created_at")
       .eq("user_id", dataUserId)
-      .in("customer_id", idList)
       .order("created_at", { ascending: false })
       .limit(5000)
 
@@ -1107,11 +977,25 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     inProcess = await escalateList(inProcess, urgencyPrefs)
     active = await escalateList(active, urgencyPrefs)
     archived = await escalateList(archived, urgencyPrefs)
+    if (gen !== customersLoadGenRef.current) return
     setPromotionalCustomers(await escalateList(promotional, urgencyPrefs))
     setInProcessCustomers(inProcess)
     setActiveCustomers(active)
     setArchivedCustomers(archived)
-  }, [userId, customerDataUserId, sharingScope, viewerUserId])
+    } catch (e) {
+      if (gen !== customersLoadGenRef.current) return
+      if (isAuthSessionError(e)) {
+        await signOut()
+        return
+      }
+      setLoadError(formatAppError(e) || "Could not load customers. Tap Refresh to try again.")
+    } finally {
+      if (gen === customersLoadGenRef.current) {
+        customersLoadBusyRef.current = false
+        setCustomersListLoading(false)
+      }
+    }
+  }, [userId, customerDataUserId, sharingScope, viewerUserId, signOut, customerScopeLoading])
 
   const loadCustomerActivity = useCallback(
     async (customerId: string) => {
@@ -1284,6 +1168,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
 
   useEffect(() => {
     const onFocus = () => {
+      if (customersLoadBusyRef.current) return
       void loadCustomers()
     }
     window.addEventListener("focus", onFocus)
@@ -1460,6 +1345,18 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     }
     return searchOk && urgOk
   })
+  const emptyHubMessage =
+    customersListLoading || customerScopeLoading
+      ? "Loading customers…"
+      : loadError
+        ? "Could not load customers. Tap Refresh to try again."
+        : section === "active"
+          ? "No active customers."
+          : section === "in_process"
+            ? "No booked customers."
+            : section === "promotions"
+              ? "No promotions or marketing senders yet — no-reply, newsletter, and system mail (e.g. noreply@…) appears here automatically."
+              : "No archived customers."
   const sorted = [...filtered].sort((a, b) => {
     let aVal = ""
     let bVal = ""
@@ -2337,7 +2234,9 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         <p style={{ color: "#b91c1c" }}>Supabase not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to tradesman/.env and restart the dev server.</p>
       )}
 
-      {loadError && !sandboxTraining && <p style={{ color: "#b91c1c", marginBottom: 0 }}>{loadError}</p>}
+      {loadError && !sandboxTraining && (
+        <p style={{ color: "#b91c1c", marginBottom: 0 }}>{formatAppError(loadError)}</p>
+      )}
 
       <div
         style={{
@@ -2538,13 +2437,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
             {sorted.length === 0 ? (
               <tr>
                 <td colSpan={5} style={{ padding: "16px", color: "#6b7280" }}>
-                  {section === "active"
-                    ? "No active customers."
-                    : section === "in_process"
-                      ? "No booked customers."
-                      : section === "promotions"
-                        ? "No promotions or marketing senders yet — no-reply, newsletter, and system mail (e.g. noreply@…) appears here automatically."
-                        : "No archived customers."}
+                  {emptyHubMessage}
                 </td>
               </tr>
             ) : (

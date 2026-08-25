@@ -2,6 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { loadEntityAttachmentsForQuote, parseQuoteAttachmentMeta, type EntityAttachmentRow } from "./communicationAttachments"
 import { computeQuoteLineTotal, parseQuoteItemMetadata, totalFromQuoteItemRows } from "./quoteItemMath"
 import { quoteCustomerJobDescriptionFromMetadata } from "./estimateQuoteMetadata"
+import { formatAppError } from "./formatAppError"
+import { loadOwnedCustomerRows } from "./loadOwnedCustomerRows"
 
 export const INVOICES_META_KEY = "invoices_v1"
 
@@ -197,7 +199,7 @@ export function parseInvoices(raw: unknown): InvoiceRecord[] {
 
 export async function loadInvoicesFromProfile(client: SupabaseClient, userId: string): Promise<InvoiceRecord[]> {
   const { data, error } = await client.from("profiles").select("metadata").eq("id", userId).maybeSingle()
-  if (error) throw error
+  if (error) throw new Error(formatAppError(error))
   const meta = isRecord(data?.metadata) ? data.metadata : {}
   return parseInvoices(meta[INVOICES_META_KEY])
 }
@@ -311,25 +313,15 @@ export function formStateToInvoiceRecord(form: InvoiceFormState, existing?: Invo
   }
 }
 
-export async function loadCustomersForInvoices(client: SupabaseClient, userId: string): Promise<CustomerInvoicePickerRow[]> {
-  const { data, error } = await client
-    .from("customers")
-    .select("id, display_name, service_address, customer_identifiers ( type, value )")
-    .eq("user_id", userId)
-    .is("removed_at", null)
-    .order("display_name", { ascending: true })
-    .limit(300)
-  if (error) throw error
+function mapCustomerInvoicePickerRows(data: unknown[] | null): CustomerInvoicePickerRow[] {
   const out: CustomerInvoicePickerRow[] = []
   for (const row of data ?? []) {
-    const r = row as {
-      id: string
-      display_name?: string | null
-      customer_identifiers?: { type?: string; value?: string }[] | null
-    }
+    if (!isRecord(row) || typeof row.id !== "string") continue
+    const identifiers = Array.isArray(row.customer_identifiers) ? row.customer_identifiers : []
     let phone = ""
     let email = ""
-    for (const id of r.customer_identifiers ?? []) {
+    for (const id of identifiers) {
+      if (!isRecord(id)) continue
       const t = String(id.type ?? "").toLowerCase()
       const v = String(id.value ?? "").trim()
       if (!v) continue
@@ -337,14 +329,23 @@ export async function loadCustomersForInvoices(client: SupabaseClient, userId: s
       if (t === "email" && !email) email = v
     }
     out.push({
-      id: String(r.id),
-      display_name: String(r.display_name ?? "").trim() || "Customer",
+      id: row.id,
+      display_name: String(row.display_name ?? "").trim() || "Customer",
       phone,
       email,
-      service_address: String((r as { service_address?: string | null }).service_address ?? "").trim(),
+      service_address: String(row.service_address ?? "").trim(),
     })
   }
   return out
+}
+
+/**
+ * Invoice customer picker. Uses the same paginated owner-scoped load as the Customers hub
+ * so a large shop is not wiped by a giant `.in(id, …)` URL or a failed identifier embed.
+ */
+export async function loadCustomersForInvoices(client: SupabaseClient, userId: string): Promise<CustomerInvoicePickerRow[]> {
+  const owned = await loadOwnedCustomerRows(client, userId)
+  return mapCustomerInvoicePickerRows(owned.rows)
 }
 
 export async function loadQuotesForInvoices(client: SupabaseClient, userId: string, customerId?: string | null): Promise<InvoiceQuotePick[]> {
@@ -357,7 +358,7 @@ export async function loadQuotesForInvoices(client: SupabaseClient, userId: stri
     .limit(120)
   if (customerId?.trim()) q = q.eq("customer_id", customerId.trim())
   const { data, error } = await q
-  if (error) throw error
+  if (error) throw new Error(formatAppError(error))
   const out: InvoiceQuotePick[] = []
   for (const row of data ?? []) {
     const r = row as {

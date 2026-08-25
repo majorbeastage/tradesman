@@ -5,6 +5,7 @@ import { buildReceiptPdfBytes } from "./documentPdf"
 import { fetchQuoteLogoForExport, resolveReceiptTemplateLogoUrl } from "./quoteLogoImage"
 import { computeQuoteLineTotal, parseQuoteItemMetadata } from "./quoteItemMath"
 import { isCustomerArchivedForHub } from "./customerContactKind"
+import { loadOwnedCustomerRows } from "./loadOwnedCustomerRows"
 
 function isSandboxSeedCustomer(metadata: unknown): boolean {
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return false
@@ -406,34 +407,28 @@ export async function loadCustomersForCustomReceipt(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<CustomerReceiptPickerRow[]> {
-  const { data, error } = await supabase
-    .from("customers")
-    .select("id, display_name, service_address, job_pipeline_status, metadata, customer_identifiers ( type, value )")
-    .eq("user_id", userId)
-    .order("display_name", { ascending: true })
-    .limit(3000)
-  if (error) throw error
-  return (data ?? [])
+  const owned = await loadOwnedCustomerRows(supabase, userId)
+  return owned.rows
     .filter((row) =>
       isCustomerEligibleForSchedulePicker({
-        metadata: (row as { metadata?: unknown }).metadata,
-        job_pipeline_status: (row as { job_pipeline_status?: string | null }).job_pipeline_status,
+        metadata: row.metadata,
+        job_pipeline_status: typeof row.job_pipeline_status === "string" ? row.job_pipeline_status : null,
       }),
     )
     .map((row) => {
-    const ids = (row as { customer_identifiers?: Array<{ type?: string; value?: string | null }> }).customer_identifiers ?? []
-    const phone = ids.find((i) => i.type === "phone")?.value?.trim() ?? ""
-    const email = ids.find((i) => i.type === "email")?.value?.trim() ?? ""
-    const service_address =
-      typeof (row as { service_address?: string | null }).service_address === "string"
-        ? String((row as { service_address?: string | null }).service_address).trim()
-        : ""
-    return {
-      id: String((row as { id: string }).id),
-      display_name: String((row as { display_name?: string | null }).display_name ?? "").trim() || "Customer",
-      phone,
-      email,
-      service_address,
-    }
-  })
+      const ids = Array.isArray(row.customer_identifiers)
+        ? (row.customer_identifiers as Array<{ type?: string; value?: string | null }>)
+        : []
+      const phone = ids.find((i) => i.type === "phone")?.value?.trim() ?? ""
+      const email = ids.find((i) => i.type === "email")?.value?.trim() ?? ""
+      const service_address = typeof row.service_address === "string" ? row.service_address.trim() : ""
+      return {
+        id: String(row.id ?? ""),
+        display_name: String(row.display_name ?? "").trim() || "Customer",
+        phone,
+        email,
+        service_address,
+      }
+    })
+    .filter((row) => row.id)
 }
