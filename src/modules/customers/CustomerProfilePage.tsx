@@ -27,6 +27,7 @@ import { resolveDemoTeamPolicyFromOwnerMetadata } from "../../lib/sandboxDemoTea
 import { loadCustomerProfileBundle, type CustomerProfileBundle } from "../../lib/customerProfileData"
 import { formatAppError } from "../../lib/formatAppError"
 import { formatDisplayText } from "../../lib/formatDisplayText"
+import { urgencyPatchFromFitClassification } from "../../lib/customerUrgency"
 import { formatCommEventEmailAddressSummary } from "../../lib/communicationEmailAddresses"
 import CustomerContactSplitMergeModal from "../../components/CustomerContactSplitMergeModal"
 import CustomerRemoveFileModal from "../../components/CustomerRemoveFileModal"
@@ -599,6 +600,7 @@ export default function CustomerProfilePage({ setPage }: Props) {
     setFitOverrideBusy(true)
     try {
       const now = new Date().toISOString()
+      const urgNext = urgencyPatchFromFitClassification(manualFitChoice, bundle?.customer.communication_urgency)
       const { error: uErr } = await supabase
         .from("customers")
         .update({
@@ -608,6 +610,7 @@ export default function CustomerProfilePage({ setPage }: Props) {
           fit_source: "manual",
           fit_manually_overridden: true,
           fit_evaluated_at: now,
+          ...(urgNext ? { communication_urgency: urgNext } : {}),
         })
         .eq("id", customerId)
         .eq("user_id", customerOwnerUserId)

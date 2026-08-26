@@ -2,7 +2,7 @@ import { normalizePlatformEmailSlug } from "./platformEmailSlug"
 
 export const BUSINESS_PUBLIC_PROFILE_META_KEY = "business_public_profile_v1"
 export const BUSINESS_WEB_PROFILE_TAGLINE_MAX = 120
-export const BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX = 12
+export const BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX = 48
 
 export type BusinessPublicEmailSource = "tradesman" | "custom"
 
@@ -155,6 +155,12 @@ export type WebsiteCanvasItem = {
   pages?: WebsitePublicPageId[]
 }
 
+/** Max freeform fields per site (text + photos). */
+export const WEBSITE_CANVAS_ITEMS_MAX = 48
+
+/** Editor canvas floor so Home / About / Contact share enough room for extra fields. */
+export const WEBSITE_EDITOR_PAGE_CANVAS_MIN_PX = 2600
+
 export function parseWebsiteCanvasItems(raw: unknown): WebsiteCanvasItem[] {
   if (!Array.isArray(raw)) return []
   const out: WebsiteCanvasItem[] = []
@@ -177,7 +183,7 @@ export function parseWebsiteCanvasItems(raw: unknown): WebsiteCanvasItem[] {
         ? o.pages.map(parseWebsitePublicPageId).filter((p): p is WebsitePublicPageId => p != null).slice(0, 12)
         : undefined,
     })
-    if (out.length >= 24) break
+    if (out.length >= WEBSITE_CANVAS_ITEMS_MAX) break
   }
   return out
 }
@@ -439,6 +445,31 @@ export function canvasItemOnAllEnabledPages(
   if (!item.pages || item.pages.length === 0) return true
   if (allPages.length === 0) return true
   return allPages.every((p) => item.pages!.includes(p))
+}
+
+export function websiteCanvasReachPx(
+  items: WebsiteCanvasItem[] | undefined,
+  textStyles: WebsiteTextStyles | undefined,
+  page: WebsitePublicPageId,
+  tagline?: string,
+): number {
+  let max = 0
+  for (const item of items ?? []) {
+    if (!canvasItemVisibleOnPage(item, page, tagline)) continue
+    const st = textStyles?.[`canvas.${item.id}`]
+    if (st?.scrollFixed) continue
+    const oy = typeof st?.offsetY === "number" && Number.isFinite(st.offsetY) ? st.offsetY : 0
+    const h =
+      item.kind === "photo"
+        ? typeof st?.imageSize === "number" && Number.isFinite(st.imageSize)
+          ? st.imageSize
+          : typeof st?.maxWidth === "number" && Number.isFinite(st.maxWidth)
+            ? st.maxWidth
+            : 200
+        : 72
+    max = Math.max(max, 140 + oy + Math.max(40, h))
+  }
+  return max
 }
 
 export function websiteCustomPagePathId(pageId: string): string {

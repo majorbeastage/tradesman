@@ -42,6 +42,7 @@ import {
 } from "../../lib/smsComplianceLimits"
 import { SmsComposeCharBudget, SmsFirstOutboundCallout } from "../../components/SmsComposeFirstSendNotice"
 import { resolveSmsFirstComplianceVariant } from "../../lib/smsFirstOutboundCompliance"
+import { urgencyPatchFromFitClassification } from "../../lib/customerUrgency"
 
 type CustomerIdentifier = { type: string; value: string; is_primary: boolean }
 type CustomerRow = {
@@ -627,6 +628,25 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
         metadata: {},
       })
       if (lErr) console.warn(lErr)
+      if (customerIdForConvo) {
+        const { data: custRow } = await supabase
+          .from("customers")
+          .select("communication_urgency")
+          .eq("id", customerIdForConvo)
+          .maybeSingle()
+        const urgNext = urgencyPatchFromFitClassification(
+          manualFitChoice,
+          (custRow as { communication_urgency?: string | null } | null)?.communication_urgency,
+        )
+        if (urgNext) {
+          const { error: urgErr } = await supabase
+            .from("customers")
+            .update({ communication_urgency: urgNext })
+            .eq("id", customerIdForConvo)
+            .eq("user_id", userId)
+          if (urgErr) console.warn(urgErr)
+        }
+      }
       setSelectedLead((prev: any) =>
         prev
           ? {

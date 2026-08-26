@@ -1,49 +1,19 @@
 /**
- * Rules-first lead fit (hot / maybe / bad). AI only enriches signals; job-type wording mismatch is "maybe", not auto-bad.
- * Preferences live in profiles.metadata.lead_filter_preferences (see supabase/lead-fit-classification.sql).
+ * Rules-first lead fit (hot / maybe / bad). Real inbound answers outrank job-type wording.
+ * Bad is reserved for spam / silence — not catalog mismatch. Preferences: profiles.metadata.lead_filter_preferences.
  */
 import type { SupabaseClient } from "@supabase/supabase-js"
-import { firstEnv } from "./_communications.js"
-import { loadBusinessAiVocabulary, mergedAcceptedJobTypeTokenList } from "./_businessAiVocabulary.js"
 import { maybeCreateConversationAfterLeadFitHot } from "./_ensureConversationFromLeadPolicy.js"
-
-async function resolveAcceptedJobTypeTokens(supabase: SupabaseClient, userId: string): Promise<string[]> {
-  try {
-    const vocab = await loadBusinessAiVocabulary(supabase, userId)
-    return mergedAcceptedJobTypeTokenList(vocab)
-  } catch {
-    return []
-  }
-}
-
-async function openAiJsonAssist(system: string, user: string): Promise<string | null> {
-  const key = firstEnv("OPENAI_API_KEY")
-  if (!key) return null
-  try {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: firstEnv("OPENAI_MODEL") || "gpt-4o-mini",
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user },
-        ],
-        max_tokens: 400,
-        temperature: 0.35,
-        response_format: { type: "json_object" },
-      }),
-    })
-    const raw = await res.text()
-    if (!res.ok) return null
-    const j = JSON.parse(raw) as { choices?: { message?: { content?: string } }[] }
-    return j.choices?.[0]?.message?.content?.trim() ?? null
-  } catch {
-    return null
-  }
-}
+import { urgencyPatchFromFitClassification } from "../src/lib/customerUrgency.js"
 
 export type LeadFitBucket = "hot" | "maybe" | "bad"
+
+export type EvaluateLeadFitResult = {
+  classification: LeadFitBucket
+  confidence: number
+  reason: string
+  source: "rules" | "ai" | "hybrid" | "manual"
+}
 
 export type LeadFilterPreferencesV1 = {
   v: 1
@@ -92,41 +62,128 @@ export function parseLeadFilterPreferences(metadata: unknown): LeadFilterPrefere
   }
 }
 
-function tokenizeJobTypes(raw: string): string[] {
-  return raw
-    .split(/[\n,;]+/)
-    .map((s) => s.trim().toLowerCase())
-    .filter((s) => s.length >= 2)
+function answerLooksSpoken(answer: string): boolean {
+  const t = answer.trim()
+  if (t.length < 2) return false
+  if (/^\(no response\)$/i.test(t)) return false
+  return true
 }
 
-function extractMaxDollars(text: string): number | null {
-  let max = 0
-  const t = text.toLowerCase()
-  for (const m of t.matchAll(/\$\s*([\d,]+(?:\.\d{1,2})?)/g)) {
-    const n = Number.parseFloat(m[1]!.replace(/,/g, ""))
-    if (Number.isFinite(n) && n > max) max = n
-  }
-  for (const m of t.matchAll(/([\d,]+(?:\.\d{1,2})?)\s*(?:usd|dollars?)\b/g)) {
-    const n = Number.parseFloat(m[1]!.replace(/,/g, ""))
-    if (Number.isFinite(n) && n > max) max = n
-  }
-  for (const m of t.matchAll(/\b(\d+)\s*k\b/g)) {
-    const n = Number.parseInt(m[1]!, 10) * 1000
-    if (Number.isFinite(n) && n > max) max = n
-  }
-  return max > 0 ? max : null
+function wordCount(answer: string): number {
+  return answer.trim().split(/\s+/).filter(Boolean).length
 }
 
-const URGENT_RE = /\b(asap|urgent|emergency|today|tonight|now|immediately|eod|right away)\b/i
+type ScreeningAnswerLike = { question?: string; answer?: string }
+
+function tallyScreeningAnswers(answers: ScreeningAnswerLike[]): {
+  questions: number
+  spoken: number
+  wordy: boolean
+} {
+  let spoken = 0
+  let wordy = false
+  for (const a of answers) {
+    const ans = String(a.answer ?? "")
+    if (!answerLooksSpoken(ans)) continue
+    spoken += 1
+    if (wordCount(ans) >= 3) wordy = true
+  }
+  return { questions: answers.length, spoken, wordy }
+}
+
+export type EngagementSignals = {
+  corpus: string
+  screeningVerdict: string | null
+  screeningSpoken: number
+  screeningQuestions: number
+  wordyAnswer: boolean
+}
+
+function signalsFromScreeningAnswers(verdict: string | null | undefined, answers: ScreeningAnswerLike[]): EngagementSignals {
+  const tally = tallyScreeningAnswers(answers)
+  const corpus = answers
+    .map((a) => `${a.question ?? "Question"}\n→ ${a.answer || "(no response)"}`)
+    .join("\n\n")
+  return {
+    corpus,
+    screeningVerdict: verdict?.trim() ? verdict.trim().toLowerCase() : null,
+    screeningSpoken: tally.spoken,
+    screeningQuestions: tally.questions,
+    wordyAnswer: tally.wordy,
+  }
+}
+
+/** Real answers beat job-type catalog match. Bad is spam / silence only. */
+export function scoreInboundFit(signals: EngagementSignals): EvaluateLeadFitResult {
+  const verdict = (signals.screeningVerdict ?? "").toLowerCase()
+  if (verdict === "spam" || verdict === "cold_call") {
+    return {
+      classification: "bad",
+      confidence: 0.88,
+      reason: "Screening flagged this as spam or a cold call — not a real customer conversation.",
+      source: "rules",
+    }
+  }
+  if (signals.screeningQuestions > 0 && signals.screeningSpoken === 0) {
+    return {
+      classification: "bad",
+      confidence: 0.82,
+      reason: "Caller did not answer the auto-attendant questions — treated as suspected spam.",
+      source: "rules",
+    }
+  }
+  const answeredMost =
+    signals.screeningQuestions > 0 &&
+    signals.screeningSpoken >= Math.max(1, signals.screeningQuestions - 1)
+  const liveAttendant = signals.screeningSpoken >= 1 && (signals.wordyAnswer || answeredMost)
+  if (liveAttendant) {
+    return {
+      classification: "hot",
+      confidence: 0.78,
+      reason: "Caller gave real auto-attendant answers. Job type wording is a weak hint only and was not used to downrank this lead.",
+      source: "rules",
+    }
+  }
+  if (signals.screeningSpoken >= 1) {
+    return {
+      classification: "maybe",
+      confidence: 0.5,
+      reason: "Caller said something on the auto-attendant, but answers were too short to treat as a solid lead — kept for review.",
+      source: "rules",
+    }
+  }
+  const inbound = signals.corpus.replace(/\s+/g, " ").trim()
+  if (inbound.length >= 24) {
+    return {
+      classification: "hot",
+      confidence: 0.68,
+      reason: "Inbound message shows a real response. Job type wording was not used to score this lead.",
+      source: "rules",
+    }
+  }
+  return {
+    classification: "maybe",
+    confidence: 0.42,
+    reason: "Not enough inbound conversation yet to confirm a real person — kept for review.",
+    source: "rules",
+  }
+}
 
 /** Pull auto-attendant, call, SMS, and email inbound text for lead/customer scoring. */
-async function fetchInboundEngagementCorpus(
+async function fetchEngagementSignals(
   supabase: SupabaseClient,
   userId: string,
   customerId: string | null | undefined,
   leadId?: string | null,
-): Promise<string> {
-  if (!customerId && !leadId) return ""
+): Promise<EngagementSignals> {
+  const empty: EngagementSignals = {
+    corpus: "",
+    screeningVerdict: null,
+    screeningSpoken: 0,
+    screeningQuestions: 0,
+    wordyAnswer: false,
+  }
+  if (!customerId && !leadId) return empty
   let q = supabase
     .from("communication_events")
     .select("body, transcript_text, summary_text, metadata, event_type")
@@ -138,17 +195,40 @@ async function fetchInboundEngagementCorpus(
   else if (leadId) q = q.eq("lead_id", leadId)
   const { data } = await q
   const parts: string[] = []
+  let screeningVerdict: string | null = null
+  let screeningSpoken = 0
+  let screeningQuestions = 0
+  let wordyAnswer = false
+  let latestHandledScreening = false
   for (const row of data ?? []) {
     const meta =
       row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
         ? (row.metadata as Record<string, unknown>)
         : {}
+    const isScreening =
+      meta.call_screening === true ||
+      typeof meta.screening_verdict === "string" ||
+      Array.isArray(meta.screening_answers)
+    if (!latestHandledScreening) {
+      latestHandledScreening = true
+      if (isScreening) {
+        if (typeof meta.screening_verdict === "string" && meta.screening_verdict.trim()) {
+          screeningVerdict = meta.screening_verdict.trim().toLowerCase()
+        }
+        if (Array.isArray(meta.screening_answers)) {
+          const tally = tallyScreeningAnswers(meta.screening_answers as ScreeningAnswerLike[])
+          screeningQuestions = tally.questions
+          screeningSpoken = tally.spoken
+          wordyAnswer = tally.wordy
+        }
+      }
+    }
     if (typeof row.transcript_text === "string" && row.transcript_text.trim()) {
       parts.push(row.transcript_text.trim())
       continue
     }
     if (Array.isArray(meta.screening_answers)) {
-      const qa = (meta.screening_answers as { question?: string; answer?: string }[])
+      const qa = (meta.screening_answers as ScreeningAnswerLike[])
         .map((a) => `${a.question ?? "Question"}\n→ ${a.answer ?? ""}`)
         .join("\n\n")
       if (qa.trim()) parts.push(qa.trim())
@@ -156,71 +236,47 @@ async function fetchInboundEngagementCorpus(
     if (typeof row.body === "string" && row.body.trim()) parts.push(row.body.trim())
     else if (typeof row.summary_text === "string" && row.summary_text.trim()) parts.push(row.summary_text.trim())
   }
-  return [...new Set(parts)].join("\n\n").slice(0, 6000)
-}
-
-type AiSignals = {
-  jobTypeHints: string[]
-  budgetSignal: "none" | "low" | "medium" | "high" | "unknown"
-  urgency: "unknown" | "asap" | "flexible"
-  notes: string
-}
-
-async function interpretWithAi(
-  corpus: string,
-  prefs: LeadFilterPreferencesV1,
-  acceptedTokens: string[],
-): Promise<AiSignals | null> {
-  if (!prefs.use_ai_for_unclear) return null
-  const acceptedHint =
-    acceptedTokens.length > 0 ? acceptedTokens.join(", ").slice(0, 900) : prefs.accepted_job_types.slice(0, 800)
-  const system =
-    'Reply with one JSON object only, no markdown. Keys: jobTypeHints (string array, short trade keywords inferred from text), budgetSignal ("none"|"low"|"medium"|"high"|"unknown"), urgency ("unknown"|"asap"|"flexible"), notes (one short sentence). Do not classify good/bad leads. If unsure, use unknown/flexible and empty hints. Weight auto-attendant phone Q&A heavily when present (name, job scope, address, urgency, SMS opt-in). Prefer matching the contractor saved job types and line item vocabulary when inferring jobTypeHints.'
-  const user = `Contractor accepted job types & line vocabulary (hints): ${acceptedHint}\n\nLead text:\n${corpus.slice(0, 6000)}`
-  const raw = await openAiJsonAssist(system, user)
-  if (!raw) return null
-  try {
-    const j = JSON.parse(raw.trim()) as Record<string, unknown>
-    const hints = Array.isArray(j.jobTypeHints) ? j.jobTypeHints.map((x) => String(x).toLowerCase().slice(0, 80)).slice(0, 12) : []
-    const budget = ["none", "low", "medium", "high", "unknown"].includes(String(j.budgetSignal))
-      ? (String(j.budgetSignal) as AiSignals["budgetSignal"])
-      : "unknown"
-    const urg = ["unknown", "asap", "flexible"].includes(String(j.urgency)) ? (String(j.urgency) as AiSignals["urgency"]) : "unknown"
-    return {
-      jobTypeHints: hints,
-      budgetSignal: budget,
-      urgency: urg,
-      notes: String(j.notes ?? "").slice(0, 400),
-    }
-  } catch {
-    return null
+  return {
+    corpus: [...new Set(parts)].join("\n\n").slice(0, 6000),
+    screeningVerdict,
+    screeningSpoken,
+    screeningQuestions,
+    wordyAnswer,
   }
 }
 
-function corpusMatchesAnyJobType(corpus: string, tokens: string[]): boolean {
-  if (tokens.length === 0) return true
-  return tokens.some((tok) => tok.length >= 2 && corpus.includes(tok))
+type FitEvalOpts = { supplementalText?: string; force?: boolean; fromScreening?: boolean }
+
+function mergeSupplemental(signals: EngagementSignals, supplementalText?: string): EngagementSignals {
+  const extra = supplementalText?.trim() ?? ""
+  if (!extra) return signals
+  return {
+    ...signals,
+    corpus: [signals.corpus, extra].filter(Boolean).join("\n\n").slice(0, 6000),
+  }
 }
 
-function mergeHintsIntoCorpus(corpus: string, ai: AiSignals | null): string {
-  if (!ai?.jobTypeHints.length) return corpus
-  return `${corpus}\n${ai.jobTypeHints.join(" ")}`
-}
-
-export type EvaluateLeadFitResult = {
-  classification: LeadFitBucket
-  confidence: number
-  reason: string
-  source: "rules" | "ai" | "hybrid" | "manual"
+async function applyUrgencyFromFit(
+  supabase: SupabaseClient,
+  customerId: string,
+  classification: LeadFitBucket,
+): Promise<void> {
+  const { data } = await supabase.from("customers").select("communication_urgency").eq("id", customerId).maybeSingle()
+  const current = (data as { communication_urgency?: string | null } | null)?.communication_urgency
+  const next = urgencyPatchFromFitClassification(classification, current)
+  if (!next) return
+  const { error } = await supabase.from("customers").update({ communication_urgency: next }).eq("id", customerId)
+  if (error) console.warn("[leadFit] urgency update", error.message)
 }
 
 /**
- * When `force` is false, skips if lead was manually overridden or already auto-evaluated (unless never evaluated with supplemental only).
+ * When `force` is false, skips if lead was manually overridden or already auto-evaluated.
+ * `fromScreening` re-scores auto evaluations when new attendant answers arrive.
  */
 export async function evaluateAndPersistLeadFit(
   supabase: SupabaseClient,
   leadId: string,
-  opts?: { supplementalText?: string; force?: boolean },
+  opts?: FitEvalOpts,
 ): Promise<EvaluateLeadFitResult | null> {
   const { data: leadRow, error: leadErr } = await supabase
     .from("leads")
@@ -237,9 +293,6 @@ export async function evaluateAndPersistLeadFit(
     id: string
     user_id: string
     customer_id?: string | null
-    title?: string | null
-    description?: string | null
-    estimated_value?: number | null
     fit_manually_overridden?: boolean | null
     fit_evaluated_at?: string | null
     fit_classification?: string | null
@@ -247,13 +300,13 @@ export async function evaluateAndPersistLeadFit(
   const prevFitForPersist = lead.fit_classification ?? null
 
   const force = opts?.force === true
+  const fromScreening = opts?.fromScreening === true
   if (!force && lead.fit_manually_overridden) return null
-  // One automatic evaluation per lead unless forced (manual re-check from the app).
-  if (!force && lead.fit_evaluated_at) return null
+  if (!force && !fromScreening && lead.fit_evaluated_at) return null
 
   const { data: prof, error: profErr } = await supabase
     .from("profiles")
-    .select("metadata, service_radius_enabled, service_radius_miles, ai_assistant_visible")
+    .select("metadata")
     .eq("id", lead.user_id)
     .maybeSingle()
   if (profErr || !prof) {
@@ -262,114 +315,18 @@ export async function evaluateAndPersistLeadFit(
   }
 
   const prefs = parseLeadFilterPreferences((prof as { metadata?: unknown }).metadata)
-  if (!prefs.enable_auto_filter && !force) return null
+  if (!prefs.enable_auto_filter && !force && !fromScreening) return null
 
-  const aiVisible = (prof as { ai_assistant_visible?: boolean }).ai_assistant_visible !== false
-
-  const engagementCorpus = await fetchInboundEngagementCorpus(supabase, lead.user_id, lead.customer_id, leadId)
-  let corpus = `${lead.title ?? ""}\n${lead.description ?? ""}\n${opts?.supplementalText ?? ""}\n${engagementCorpus}`.toLowerCase()
-  const corpusRaw = `${lead.title ?? ""}\n${lead.description ?? ""}\n${opts?.supplementalText ?? ""}\n${engagementCorpus}`
-
-  const acceptedFromLibrary = await resolveAcceptedJobTypeTokens(supabase, lead.user_id)
-  const accepted =
-    acceptedFromLibrary.length > 0 ? acceptedFromLibrary : tokenizeJobTypes(prefs.accepted_job_types)
-  const minSize = prefs.minimum_job_size
-  const estVal =
-    typeof lead.estimated_value === "number" && Number.isFinite(lead.estimated_value) ? lead.estimated_value : null
-  const extracted = extractMaxDollars(corpusRaw)
-  const effectiveValue = estVal ?? extracted
-
-  let source: EvaluateLeadFitResult["source"] = "rules"
-  let aiSignals: AiSignals | null = null
-
-  const ambiguousJob = accepted.length > 0 && !corpusMatchesAnyJobType(corpus, accepted)
-  const ambiguousBudget = minSize != null && effectiveValue == null
-
-  if (prefs.use_ai_for_unclear && aiVisible && (ambiguousJob || ambiguousBudget || corpus.trim().length < 24)) {
-    aiSignals = await interpretWithAi(corpusRaw, prefs, accepted)
-    if (aiSignals) {
-      source = "hybrid"
-      corpus = mergeHintsIntoCorpus(corpus, aiSignals).toLowerCase()
-    }
-  }
-
-  // Strong mismatch: keep in queue as maybe — do not auto-mark bad for wording vs job-type list.
-  if (accepted.length > 0 && !corpusMatchesAnyJobType(corpus, accepted)) {
-    const result: EvaluateLeadFitResult = {
-      classification: "maybe",
-      confidence: aiSignals ? 0.55 : 0.5,
-      reason: "Job type is unclear versus your saved types — kept for review so a real caller is not auto-dropped.",
-      source,
-    }
-    await persistFit(supabase, leadId, lead.user_id, result, { force, prevFit: prevFitForPersist })
-    return result
-  }
-
-  // Strong bad: explicit budget below minimum
-  if (minSize != null && effectiveValue != null && effectiveValue < minSize) {
-    const result: EvaluateLeadFitResult = {
-      classification: "bad",
-      confidence: 0.85,
-      reason: `Stated or estimated job size ($${Math.round(effectiveValue)}) is below your minimum ($${Math.round(minSize)}).`,
-      source: "rules",
-    }
-    await persistFit(supabase, leadId, lead.user_id, result, { force, prevFit: prevFitForPersist })
-    return result
-  }
-
-  // Soft bad signal from AI budget only if rules already weak — never AI-only bad
-  if (
-    aiSignals?.budgetSignal === "low" &&
-    minSize != null &&
-    effectiveValue == null &&
-    accepted.length > 0 &&
-    corpusMatchesAnyJobType(corpus, accepted)
-  ) {
-    const result: EvaluateLeadFitResult = {
-      classification: "maybe",
-      confidence: 0.55,
-      reason: "Budget is unclear; AI suggests a smaller job — follow up before deprioritizing.",
-      source: "hybrid",
-    }
-    await persistFit(supabase, leadId, lead.user_id, result, { force, prevFit: prevFitForPersist })
-    return result
-  }
-
-  // Hot: matches types (or no filter), budget ok or unknown, urgency aligned
-  const urgent = URGENT_RE.test(corpusRaw) || aiSignals?.urgency === "asap"
-  const typeOk = accepted.length === 0 || corpusMatchesAnyJobType(corpus, accepted)
-  const budgetOk = minSize == null || effectiveValue == null || effectiveValue >= minSize
-
-  if (typeOk && budgetOk) {
-    if (prefs.availability === "asap" && !urgent) {
-      const result: EvaluateLeadFitResult = {
-        classification: "maybe",
-        confidence: 0.5,
-        reason: "You prefer ASAP jobs; timing in this lead is unclear — worth a quick call.",
-        source: aiSignals ? "hybrid" : "rules",
-      }
-      await persistFit(supabase, leadId, lead.user_id, result, { force, prevFit: prevFitForPersist })
-      return result
-    }
-    const result: EvaluateLeadFitResult = {
-      classification: "hot",
-      confidence: urgent ? 0.74 : 0.62,
-      reason: urgent
-        ? "Strong fit: urgency matches a priority lead."
-        : "Matches your filters; follow up to confirm scope and schedule.",
-      source: aiSignals ? "hybrid" : "rules",
-    }
-    await persistFit(supabase, leadId, lead.user_id, result, { force, prevFit: prevFitForPersist })
-    return result
-  }
-
-  const result: EvaluateLeadFitResult = {
-    classification: "maybe",
-    confidence: 0.45,
-    reason: "Not enough detail to confirm fit — we kept this in your queue for manual review.",
-    source: aiSignals ? "hybrid" : "rules",
-  }
-  await persistFit(supabase, leadId, lead.user_id, result, { force, prevFit: prevFitForPersist })
+  const engagement = mergeSupplemental(
+    await fetchEngagementSignals(supabase, lead.user_id, lead.customer_id, leadId),
+    opts?.supplementalText,
+  )
+  const result = scoreInboundFit(engagement)
+  await persistFit(supabase, leadId, lead.user_id, result, {
+    force,
+    prevFit: prevFitForPersist,
+    customerId: lead.customer_id ?? null,
+  })
   return result
 }
 
@@ -378,7 +335,7 @@ async function persistFit(
   leadId: string,
   userId: string,
   result: EvaluateLeadFitResult,
-  ctx: { force: boolean; prevFit: string | null },
+  ctx: { force: boolean; prevFit: string | null; customerId?: string | null },
 ): Promise<void> {
   const evaluatedAt = new Date().toISOString()
   const up: Record<string, unknown> = {
@@ -411,6 +368,29 @@ async function persistFit(
     console.warn("[leadFit] log insert", logErr.message)
   }
 
+  if (ctx.customerId) {
+    const { data: cust } = await supabase
+      .from("customers")
+      .select("communication_urgency, fit_manually_overridden")
+      .eq("id", ctx.customerId)
+      .maybeSingle()
+    const row = cust as { communication_urgency?: string | null; fit_manually_overridden?: boolean | null } | null
+    if (!row?.fit_manually_overridden) {
+      const next = urgencyPatchFromFitClassification(result.classification, row?.communication_urgency)
+      const custUp: Record<string, unknown> = {
+        fit_classification: result.classification,
+        fit_confidence: result.confidence,
+        fit_reason: result.reason.slice(0, 2000),
+        fit_source: result.source,
+        fit_manually_overridden: false,
+        fit_evaluated_at: evaluatedAt,
+      }
+      if (next) custUp.communication_urgency = next
+      const { error: cErr } = await supabase.from("customers").update(custUp).eq("id", ctx.customerId)
+      if (cErr) console.warn("[leadFit] customer fit sync", cErr.message)
+    }
+  }
+
   void maybeCreateConversationAfterLeadFitHot(supabase, {
     userId,
     leadId,
@@ -436,22 +416,22 @@ async function persistCustomerFit(
   const { error: upErr } = await supabase.from("customers").update(up).eq("id", customerId)
   if (upErr) {
     console.error("[customerFit] update customer failed (run supabase/customers-lead-fit.sql?)", upErr.message)
+    return
   }
+  await applyUrgencyFromFit(supabase, customerId, result.classification)
 }
 
 /**
- * Same rules engine as leads, using customer display + site + pipeline fields as corpus.
+ * Same rules engine as leads, using inbound engagement (attendant answers first).
  */
 export async function evaluateAndPersistCustomerFit(
   supabase: SupabaseClient,
   customerId: string,
-  opts?: { force?: boolean },
+  opts?: FitEvalOpts,
 ): Promise<EvaluateLeadFitResult | null> {
   const { data: row, error: rowErr } = await supabase
     .from("customers")
-    .select(
-      "id, user_id, display_name, service_address, job_pipeline_status, communication_urgency, fit_manually_overridden, fit_evaluated_at, fit_classification",
-    )
+    .select("id, user_id, fit_manually_overridden, fit_evaluated_at, fit_classification")
     .eq("id", customerId)
     .maybeSingle()
   if (rowErr || !row) {
@@ -461,129 +441,70 @@ export async function evaluateAndPersistCustomerFit(
   const cust = row as {
     id: string
     user_id: string
-    display_name?: string | null
-    service_address?: string | null
-    job_pipeline_status?: string | null
-    communication_urgency?: string | null
     fit_manually_overridden?: boolean | null
     fit_evaluated_at?: string | null
     fit_classification?: string | null
   }
-  const prevFitForPersist = cust.fit_classification ?? null
   const force = opts?.force === true
+  const fromScreening = opts?.fromScreening === true
   if (!force && cust.fit_manually_overridden) return null
-  if (!force && cust.fit_evaluated_at) return null
+  if (!force && !fromScreening && cust.fit_evaluated_at) return null
 
-  const { data: prof, error: profErr } = await supabase
-    .from("profiles")
-    .select("metadata, service_radius_enabled, service_radius_miles, ai_assistant_visible")
-    .eq("id", cust.user_id)
-    .maybeSingle()
+  const { data: prof, error: profErr } = await supabase.from("profiles").select("metadata").eq("id", cust.user_id).maybeSingle()
   if (profErr || !prof) {
     console.warn("[customerFit] profile", profErr?.message)
     return null
   }
   const prefs = parseLeadFilterPreferences((prof as { metadata?: unknown }).metadata)
-  if (!prefs.enable_auto_filter && !force) return null
+  if (!prefs.enable_auto_filter && !force && !fromScreening) return null
 
-  const aiVisible = (prof as { ai_assistant_visible?: boolean }).ai_assistant_visible !== false
-
-  const engagementCorpus = await fetchInboundEngagementCorpus(supabase, cust.user_id, customerId)
-  const corpusRaw = `${cust.display_name ?? ""}\n${cust.service_address ?? ""}\n${cust.job_pipeline_status ?? ""}\n${cust.communication_urgency ?? ""}\n${engagementCorpus}`
-  let corpus = corpusRaw.toLowerCase()
-  const acceptedFromLibrary = await resolveAcceptedJobTypeTokens(supabase, cust.user_id)
-  const accepted =
-    acceptedFromLibrary.length > 0 ? acceptedFromLibrary : tokenizeJobTypes(prefs.accepted_job_types)
-  const minSize = prefs.minimum_job_size
-  const extracted = extractMaxDollars(corpusRaw)
-  const effectiveValue = extracted
-
-  let source: EvaluateLeadFitResult["source"] = "rules"
-  let aiSignals: AiSignals | null = null
-
-  const ambiguousJob = accepted.length > 0 && !corpusMatchesAnyJobType(corpus, accepted)
-  const ambiguousBudget = minSize != null && effectiveValue == null
-
-  if (prefs.use_ai_for_unclear && aiVisible && (ambiguousJob || ambiguousBudget || corpus.trim().length < 24)) {
-    aiSignals = await interpretWithAi(corpusRaw, prefs, accepted)
-    if (aiSignals) {
-      source = "hybrid"
-      corpus = mergeHintsIntoCorpus(corpus, aiSignals).toLowerCase()
-    }
-  }
-
-  if (accepted.length > 0 && !corpusMatchesAnyJobType(corpus, accepted)) {
-    const result: EvaluateLeadFitResult = {
-      classification: "maybe",
-      confidence: aiSignals ? 0.55 : 0.5,
-      reason: "Job type is unclear versus your saved types — kept for review so a real caller is not auto-dropped.",
-      source,
-    }
-    await persistCustomerFit(supabase, customerId, result)
-    return result
-  }
-
-  if (minSize != null && effectiveValue != null && effectiveValue < minSize) {
-    const result: EvaluateLeadFitResult = {
-      classification: "bad",
-      confidence: 0.85,
-      reason: `Stated or estimated job size ($${Math.round(effectiveValue)}) is below your minimum ($${Math.round(minSize)}).`,
-      source: "rules",
-    }
-    await persistCustomerFit(supabase, customerId, result)
-    return result
-  }
-
-  if (
-    aiSignals?.budgetSignal === "low" &&
-    minSize != null &&
-    effectiveValue == null &&
-    accepted.length > 0 &&
-    corpusMatchesAnyJobType(corpus, accepted)
-  ) {
-    const result: EvaluateLeadFitResult = {
-      classification: "maybe",
-      confidence: 0.55,
-      reason: "Budget is unclear; AI suggests a smaller job — follow up before deprioritizing.",
-      source: "hybrid",
-    }
-    await persistCustomerFit(supabase, customerId, result)
-    return result
-  }
-
-  const urgent = URGENT_RE.test(corpusRaw) || aiSignals?.urgency === "asap"
-  const typeOk = accepted.length === 0 || corpusMatchesAnyJobType(corpus, accepted)
-  const budgetOk = minSize == null || effectiveValue == null || effectiveValue >= minSize
-
-  if (typeOk && budgetOk) {
-    if (prefs.availability === "asap" && !urgent) {
-      const result: EvaluateLeadFitResult = {
-        classification: "maybe",
-        confidence: 0.5,
-        reason: "You prefer ASAP jobs; timing for this customer is unclear — worth a quick call.",
-        source: aiSignals ? "hybrid" : "rules",
-      }
-      await persistCustomerFit(supabase, customerId, result)
-      return result
-    }
-    const result: EvaluateLeadFitResult = {
-      classification: "hot",
-      confidence: urgent ? 0.74 : 0.62,
-      reason: urgent
-        ? "Strong fit: urgency matches a priority lead."
-        : "Matches your filters; follow up to confirm scope and schedule.",
-      source: aiSignals ? "hybrid" : "rules",
-    }
-    await persistCustomerFit(supabase, customerId, result)
-    return result
-  }
-
-  const result: EvaluateLeadFitResult = {
-    classification: "maybe",
-    confidence: 0.45,
-    reason: "Not enough detail to confirm fit — kept for manual review.",
-    source: aiSignals ? "hybrid" : "rules",
-  }
+  const engagement = mergeSupplemental(
+    await fetchEngagementSignals(supabase, cust.user_id, customerId),
+    opts?.supplementalText,
+  )
+  const result = scoreInboundFit(engagement)
   await persistCustomerFit(supabase, customerId, result)
+  return result
+}
+
+/**
+ * Always apply attendant outcome to the customer (even when auto-filter is off).
+ * Spam / silence → bad + Suspected Spam. Real answers → hot and clear that category.
+ */
+export async function applyCustomerFitFromScreening(
+  supabase: SupabaseClient,
+  params: {
+    customerId: string
+    leadId?: string | null
+    userId: string
+    verdict: string
+    answers: ScreeningAnswerLike[]
+  },
+): Promise<EvaluateLeadFitResult | null> {
+  const { data: cust } = await supabase
+    .from("customers")
+    .select("fit_manually_overridden")
+    .eq("id", params.customerId)
+    .maybeSingle()
+  if ((cust as { fit_manually_overridden?: boolean | null } | null)?.fit_manually_overridden) return null
+
+  const result = scoreInboundFit(signalsFromScreeningAnswers(params.verdict, params.answers))
+  await persistCustomerFit(supabase, params.customerId, result)
+
+  if (params.leadId) {
+    const { data: lead } = await supabase
+      .from("leads")
+      .select("fit_manually_overridden, fit_classification")
+      .eq("id", params.leadId)
+      .maybeSingle()
+    const leadRow = lead as { fit_manually_overridden?: boolean | null; fit_classification?: string | null } | null
+    if (!leadRow?.fit_manually_overridden) {
+      await persistFit(supabase, params.leadId, params.userId, result, {
+        force: true,
+        prevFit: leadRow?.fit_classification ?? null,
+        customerId: params.customerId,
+      })
+    }
+  }
   return result
 }

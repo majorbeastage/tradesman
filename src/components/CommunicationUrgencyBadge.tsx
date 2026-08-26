@@ -84,9 +84,27 @@ export default function CommunicationUrgencyBadge({ level, brandLogoUrl }: Props
       </span>
     )
   }
+  if (u === "Suspected Spam") {
+    return (
+      <span style={{ ...wrap, color: "#c2410c" }}>
+        <span
+          aria-hidden
+          style={{
+            width: 12,
+            height: 12,
+            borderRadius: 999,
+            background: "#ea580c",
+            boxShadow: "0 0 0 3px rgba(234,88,12,0.22)",
+            flexShrink: 0,
+          }}
+        />
+        {label}
+      </span>
+    )
+  }
   return <span style={wrap}>{label}</span>
 }
 
 export function communicationUrgencySelectOptions(): CommunicationUrgency[] {
-  return ["Good Standing", "Needs Attention", "Critical", "Complete", "Lost"]
+  return ["Good Standing", "Needs Attention", "Critical", "Suspected Spam", "Complete", "Lost"]
 }

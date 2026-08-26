@@ -38,6 +38,8 @@ import {
   resolveWebsiteTextStylesForViewport,
   canvasItemVisibleOnPage,
   isWebsiteImageFreeScale,
+  websiteCanvasReachPx,
+  WEBSITE_EDITOR_PAGE_CANVAS_MIN_PX,
   websiteCustomPagePathId,
   websiteTextStyleToCss,
   scaleWebsiteFontSize,
@@ -107,6 +109,8 @@ type ContactFormProps = {
   slug: string
   businessName: string
   theme: BusinessProfileTheme
+  /** Hair Plumbing contact form — extra free-text job details. */
+  showJobDescription?: boolean
 }
 
 function themeVars(theme: BusinessProfileTheme): CSSProperties {
@@ -452,12 +456,13 @@ function WorkPhotosBlock({
   )
 }
 
-function BusinessProfileContactForm({ slug, businessName, theme }: ContactFormProps) {
+function BusinessProfileContactForm({ slug, businessName, theme, showJobDescription }: ContactFormProps) {
   const [name, setName] = useState("")
   const [phone, setPhone] = useState("")
   const [email, setEmail] = useState("")
   const [address, setAddress] = useState("")
   const [zip, setZip] = useState("")
+  const [jobDescription, setJobDescription] = useState("")
   const [preferredContact, setPreferredContact] = useState<"phone" | "sms" | "email">("email")
   const [smsOptIn, setSmsOptIn] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -502,6 +507,7 @@ function BusinessProfileContactForm({ slug, businessName, theme }: ContactFormPr
           email: email.trim(),
           address: address.trim(),
           zip: zip.trim(),
+          jobDescription: showJobDescription ? jobDescription.trim() : "",
           preferredContact,
           smsOptIn: preferredContact === "sms" ? smsOptIn : false,
         }),
@@ -563,6 +569,19 @@ function BusinessProfileContactForm({ slug, businessName, theme }: ContactFormPr
           ZIP code
           <input value={zip} onChange={(e) => setZip(e.target.value)} style={inputStyle} />
         </label>
+        {showJobDescription ? (
+          <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 700, color: "var(--bp-font)" }}>
+            Job description
+            <textarea
+              value={jobDescription}
+              onChange={(e) => setJobDescription(e.target.value)}
+              rows={5}
+              maxLength={4000}
+              placeholder="Tell us what you need help with…"
+              style={{ ...inputStyle, resize: "vertical", minHeight: 120, lineHeight: 1.45 }}
+            />
+          </label>
+        ) : null}
         <fieldset style={{ border: "none", margin: 0, padding: 0, display: "grid", gap: 8 }}>
           <legend style={{ fontSize: 13, fontWeight: 700, color: "var(--bp-font)", marginBottom: 4 }}>Preferred contact method</legend>
           {(["email", "phone", "sms"] as const).map((opt) => (
@@ -1558,10 +1577,9 @@ function ShowcaseLayout({
       .map((s) => s.trim())
       .find((s) => /^https?:\/\//i.test(s) || s.startsWith("blob:") || s.startsWith("data:image"))
     if (!dropUrl) return
-    const root = shellRef.current
-    if (!root) return
+    const root = e.currentTarget as HTMLElement
     const rect = root.getBoundingClientRect()
-    const scale = websiteDesignScale(rect.width)
+    const scale = websiteDesignScale(Math.min(rect.width, WEBSITE_FREEFORM_DESIGN_WIDTH))
     const railW = Math.min(rect.width, WEBSITE_FREEFORM_DESIGN_WIDTH)
     const railLeft = rect.left + (rect.width - railW) / 2
     const localX = e.clientX - railLeft - railW / 2
@@ -1692,7 +1710,12 @@ function ShowcaseLayout({
         ) : null}
       </div>
       {data.showContactForm ? (
-        <BusinessProfileContactForm slug={data.slug} businessName={data.businessName} theme={theme} />
+        <BusinessProfileContactForm
+          slug={data.slug}
+          businessName={data.businessName}
+          theme={theme}
+          showJobDescription={data.templateId === "hair_plumbing"}
+        />
       ) : null}
       <SocialFollowBlock
         socialLinks={data.socialLinks}
@@ -2151,6 +2174,10 @@ function ShowcaseLayout({
     )
 
   const isHairPlumbing = data.templateId === "hair_plumbing"
+  const canvasReach = websiteCanvasReachPx(data.canvasItems, textStyles, activePage, data.tagline)
+  const pageCanvasMinPx = editMode
+    ? Math.max(WEBSITE_EDITOR_PAGE_CANVAS_MIN_PX, canvasReach + 480)
+    : Math.max(activePage === "home" ? 0 : 720, canvasReach + 120)
 
   return (
     <div
@@ -2212,6 +2239,7 @@ function ShowcaseLayout({
       </div>
       <div
         className="bp-showcase-scroll-layer"
+        style={{ minHeight: pageCanvasMinPx }}
         onDragOver={(e) => {
           if (editMode && editor?.onCreatePhotoAtDrop) e.preventDefault()
         }}
@@ -2274,7 +2302,14 @@ function ClassicLayout({
         <ServiceAreasBlock items={data.serviceAreas ?? []} />
         <ContactBlock data={data} />
         <HoursBlock hours={data.businessHours ?? []} />
-        {data.showContactForm ? <BusinessProfileContactForm slug={data.slug} businessName={data.businessName} theme={theme} /> : null}
+        {data.showContactForm ? (
+          <BusinessProfileContactForm
+            slug={data.slug}
+            businessName={data.businessName}
+            theme={theme}
+            showJobDescription={data.templateId === "hair_plumbing"}
+          />
+        ) : null}
       </div>
     </div>
   )
@@ -2304,7 +2339,14 @@ function HeroLayout({
             </div>
             <WorkPhotosBlock urls={data.workPhotoUrls ?? []} onPhotoClick={(url) => onPhotoClick(url)} />
           </div>
-          {data.showContactForm ? <BusinessProfileContactForm slug={data.slug} businessName={data.businessName} theme={theme} /> : null}
+          {data.showContactForm ? (
+          <BusinessProfileContactForm
+            slug={data.slug}
+            businessName={data.businessName}
+            theme={theme}
+            showJobDescription={data.templateId === "hair_plumbing"}
+          />
+        ) : null}
         </div>
       </div>
     </>
@@ -2330,7 +2372,14 @@ function SplitLayout({
           <ServiceAreasBlock items={data.serviceAreas ?? []} />
           <ContactBlock data={data} />
           <HoursBlock hours={data.businessHours ?? []} />
-          {data.showContactForm ? <BusinessProfileContactForm slug={data.slug} businessName={data.businessName} theme={theme} /> : null}
+          {data.showContactForm ? (
+          <BusinessProfileContactForm
+            slug={data.slug}
+            businessName={data.businessName}
+            theme={theme}
+            showJobDescription={data.templateId === "hair_plumbing"}
+          />
+        ) : null}
         </div>
         <div>
           <WorkPhotosBlock urls={data.workPhotoUrls ?? []} dense onPhotoClick={(url) => onPhotoClick(url)} />
@@ -2363,7 +2412,14 @@ function GalleryLayout({
         <ServiceAreasBlock items={data.serviceAreas ?? []} />
         <ContactBlock data={data} />
         <HoursBlock hours={data.businessHours ?? []} />
-        {data.showContactForm ? <BusinessProfileContactForm slug={data.slug} businessName={data.businessName} theme={theme} /> : null}
+        {data.showContactForm ? (
+          <BusinessProfileContactForm
+            slug={data.slug}
+            businessName={data.businessName}
+            theme={theme}
+            showJobDescription={data.templateId === "hair_plumbing"}
+          />
+        ) : null}
       </div>
     </div>
   )
@@ -2585,6 +2641,7 @@ export function BusinessProfilePublicSite({
         .bp-showcase-scroll-layer {
           position: relative;
           z-index: 1;
+          overflow: visible;
         }
         .bp-freeform-layer {
           position: absolute;
@@ -2990,7 +3047,7 @@ export function BusinessProfilePublicSite({
           {data.footerCopyright?.trim() || `© ${new Date().getFullYear()} ${data.businessName}. All rights reserved.`}
         </CanvasEditable>
       ) : null}
-      {data.showPoweredBy === true ? <PoweredByFooter /> : null}
+      {data.showPoweredBy === true && !previewMode ? <PoweredByFooter /> : null}
       {lightbox ? <PhotoLightbox src={lightbox.src} alt={lightbox.alt} onClose={() => setLightbox(null)} /> : null}
     </div>
   )

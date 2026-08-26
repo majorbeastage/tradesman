@@ -77,7 +77,14 @@ async function loadUrgencyMixPreview(supabase: SupabaseClient, userId: string): 
     rows: sorted.slice(0, 4).map(([label, n]) => ({
       label,
       value: String(n),
-      accent: label === "Critical" ? "#dc2626" : label === "Needs Attention" ? "#d97706" : undefined,
+      accent:
+        label === "Critical"
+          ? "#dc2626"
+          : label === "Needs Attention"
+            ? "#d97706"
+            : label === "Suspected Spam"
+              ? "#ea580c"
+              : undefined,
     })),
     empty: "No customers loaded.",
   }

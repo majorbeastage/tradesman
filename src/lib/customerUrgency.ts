@@ -6,6 +6,7 @@ export const COMMUNICATION_URGENCY_LEVELS = [
   "Good Standing",
   "Needs Attention",
   "Critical",
+  "Suspected Spam",
   "Complete",
   "Lost",
 ] as const
@@ -16,6 +17,7 @@ const RANK: Record<string, number> = {
   "Good Standing": 1,
   "Needs Attention": 2,
   Critical: 3,
+  "Suspected Spam": 6,
   Complete: 4,
   Lost: 5,
 }
@@ -34,6 +36,24 @@ export function normalizeCommunicationUrgency(raw: string | null | undefined): C
 
 export function urgencyRank(u: CommunicationUrgency): number {
   return RANK[u] ?? RANK["Good Standing"]
+}
+
+/**
+ * Bad fits (suspected spam / no real answers) map to Suspected Spam.
+ * Clearing a bad fit restores Good Standing when the row was still in that category.
+ * Complete and Lost are left alone.
+ */
+export function urgencyPatchFromFitClassification(
+  classification: string,
+  currentRaw: string | null | undefined,
+): CommunicationUrgency | null {
+  const current = normalizeCommunicationUrgency(currentRaw)
+  if (classification === "bad") {
+    if (current === "Complete" || current === "Lost") return null
+    return "Suspected Spam"
+  }
+  if (current === "Suspected Spam") return "Good Standing"
+  return null
 }
 
 export type CustomersUrgencyAutomationPrefs = {
@@ -63,7 +83,7 @@ function thresholdMs(prefs: CustomersUrgencyAutomationPrefs): number {
 
 /**
  * If the customer has had no communication activity for longer than the configured threshold,
- * escalate one step: Good Standing → Needs Attention → Critical. Skips Complete, Lost, and Critical (cap).
+ * escalate one step: Good Standing → Needs Attention → Critical. Skips Complete, Lost, Suspected Spam, and Critical (cap).
  */
 export function nextUrgencyAfterSilence(
   current: CommunicationUrgency,
@@ -72,7 +92,7 @@ export function nextUrgencyAfterSilence(
   nowMs: number,
 ): CommunicationUrgency | null {
   if (!prefs?.enabled || prefs.amount <= 0) return null
-  if (current === "Complete" || current === "Lost") return null
+  if (current === "Complete" || current === "Lost" || current === "Suspected Spam") return null
   if (current === "Critical") return null
   if (!Number.isFinite(lastActivityMs) || lastActivityMs <= 0) return null
   if (nowMs - lastActivityMs <= thresholdMs(prefs)) return null

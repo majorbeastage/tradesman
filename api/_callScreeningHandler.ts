@@ -27,6 +27,7 @@ import {
   type VoiceScreeningStep,
 } from "./_voiceAutoAttendant.js"
 import { isPromotionalHubCaller } from "./_callScreeningSkip.js"
+import { applyCustomerFitFromScreening } from "./_leadFitClassification.js"
 
 const SAY = `voice="Polly.Matthew" language="en-US"`
 
@@ -421,6 +422,15 @@ export async function callScreeningHandler(req: VercelRequest, res: VercelRespon
             classification.intentSummary,
           )
         : null
+    if (customerId) {
+      await applyCustomerFitFromScreening(supabase, {
+        customerId,
+        leadId,
+        userId: channel.user_id,
+        verdict: classification.verdict,
+        answers: nextAnswers,
+      }).catch((e) => console.warn("[call-screening] customer fit", e instanceof Error ? e.message : e))
+    }
 
     const screeningBase = {
       supabase,

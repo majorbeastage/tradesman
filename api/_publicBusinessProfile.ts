@@ -11,6 +11,7 @@ import {
 import { bootstrapHairPlumbingWebsiteIfNeeded, HAIR_PLUMBING_SITE_SEED_VERSION } from "./_seedHairPlumbingWebsite.js"
 
 const BUSINESS_PUBLIC_PROFILE_META_KEY = "business_public_profile_v1"
+const BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX = 48
 const PLATFORM_EMAIL_ROOT_DOMAIN = "tradesman-us.com"
 const COMPANY_LOGO_META_KEY = "company_logo_url"
 
@@ -291,7 +292,7 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
   const o = raw as Record<string, unknown>
   if (o.v !== 1 && o.v != null) return base
   const workPhotoUrls = Array.isArray(o.workPhotoUrls)
-    ? o.workPhotoUrls.filter((x): x is string => typeof x === "string" && x.trim().length > 0).slice(0, 12)
+    ? o.workPhotoUrls.filter((x): x is string => typeof x === "string" && x.trim().length > 0).slice(0, BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX)
     : []
   const growth = meta.growth_module_v1
   const pages =
@@ -452,7 +453,7 @@ function parseCanvasItems(raw: unknown): Array<{
     imageUrl?: string | null
     pages?: string[]
   }> = []
-  for (const item of raw.slice(0, 24)) {
+  for (const item of raw.slice(0, 48)) {
     if (!item || typeof item !== "object" || Array.isArray(item)) continue
     const c = item as Record<string, unknown>
     const id = typeof c.id === "string" && c.id.trim() ? c.id.trim().replace(/[^a-z0-9_-]/gi, "").slice(0, 40) : ""

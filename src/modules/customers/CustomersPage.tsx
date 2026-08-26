@@ -13,6 +13,7 @@ import {
   parseCustomersUrgencyAutomation,
   type CommunicationUrgency,
   urgencyRank,
+  urgencyPatchFromFitClassification,
   type CustomersUrgencyAutomationPrefs,
 } from "../../lib/customerUrgency"
 import { getFreshAccessToken, forceRefreshAccessToken } from "../../lib/authPlatformApi"
@@ -1692,6 +1693,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     setFitOverrideBusy(true)
     try {
       const now = new Date().toISOString()
+      const urgNext = urgencyPatchFromFitClassification(manualFitChoice, selectedCustomer.communication_urgency)
       const { error: uErr } = await supabase
         .from("customers")
         .update({
@@ -1701,6 +1703,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
           fit_source: "manual",
           fit_manually_overridden: true,
           fit_evaluated_at: now,
+          ...(urgNext ? { communication_urgency: urgNext } : {}),
         })
         .eq("id", selectedCustomer.id)
         .eq("user_id", userId)
@@ -1718,9 +1721,11 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
               fit_source: "manual",
               fit_manually_overridden: true,
               fit_evaluated_at: now,
+              ...(urgNext ? { communication_urgency: urgNext } : {}),
             }
           : prev,
       )
+      if (urgNext) setDetailForm((p) => ({ ...p, urgency: urgNext }))
       await loadCustomers()
     } finally {
       setFitOverrideBusy(false)
@@ -1763,6 +1768,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         }
         if (!j.skipped && j.classification) {
           const evaluatedAt = new Date().toISOString()
+          const urgNext = urgencyPatchFromFitClassification(j.classification, selectedCustomer.communication_urgency)
+          if (urgNext) setDetailForm((p) => ({ ...p, urgency: urgNext }))
           setSelectedCustomer((prev) =>
             prev && prev.id === selectedCustomer.id
               ? {
@@ -1773,6 +1780,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                   fit_source: typeof j.source === "string" ? j.source : prev.fit_source,
                   fit_manually_overridden: false,
                   fit_evaluated_at: evaluatedAt,
+                  ...(urgNext ? { communication_urgency: urgNext } : {}),
                 }
               : prev,
           )

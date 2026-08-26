@@ -139,9 +139,11 @@ export async function enrichInboundCustomerEngagement(
     patch.notes = mergeCustomerNotes(cust.notes as string | null, noteLine)
     await supabase.from("customers").update(patch).eq("id", opts.customerId).eq("user_id", opts.userId)
 
-    if (!cust.fit_evaluated_at || addressNewlyCaptured) {
+    if (!cust.fit_evaluated_at || addressNewlyCaptured || opts.sourceTag === "auto_attendant_live") {
       await evaluateAndPersistCustomerFit(supabase, opts.customerId, {
         force: addressNewlyCaptured,
+        fromScreening: opts.sourceTag === "auto_attendant_live",
+        supplementalText: combined.slice(0, 4000),
       }).catch((e) => console.warn("[inbound-enrich] customer fit", e instanceof Error ? e.message : e))
     }
   }
@@ -163,11 +165,12 @@ export async function enrichInboundCustomerEngagement(
       })
       .eq("id", opts.leadId)
 
-    const leadNeedsFit = !lead?.fit_evaluated_at || addressNewlyCaptured
+    const leadNeedsFit = !lead?.fit_evaluated_at || addressNewlyCaptured || opts.sourceTag === "auto_attendant_live"
     if (leadNeedsFit) {
       await evaluateAndPersistLeadFit(supabase, opts.leadId, {
         supplementalText: combined.slice(0, 4000),
         force: addressNewlyCaptured,
+        fromScreening: opts.sourceTag === "auto_attendant_live",
       }).catch((e) => console.warn("[inbound-enrich] lead fit", e instanceof Error ? e.message : e))
     }
   }

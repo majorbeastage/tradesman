@@ -54,7 +54,7 @@ function isRecentlyAdded(c: { updated_at?: string | null; last_activity_at?: str
 function isNeglected(c: TodayWorkCustomer, nowMs: number): boolean {
   const u = c.communication_urgency
   if (u === "Needs Attention" || u === "Critical") return true
-  if (u === "Complete" || u === "Lost") return false
+  if (u === "Complete" || u === "Lost" || u === "Suspected Spam") return false
   const last = parseMs(c.last_activity_at) || parseMs(c.updated_at)
   if (!last) return false
   const days14 = 14 * 86400000

@@ -51,6 +51,7 @@ export async function handlePublicBusinessProfileContact(req: VercelRequest, res
   const phone = normalizePhone(pickString(body, "phone", "phoneNumber"))
   const address = pickString(body, "address", "street").slice(0, 300)
   const zip = pickString(body, "zip", "zipCode", "postalCode").slice(0, 20)
+  const jobDescription = pickString(body, "jobDescription", "job_description", "message").slice(0, 4000)
   const preferredRaw = pickString(body, "preferredContact", "preferred_contact").toLowerCase()
   const preferredContact =
     preferredRaw === "sms" || preferredRaw === "text" ? "sms" : preferredRaw === "phone" || preferredRaw === "call" ? "phone" : "email"
@@ -124,6 +125,17 @@ export async function handlePublicBusinessProfileContact(req: VercelRequest, res
         .eq("id", customerId)
         .eq("user_id", userId)
     }
+    if (jobDescription) {
+      const { data: notesRow } = await supabase.from("customers").select("notes").eq("id", customerId).maybeSingle()
+      const prevNotes = typeof notesRow?.notes === "string" ? notesRow.notes.trim() : ""
+      const noteLine = `[Web] Job description: ${jobDescription}`
+      const nextNotes = prevNotes.includes(noteLine.slice(0, 80))
+        ? prevNotes
+        : prevNotes
+          ? `${prevNotes}\n\n${noteLine}`
+          : noteLine
+      await supabase.from("customers").update({ notes: nextNotes.slice(0, 8000) }).eq("id", customerId).eq("user_id", userId)
+    }
   } catch (e) {
     res.status(500).json({ ok: false, error: e instanceof Error ? e.message : "Could not save contact." })
     return
@@ -138,6 +150,7 @@ export async function handlePublicBusinessProfileContact(req: VercelRequest, res
     `Email: ${email}`,
     address ? `Address: ${address}` : null,
     zip ? `ZIP: ${zip}` : null,
+    jobDescription ? `Job description:\n${jobDescription}` : null,
     preferredContact === "sms" && smsOptIn ? "SMS opt-in: yes" : null,
   ]
     .filter(Boolean)

@@ -24,6 +24,7 @@ import {
   WEBSITE_BUILDER_PREVIEW_CHANNEL,
   WEBSITE_BUILDER_PREVIEW_MESSAGE,
   WEBSITE_BUILDER_PREVIEW_STORAGE_KEY,
+  WEBSITE_CANVAS_ITEMS_MAX,
   WEBSITE_FONT_OPTIONS,
   WEBSITE_FONT_SIZE_OPTIONS,
   WEBSITE_FREEFORM_DESIGN_WIDTH,
@@ -77,6 +78,20 @@ const HISTORY_MAX = 40
 
 function cloneSettings(s: BusinessPublicProfileSettings): BusinessPublicProfileSettings {
   return JSON.parse(JSON.stringify(s)) as BusinessPublicProfileSettings
+}
+
+function withCanvasPhotosInLibrary(s: BusinessPublicProfileSettings): BusinessPublicProfileSettings {
+  const next = [...s.workPhotoUrls]
+  const seen = new Set(next)
+  for (const item of s.canvasItems) {
+    if (item.kind !== "photo") continue
+    const u = item.imageUrl?.trim() || ""
+    if (!u || seen.has(u) || next.length >= BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX) continue
+    seen.add(u)
+    next.push(u)
+  }
+  if (next.length === s.workPhotoUrls.length) return s
+  return { ...s, workPhotoUrls: next }
 }
 
 const COMPANY_LOGO_META_KEY = "company_logo_url"
@@ -280,7 +295,7 @@ export default function WebsiteBuilderPage() {
       undoStackRef.current = []
       redoStackRef.current = []
       setHistoryTick((t) => t + 1)
-      setSettingsSilent(nextSettings)
+      setSettingsSilent(withCanvasPhotosInLibrary(nextSettings))
       setSlug(nextSlug)
 
       const channelRows = channels ?? []
@@ -572,7 +587,8 @@ export default function WebsiteBuilderPage() {
         prevMeta[COMPANY_LOGO_META_KEY] = opts.logoUrl
       }
       const domain = normalizeDomainInput(next.customDomain)
-      const withSite = mergeBusinessPublicProfileMetadata(prevMeta, { ...next, customDomain: domain }, nextSlug)
+      const toSave = withCanvasPhotosInLibrary({ ...next, customDomain: domain })
+      const withSite = mergeBusinessPublicProfileMetadata(prevMeta, toSave, nextSlug)
       const withSocial = mergeSocialPresenceIntoMetadata(withSite, {
         facebook: next.socialLinks.facebook || next.facebookUrl,
         instagram: next.socialLinks.instagram || next.instagramUrl,
@@ -599,7 +615,7 @@ export default function WebsiteBuilderPage() {
         }
         throw upErr
       }
-      setSettingsSilent({ ...next, customDomain: domain })
+      setSettingsSilent(toSave)
       setSlug(nextSlug)
       if (opts?.logoUrl) setContact((c) => ({ ...c, companyLogoUrl: opts.logoUrl ?? c.companyLogoUrl }))
       setMessage(
@@ -642,24 +658,58 @@ export default function WebsiteBuilderPage() {
   }
 
   async function onPhotoUpload(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
+    const files = Array.from(e.target.files ?? []).filter((f) => f.type.startsWith("image/"))
     e.target.value = ""
-    if (!file) return
-    if (settings.workPhotoUrls.length >= BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX) {
-      setError(`Up to ${BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX} photos.`)
+    if (!files.length) {
+      setError("Choose an image file.")
       return
     }
+    const room = BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX - settings.workPhotoUrls.length
+    if (room <= 0) {
+      setError(`Up to ${BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX} photos. Remove one from the tray to add more.`)
+      return
+    }
+    const toUpload = files.slice(0, room)
     setUploading(true)
     setError("")
     try {
-      const url = await uploadImage(file, "work")
-      if (!url) return
-      setSettings((s) => ({ ...s, workPhotoUrls: [...s.workPhotoUrls, url] }))
+      const added: string[] = []
+      for (const file of toUpload) {
+        const url = await uploadImage(file, "work")
+        if (url) added.push(url)
+      }
+      if (added.length) {
+        setSettings((s) => {
+          const next = [...s.workPhotoUrls]
+          for (const url of added) {
+            if (!next.includes(url) && next.length < BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX) next.push(url)
+          }
+          return { ...s, workPhotoUrls: next }
+        })
+      }
+      if (files.length > toUpload.length) {
+        setError(`Added ${added.length}. Up to ${BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX} photos — remove some to add the rest.`)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setUploading(false)
     }
+  }
+
+  function removeWorkPhoto(url: string) {
+    setSettings((s) => {
+      const imageSlots = { ...s.imageSlots }
+      for (const slot of Object.keys(imageSlots) as WebsiteImageSlotId[]) {
+        if (imageSlots[slot] === url) delete imageSlots[slot]
+      }
+      return {
+        ...s,
+        workPhotoUrls: s.workPhotoUrls.filter((u) => u !== url),
+        imageSlots,
+        canvasItems: s.canvasItems.map((c) => (c.kind === "photo" && c.imageUrl === url ? { ...c, imageUrl: null } : c)),
+      }
+    })
   }
 
   async function onLogoUpload(e: ChangeEvent<HTMLInputElement>) {
@@ -750,7 +800,7 @@ export default function WebsiteBuilderPage() {
           canvasItems: [
             ...s.canvasItems,
             { id, kind: "text" as const, text: "New text — click to edit", pages: [page] },
-          ].slice(0, 24),
+          ].slice(0, WEBSITE_CANVAS_ITEMS_MAX),
         },
         targetId,
         {
@@ -778,7 +828,7 @@ export default function WebsiteBuilderPage() {
           canvasItems: [
             ...s.canvasItems,
             { id, kind: "photo" as const, imageUrl: imageUrl?.trim() || null, pages: [page] },
-          ].slice(0, 24),
+          ].slice(0, WEBSITE_CANVAS_ITEMS_MAX),
         },
         targetId,
         {
@@ -958,6 +1008,24 @@ export default function WebsiteBuilderPage() {
     selectedTargetId && selectedKind === "text" ? getWebsiteTextValue(settings, selectedTargetId) : ""
   const layoutStyles = previewDevice === "mobile" ? settings.textStylesMobile : settings.textStyles
   const selectedStyle = selectedTargetId ? layoutStyles[selectedTargetId] ?? {} : {}
+  const photoLibraryUrls = useMemo(() => {
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const url of settings.workPhotoUrls) {
+      const u = url.trim()
+      if (!u || seen.has(u)) continue
+      seen.add(u)
+      out.push(u)
+    }
+    for (const item of settings.canvasItems) {
+      if (item.kind !== "photo") continue
+      const u = item.imageUrl?.trim() || ""
+      if (!u || seen.has(u)) continue
+      seen.add(u)
+      out.push(u)
+    }
+    return out
+  }, [settings.workPhotoUrls, settings.canvasItems])
   const hiddenSections = WEBSITE_HOME_SECTION_OPTIONS.filter((o) => settings.homeSections[o.id] === false)
   const hiddenFields = hiddenWebsiteEditTargetIds(layoutStyles)
   const navBar = settings.navBar ?? defaultWebsiteNavBar()
@@ -2235,8 +2303,14 @@ export default function WebsiteBuilderPage() {
           </button>
         </details>
 
-        <details style={sectionCard}>
-          <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 900 }}>Photos</summary>
+        <details open style={sectionCard}>
+          <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 900 }}>
+            Photos ({photoLibraryUrls.length}/{BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX})
+          </summary>
+          <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+            Upload photos here to see thumbnails. Drag a thumbnail onto the page. Use × to remove a photo from this
+            tray (also clears it from page slots that use it).
+          </p>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             <label
               style={{
@@ -2246,11 +2320,18 @@ export default function WebsiteBuilderPage() {
                 background: "#fff",
                 fontSize: 12,
                 fontWeight: 800,
-                cursor: "pointer",
+                cursor: photoLibraryUrls.length >= BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX ? "not-allowed" : "pointer",
               }}
             >
               {uploading ? "Uploading…" : "+ Photo"}
-              <input type="file" accept="image/*" hidden onChange={(e) => void onPhotoUpload(e)} disabled={uploading} />
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                hidden
+                onChange={(e) => void onPhotoUpload(e)}
+                disabled={uploading || photoLibraryUrls.length >= BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX}
+              />
             </label>
             <label
               style={{
@@ -2317,50 +2398,91 @@ export default function WebsiteBuilderPage() {
               ) : null}
             </div>
           ) : null}
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {settings.workPhotoUrls.map((url) => (
-              <div key={url} style={{ position: "relative" }}>
-                <img
-                  src={url}
-                  alt=""
-                  draggable
-                  onDragStart={(e) => onPhotoDragStart(url, e)}
-                  title="Drag onto a photo slot in the preview"
-                  style={{
-                    width: 56,
-                    height: 56,
-                    objectFit: "cover",
-                    borderRadius: 8,
-                    border:
-                      settings.imageSlots.background === url ? "2px solid #c81e1e" : `1px solid ${theme.border}`,
-                    cursor: "grab",
-                    display: "block",
-                  }}
-                />
-                <button
-                  type="button"
-                  title="Use as fixed page background"
-                  onClick={() => assignSlot("background", url)}
-                  style={{
-                    position: "absolute",
-                    left: 2,
-                    right: 2,
-                    bottom: 2,
-                    border: "none",
-                    borderRadius: 4,
-                    background: "rgba(15,23,42,0.82)",
-                    color: "#fff",
-                    fontSize: 9,
-                    fontWeight: 800,
-                    padding: "2px 0",
-                    cursor: "pointer",
-                  }}
-                >
-                  BG
-                </button>
-              </div>
-            ))}
-          </div>
+          {photoLibraryUrls.length ? (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(88px, 1fr))",
+                gap: 8,
+                maxHeight: 360,
+                overflowY: "auto",
+                padding: 4,
+                background: "#f8fafc",
+                borderRadius: 10,
+                border: `1px solid ${theme.border}`,
+              }}
+            >
+              {photoLibraryUrls.map((url) => (
+                <div key={url} style={{ position: "relative" }}>
+                  <img
+                    src={url}
+                    alt=""
+                    draggable
+                    onDragStart={(e) => onPhotoDragStart(url, e)}
+                    title="Drag onto the preview"
+                    style={{
+                      width: "100%",
+                      aspectRatio: "1",
+                      height: 88,
+                      objectFit: "cover",
+                      borderRadius: 8,
+                      border:
+                        settings.imageSlots.background === url ? "2px solid #c81e1e" : `1px solid ${theme.border}`,
+                      cursor: "grab",
+                      display: "block",
+                      background: "#fff",
+                    }}
+                  />
+                  <button
+                    type="button"
+                    title="Remove photo from this tray"
+                    onClick={() => removeWorkPhoto(url)}
+                    style={{
+                      position: "absolute",
+                      top: 4,
+                      right: 4,
+                      width: 22,
+                      height: 22,
+                      border: "none",
+                      borderRadius: 999,
+                      background: "rgba(15,23,42,0.88)",
+                      color: "#fff",
+                      fontSize: 15,
+                      fontWeight: 800,
+                      lineHeight: 1,
+                      padding: 0,
+                      cursor: "pointer",
+                    }}
+                  >
+                    ×
+                  </button>
+                  <button
+                    type="button"
+                    title="Use as fixed page background"
+                    onClick={() => assignSlot("background", url)}
+                    style={{
+                      position: "absolute",
+                      left: 4,
+                      right: 28,
+                      bottom: 4,
+                      border: "none",
+                      borderRadius: 4,
+                      background: "rgba(15,23,42,0.82)",
+                      color: "#fff",
+                      fontSize: 9,
+                      fontWeight: 800,
+                      padding: "2px 0",
+                      cursor: "pointer",
+                    }}
+                  >
+                    BG
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p style={{ margin: 0, fontSize: 11, color: "#64748b" }}>No photos yet — click + Photo to add thumbnails.</p>
+          )}
           <div style={{ fontSize: 12, fontWeight: 900, color: EDITOR_INK, marginTop: 8 }}>Stationary background</div>
           <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, fontWeight: 700, color: EDITOR_INK }}>
             <input
@@ -2787,6 +2909,11 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
               )
             })}
           </div>
+          <p style={{ margin: "8px 0 4px", fontSize: 11, color: "rgba(255,255,255,0.72)", lineHeight: 1.4, maxWidth: 720 }}>
+            Fields set to Home and all subpages share the same spot from the top of the page. About and Contact now
+            have extra canvas below the built-in blocks so you can add more photos and text. Powered by Tradesman is
+            hidden in this editor and prints at the bottom of each live page.
+          </p>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             <button
               type="button"
