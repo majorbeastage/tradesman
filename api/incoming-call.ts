@@ -19,7 +19,7 @@ import {
   toTwilioE164,
 } from "./_communications.js"
 import { buildCallScreeningRedirectUrl } from "./_callScreeningHandler.js"
-import { shouldSkipCallScreeningForCaller } from "./_callScreeningSkip.js"
+import { shouldSkipCallScreeningForCaller, isPromotionalHubCaller } from "./_callScreeningSkip.js"
 import { activeScreeningSteps, loadVoiceAutoAttendantForUser } from "./_voiceAutoAttendant.js"
 import { loadCallHuntingForUser, loadHuntPhoneByUserId, resolveHuntPhones } from "./_callHunting.js"
 import { recordSmsConsentFromInboundCall, runMissedCallAutoTextBack } from "./_conversationAutoReply.js"
@@ -135,6 +135,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const q = query.size ? `?${query.toString()}` : ""
   const voicemailActionUrl = `${origin}/api/voicemail-result${q}`
   const transcribeUrl = `${voicemailActionUrl}${q ? "&" : "?"}phase=transcribe`
+
+  /** Promotions & Marketing contacts never ring through — voicemail only. */
+  if (channel?.user_id && from && !skipCrmForSelfLeg) {
+    try {
+      const promotional = await isPromotionalHubCaller(supabase, channel.user_id, from)
+      if (promotional) {
+        console.info("[incoming-call] promotional_hub_voicemail", { callSid, userId: channel.user_id, from })
+        return sendTwiml(
+          res,
+          buildVoicemailTwiml({
+            recordAction: voicemailActionUrl,
+            transcribeCallback: transcribeUrl,
+            routingProfile,
+            preambleSay: "Please leave a message after the tone.",
+          }),
+        )
+      }
+    } catch (e) {
+      console.error("[incoming-call] promotional hub check failed", e instanceof Error ? e.message : e)
+    }
+  }
 
   /** Optional call screening — only when explicitly enabled; default path unchanged. */
   if (forwardTo && channel?.user_id && !skipCrmForSelfLeg) {

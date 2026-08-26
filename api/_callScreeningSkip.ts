@@ -1,21 +1,13 @@
 /**
- * Skip auto-attendant for returning customers in Active or Booked (in-process) who already completed screening.
- * Mirrors Customers hub bucket rules from CustomersPage.loadCustomers.
+ * Skip auto-attendant for numbers already on the Customers tab (or who finished screening).
+ * First-time unknown callers still go through the menu. Returning / saved customers connect.
+ * Promotions & Marketing numbers never skip-to-connect — they go to voicemail.
  */
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { lookupCustomerIdByPhone } from "./_communications.js"
 import { parseCustomerHubKind } from "./_customerContactKind.js"
 
-const MANUAL_ARCHIVED_META_KEY = "manual_archived"
-
-function isCompletedJobStatus(status: string | null | undefined): boolean {
-  return String(status ?? "").trim().toLowerCase() === "completed"
-}
-
-function isCustomerManuallyArchived(metadata: unknown): boolean {
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return false
-  return (metadata as Record<string, unknown>)[MANUAL_ARCHIVED_META_KEY] === true
-}
+const ESTABLISHED_CUSTOMER_MS = 20_000
 
 function customerCompletedCallScreening(metadata: unknown): boolean {
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return false
@@ -46,82 +38,31 @@ async function customerHasPriorScreeningAnswers(
   return (data ?? []).some((row) => customerCompletedCallScreening(row.metadata))
 }
 
-async function isCustomerInActiveOrBookedHub(
+async function loadCustomerByPhone(
   supabase: SupabaseClient,
   userId: string,
-  customerId: string,
-): Promise<boolean> {
-  const { data: customer, error } = await supabase
+  phone: string,
+): Promise<{ id: string; created_at?: string; metadata?: unknown } | null> {
+  const customerId = await lookupCustomerIdByPhone(supabase, userId, phone)
+  if (!customerId) return null
+  const { data: customer } = await supabase
     .from("customers")
-    .select("id, metadata, job_pipeline_status, customer_identifiers ( type, value )")
+    .select("id, created_at, metadata")
     .eq("id", customerId)
     .eq("user_id", userId)
     .maybeSingle()
-  if (error || !customer) return false
+  return (customer as { id: string; created_at?: string; metadata?: unknown } | null) ?? null
+}
 
-  if (parseCustomerHubKind(customer.metadata) === "promotional") return false
-  if (isCustomerManuallyArchived(customer.metadata)) return false
-  if (isCompletedJobStatus(customer.job_pipeline_status)) return false
-
-  let eventsRes = await supabase
-    .from("calendar_events")
-    .select("id")
-    .eq("user_id", userId)
-    .eq("customer_id", customerId)
-    .is("removed_at", null)
-    .is("completed_at", null)
-    .limit(1)
-  if (eventsRes.error) {
-    eventsRes = await supabase
-      .from("calendar_events")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("customer_id", customerId)
-      .is("removed_at", null)
-      .limit(1)
-  }
-  const isBooked = (eventsRes.data?.length ?? 0) > 0
-  if (isBooked) return true
-
-  const [leads, convos, quotes, anyLeads, anyConvos, anyQuotes, anyEvents] = await Promise.all([
-    supabase
-      .from("leads")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("customer_id", customerId)
-      .is("removed_at", null)
-      .is("converted_at", null)
-      .limit(1),
-    supabase
-      .from("conversations")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("customer_id", customerId)
-      .is("removed_at", null)
-      .limit(1),
-    supabase
-      .from("quotes")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("customer_id", customerId)
-      .is("removed_at", null)
-      .is("scheduled_at", null)
-      .limit(1),
-    supabase.from("leads").select("id").eq("user_id", userId).eq("customer_id", customerId).limit(1),
-    supabase.from("conversations").select("id").eq("user_id", userId).eq("customer_id", customerId).limit(1),
-    supabase.from("quotes").select("id").eq("user_id", userId).eq("customer_id", customerId).limit(1),
-    supabase.from("calendar_events").select("id").eq("user_id", userId).eq("customer_id", customerId).limit(1),
-  ])
-
-  const hasActiveSignal =
-    (leads.data?.length ?? 0) > 0 || (convos.data?.length ?? 0) > 0 || (quotes.data?.length ?? 0) > 0
-  const hasRelatedHistory =
-    (anyLeads.data?.length ?? 0) > 0 ||
-    (anyConvos.data?.length ?? 0) > 0 ||
-    (anyQuotes.data?.length ?? 0) > 0 ||
-    (anyEvents.data?.length ?? 0) > 0
-
-  return hasActiveSignal || !hasRelatedHistory
+/** True when this phone is on the Promotions & Marketing hub — do not ring the client. */
+export async function isPromotionalHubCaller(
+  supabase: SupabaseClient,
+  userId: string,
+  phone: string,
+): Promise<boolean> {
+  const customer = await loadCustomerByPhone(supabase, userId, phone)
+  if (!customer) return false
+  return parseCustomerHubKind(customer.metadata) === "promotional"
 }
 
 /** True when caller should bypass auto-attendant and connect directly. */
@@ -130,12 +71,13 @@ export async function shouldSkipCallScreeningForCaller(
   userId: string,
   phone: string,
 ): Promise<boolean> {
-  const customerId = await lookupCustomerIdByPhone(supabase, userId, phone)
-  if (!customerId) return false
+  const customer = await loadCustomerByPhone(supabase, userId, phone)
+  if (!customer) return false
+  if (parseCustomerHubKind(customer.metadata) === "promotional") return false
 
-  const [screenedBefore, inActiveOrBooked] = await Promise.all([
-    customerHasPriorScreeningAnswers(supabase, userId, customerId),
-    isCustomerInActiveOrBookedHub(supabase, userId, customerId),
-  ])
-  return screenedBefore && inActiveOrBooked
+  const createdMs = Date.parse(String(customer.created_at ?? ""))
+  const established = Number.isFinite(createdMs) && Date.now() - createdMs > ESTABLISHED_CUSTOMER_MS
+  if (established) return true
+
+  return customerHasPriorScreeningAnswers(supabase, userId, customer.id)
 }

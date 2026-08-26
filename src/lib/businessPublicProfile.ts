@@ -215,7 +215,7 @@ export type WebsiteTextStyle = {
   tintColor?: string
   /** Tint strength 0–100. */
   tintOpacity?: number
-  /** fixed = lock aspect via one size; free = independent width/height. */
+  /** fixed = natural shape, one size, no crop; free = independent width/height with crop. */
   scaleMode?: "fixed" | "free"
   /** Simple crop: focus % and zoom. */
   cropX?: number
@@ -231,6 +231,19 @@ export type WebsiteTextStyle = {
   scrollFixed?: boolean
   /** Hide this built-in field from the live site and editor canvas. */
   hidden?: boolean
+}
+
+/** True when the photo uses independent width/height (crop-to-box). */
+export function isWebsiteImageFreeScale(style: WebsiteTextStyle | undefined): boolean {
+  if (!style) return false
+  if (style.scaleMode === "free") return true
+  if (style.scaleMode === "fixed") return false
+  // Legacy photos stored width + height with no mode; keep the old crop box.
+  return (
+    typeof style.maxWidth === "number" &&
+    typeof style.imageSize === "number" &&
+    style.maxWidth !== style.imageSize
+  )
 }
 
 export type WebsiteTextStyles = Partial<Record<string, WebsiteTextStyle>>

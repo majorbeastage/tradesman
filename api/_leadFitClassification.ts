@@ -1,5 +1,5 @@
 /**
- * Rules-first lead fit (hot / maybe / bad). AI only enriches signals when enabled; it never alone assigns "bad".
+ * Rules-first lead fit (hot / maybe / bad). AI only enriches signals; job-type wording mismatch is "maybe", not auto-bad.
  * Preferences live in profiles.metadata.lead_filter_preferences (see supabase/lead-fit-classification.sql).
  */
 import type { SupabaseClient } from "@supabase/supabase-js"
@@ -293,12 +293,12 @@ export async function evaluateAndPersistLeadFit(
     }
   }
 
-  // Strong bad: accepted list set and still no match after optional AI hints
+  // Strong mismatch: keep in queue as maybe — do not auto-mark bad for wording vs job-type list.
   if (accepted.length > 0 && !corpusMatchesAnyJobType(corpus, accepted)) {
     const result: EvaluateLeadFitResult = {
-      classification: "bad",
-      confidence: aiSignals ? 0.78 : 0.88,
-      reason: "Job type does not match the types you said you accept.",
+      classification: "maybe",
+      confidence: aiSignals ? 0.55 : 0.5,
+      reason: "Job type is unclear versus your saved types — kept for review so a real caller is not auto-dropped.",
       source,
     }
     await persistFit(supabase, leadId, lead.user_id, result, { force, prevFit: prevFitForPersist })
@@ -514,9 +514,9 @@ export async function evaluateAndPersistCustomerFit(
 
   if (accepted.length > 0 && !corpusMatchesAnyJobType(corpus, accepted)) {
     const result: EvaluateLeadFitResult = {
-      classification: "bad",
-      confidence: aiSignals ? 0.78 : 0.88,
-      reason: "Job type does not match the types you said you accept.",
+      classification: "maybe",
+      confidence: aiSignals ? 0.55 : 0.5,
+      reason: "Job type is unclear versus your saved types — kept for review so a real caller is not auto-dropped.",
       source,
     }
     await persistCustomerFit(supabase, customerId, result)

@@ -1,10 +1,19 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
-import { firstEnv } from "./_communications.js"
+import { firstEnv, lookupCustomerIdByPhone } from "./_communications.js"
+import { buildCallerGeoHint, type CallerGeoHint } from "./_callerGeography.js"
+import { parseCustomerHubKind } from "./_customerContactKind.js"
 import { parseLeadFilterPreferences } from "./_leadFitClassification.js"
 import type { ScreeningAnswer } from "./_voiceAutoAttendant.js"
 import { formatBusinessAiVocabularyForLlm, loadBusinessAiVocabulary } from "./_businessAiVocabulary.js"
 
 export type ScreeningVerdict = "good_lead" | "spam" | "cold_call" | "uncertain"
+
+export type ScreeningCallerContext = {
+  callerPhone: string
+  knownCustomer: boolean
+  priorInboundCalls: number
+  geo: CallerGeoHint
+}
 
 export type ScreeningClassification = {
   verdict: ScreeningVerdict
@@ -32,7 +41,6 @@ const COLD_CALL_PATTERNS = [
   /\bcredit card processing\b/i,
   /\bduct cleaning\b/i,
   /\bmedical alert\b/i,
-  /\bbraces?\b.*\bfree\b/i,
 ]
 
 const CALL_CENTER_PATTERNS = [
@@ -42,27 +50,53 @@ const CALL_CENTER_PATTERNS = [
   /\byour call is important\b/i,
   /\brecorded for quality\b/i,
   /\bmonitor(ed)?\s+or\s+recorded\b/i,
+  /\blet me transfer\b/i,
+  /\btransfer(ring)? you\b/i,
+  /\banother (agent|representative|operator)\b/i,
+  /\bone moment (please|while)\b/i,
+  /\bstay on the line\b/i,
+  /\bconnecting you to\b/i,
 ]
+
+function spokenAnswers(answers: ScreeningAnswer[]): ScreeningAnswer[] {
+  return answers.filter((a) => a.answer.trim().length >= 2)
+}
+
+/** Real person on the line — connect them. Do not hang up for product-fit nitpicks. */
+export function looksLikeLiveCaller(answers: ScreeningAnswer[]): boolean {
+  const spoken = spokenAnswers(answers)
+  if (spoken.length === 0) return false
+  const wordy = spoken.some((a) => a.answer.trim().split(/\s+/).filter(Boolean).length >= 3)
+  return wordy || spoken.length >= Math.max(1, answers.length - 1)
+}
+
+function hasStrongBotOrCallCenter(combined: string): boolean {
+  return CALL_CENTER_PATTERNS.some((re) => re.test(combined)) || COLD_CALL_PATTERNS.some((re) => re.test(combined))
+}
 
 export async function loadCallScreeningBusinessContext(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<string> {
   const lines: string[] = []
-  const { data: profile } = await supabase.from("profiles").select("display_name, metadata").eq("id", userId).maybeSingle()
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("display_name, address_state, metadata")
+    .eq("id", userId)
+    .maybeSingle()
   const displayName = (profile as { display_name?: string | null } | null)?.display_name?.trim()
   if (displayName) lines.push(`Business name: ${displayName}`)
 
   const prefs = parseLeadFilterPreferences((profile as { metadata?: unknown } | null)?.metadata)
   if (prefs.accepted_job_types.trim()) {
-    lines.push(`Services / job types this business handles: ${prefs.accepted_job_types.trim().slice(0, 700)}`)
+    lines.push(`Services / job types this business handles (context only — do not reject live callers for mismatch): ${prefs.accepted_job_types.trim().slice(0, 700)}`)
   }
 
   const { data: jobTypes } = await supabase.from("job_types").select("name, materials_list").eq("user_id", userId).limit(40)
   const names = (jobTypes ?? [])
     .map((r) => String((r as { name?: string }).name ?? "").trim())
     .filter(Boolean)
-  if (names.length) lines.push(`Job type library: ${names.join(", ").slice(0, 500)}`)
+  if (names.length) lines.push(`Job type library (context only): ${names.join(", ").slice(0, 500)}`)
 
   try {
     const vocab = await loadBusinessAiVocabulary(supabase, userId)
@@ -78,25 +112,101 @@ export async function loadCallScreeningBusinessContext(
   return lines.join("\n")
 }
 
-function heuristicClassify(answers: ScreeningAnswer[], spamScreenEnabled: boolean): ScreeningClassification | null {
+export async function loadScreeningCallerContext(
+  supabase: SupabaseClient,
+  userId: string,
+  callerPhone: string,
+  currentCallSid?: string | null,
+): Promise<ScreeningCallerContext> {
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("address_state, metadata")
+    .eq("id", userId)
+    .maybeSingle()
+  const geo = buildCallerGeoHint({
+    callerPhone,
+    addressState: (profile as { address_state?: string | null } | null)?.address_state,
+    metadata: (profile as { metadata?: unknown } | null)?.metadata,
+  })
+
+  const customerId = callerPhone ? await lookupCustomerIdByPhone(supabase, userId, callerPhone) : null
+  let knownCustomer = false
+  let promotional = false
+  if (customerId) {
+    const { data: customer } = await supabase
+      .from("customers")
+      .select("created_at, metadata")
+      .eq("id", customerId)
+      .eq("user_id", userId)
+      .maybeSingle()
+    promotional = parseCustomerHubKind((customer as { metadata?: unknown } | null)?.metadata) === "promotional"
+    const createdMs = Date.parse(String((customer as { created_at?: string } | null)?.created_at ?? ""))
+    knownCustomer = !promotional && Number.isFinite(createdMs) && Date.now() - createdMs > 20_000
+  }
+
+  let priorInboundCalls = 0
+  if (customerId && !promotional) {
+    const { data: events } = await supabase
+      .from("communication_events")
+      .select("external_id, created_at")
+      .eq("user_id", userId)
+      .eq("customer_id", customerId)
+      .eq("event_type", "call")
+      .eq("direction", "inbound")
+      .order("created_at", { ascending: false })
+      .limit(12)
+    priorInboundCalls = (events ?? []).filter((row) => {
+      const sid = String((row as { external_id?: string | null }).external_id ?? "")
+      if (currentCallSid && sid && sid === currentCallSid) return false
+      const createdMs = Date.parse(String((row as { created_at?: string }).created_at ?? ""))
+      return Number.isFinite(createdMs) && Date.now() - createdMs > 15_000
+    }).length
+  }
+
+  return { callerPhone, knownCustomer, priorInboundCalls, geo }
+}
+
+function heuristicClassify(
+  answers: ScreeningAnswer[],
+  spamScreenEnabled: boolean,
+  caller?: ScreeningCallerContext,
+): ScreeningClassification {
   const combined = answers.map((a) => a.answer).join(" ").trim()
   const emptyCount = answers.filter((a) => !a.answer.trim()).length
   const nameAnswer = answers.find((a) => a.kind === "caller_name")?.answer?.trim() || null
   const phoneAnswer = answers.find((a) => a.kind === "callback_number")?.answer?.trim() || null
   const serviceAnswer = answers.find((a) => a.kind === "service_intent")?.answer?.trim() || ""
+  const live = looksLikeLiveCaller(answers)
 
   const spamSignals: string[] = []
-  for (const re of [...COLD_CALL_PATTERNS, ...CALL_CENTER_PATTERNS]) {
-    if (re.test(combined)) spamSignals.push(re.source)
+  if (hasStrongBotOrCallCenter(combined)) {
+    for (const re of [...COLD_CALL_PATTERNS, ...CALL_CENTER_PATTERNS]) {
+      if (re.test(combined)) spamSignals.push(re.source)
+    }
   }
-  if (emptyCount >= 2) spamSignals.push("no_response")
-  if (combined.length > 0 && combined.length < 6 && emptyCount >= 1 && !serviceAnswer) spamSignals.push("too_short")
+  if (answers.length > 0 && emptyCount === answers.length) spamSignals.push("no_speech")
+  if (caller?.geo.inServiceArea === false) spamSignals.push("outside_service_area")
+  if (caller?.knownCustomer) spamSignals.push("known_customer")
+  if ((caller?.priorInboundCalls ?? 0) > 0) spamSignals.push("returning_caller")
 
   let verdict: ScreeningVerdict = "uncertain"
-  const hasSubstantiveAnswer = serviceAnswer.length >= 8 || combined.length >= 20
-  if (spamScreenEnabled && spamSignals.length > 0 && !hasSubstantiveAnswer) {
-    verdict = spamSignals.includes("no_response") ? "cold_call" : "spam"
-  } else if (hasSubstantiveAnswer) {
+  if (!spamScreenEnabled) {
+    verdict = live ? "good_lead" : "uncertain"
+  } else if (caller?.knownCustomer || (caller?.priorInboundCalls ?? 0) > 0) {
+    verdict = "good_lead"
+  } else if (emptyCount === answers.length && answers.length > 0) {
+    verdict = "cold_call"
+  } else if (live) {
+    verdict = "good_lead"
+  } else if (hasStrongBotOrCallCenter(combined) && emptyCount >= 2) {
+    verdict = "spam"
+  }
+
+  // Live speech always connects; product wording is ignored.
+  if (live && (verdict === "spam" || verdict === "cold_call")) {
+    verdict = "good_lead"
+  }
+  if ((caller?.knownCustomer || (caller?.priorInboundCalls ?? 0) > 0) && (verdict === "spam" || verdict === "cold_call")) {
     verdict = "good_lead"
   }
 
@@ -112,44 +222,83 @@ function heuristicClassify(answers: ScreeningAnswer[], spamScreenEnabled: boolea
   return {
     verdict,
     intentSummary,
-    confidence: spamSignals.length > 0 && !hasSubstantiveAnswer ? 0.72 : hasSubstantiveAnswer ? 0.65 : 0.5,
-    spamSignals,
+    confidence: live || caller?.knownCustomer ? 0.7 : spamSignals.includes("no_speech") ? 0.75 : 0.5,
+    spamSignals: spamSignals.filter((s) => s !== "known_customer" && s !== "returning_caller"),
     callerName: nameAnswer,
     callbackPhone: phoneAnswer && !/^same$/i.test(phoneAnswer) ? phoneAnswer : null,
   }
 }
 
-const SCREENING_SYSTEM_PROMPT = `You classify inbound business phone screening for small businesses in ANY industry (software, professional services, trades, retail, etc.).
+const SCREENING_SYSTEM_PROMPT = `You screen inbound phone calls for a small-business auto-attendant.
 
 Return JSON: verdict (good_lead|spam|cold_call|uncertain), intentSummary (1-2 sentences), confidence (0-1), spamSignals (string array), callerName (string|null), callbackPhone (string|null).
 
-Mark spam or cold_call ONLY for strong signals such as:
-- Obvious robocall / call-center patterns (redirect tones, long silence before the caller speaks, "press 1", mass-dial scripts)
-- Clear scam or unsolicited sales pitches (mortgage, warranty, SEO, IRS, student loan forgiveness, etc.)
-- Nonsense or no meaningful response after multiple prompts
+Goal: CONNECT real people. Prefer good_lead whenever a human is answering in their own words.
 
-Do NOT mark spam solely because the caller's product, package, or service does not match home repair or trades. Software, office, and product inquiries are often legitimate — use good_lead or uncertain.
+Mark spam or cold_call ONLY when evidence is strong:
+- Nobody speaks (empty / silence on every prompt) — likely a bot or abandoned dialer
+- Call-center / robocall behavior: "press 1", hold music language, "please hold", "let me transfer you", a second person joining after a pause, mass-dial scripts
+- Clear scam pitches (IRS, warranty, mortgage, SEO blast, student loan)
 
-When business context lists services or job types, use it to judge fit, but be lenient for product-related questions unless other spam signals are present.
+Do NOT mark spam because:
+- The caller's job description does not match the contractor's product list or job types
+- They answered briefly ("yes", a first name, "leak", "water heater")
+- Their area code is outside the service area (that is a weak hint only)
+- You are unsure — use good_lead if they spoke, otherwise uncertain
 
-Prefer uncertain over spam when unsure.`
+Known / returning customers must be good_lead.
+
+Outside service-area area codes may be listed in spamSignals as "outside_service_area" but must not be the sole reason for spam/cold_call if the caller spoke.`
+
+function applyConnectSafety(
+  classification: ScreeningClassification,
+  answers: ScreeningAnswer[],
+  caller?: ScreeningCallerContext,
+): ScreeningClassification {
+  const live = looksLikeLiveCaller(answers)
+  const returning = Boolean(caller?.knownCustomer || (caller?.priorInboundCalls ?? 0) > 0)
+  const combined = answers.map((a) => a.answer).join(" ")
+  const botty = hasStrongBotOrCallCenter(combined)
+  let verdict = classification.verdict
+  const spamSignals = [...classification.spamSignals]
+  if (caller?.geo.inServiceArea === false && !spamSignals.includes("outside_service_area")) {
+    spamSignals.push("outside_service_area")
+  }
+
+  if (returning) {
+    if (verdict === "spam" || verdict === "cold_call") verdict = "good_lead"
+  } else if (answers.length > 0 && spokenAnswers(answers).length === 0) {
+    verdict = "cold_call"
+  } else if (botty) {
+    verdict = "spam"
+  } else if (live && (verdict === "spam" || verdict === "cold_call")) {
+    verdict = "good_lead"
+  }
+
+  return { ...classification, verdict, spamSignals }
+}
 
 export async function classifyCallScreeningAnswers(
   answers: ScreeningAnswer[],
   spamScreenEnabled: boolean,
   businessContext?: string,
+  caller?: ScreeningCallerContext,
 ): Promise<ScreeningClassification> {
-  const fallback = heuristicClassify(answers, spamScreenEnabled)
+  const fallback = heuristicClassify(answers, spamScreenEnabled, caller)
   const openaiKey = firstEnv("OPENAI_API_KEY")
   if (!openaiKey) {
-    return fallback ?? {
-      verdict: "uncertain",
-      intentSummary: "Call screening completed.",
-      confidence: 0.4,
-      spamSignals: [],
-      callerName: null,
-      callbackPhone: null,
-    }
+    return applyConnectSafety(
+      fallback ?? {
+        verdict: "uncertain",
+        intentSummary: "Call screening completed.",
+        confidence: 0.4,
+        spamSignals: [],
+        callerName: null,
+        callbackPhone: null,
+      },
+      answers,
+      caller,
+    )
   }
 
   const transcript = answers
@@ -160,6 +309,10 @@ export async function classifyCallScreeningAnswers(
     ? `\n\nBusiness context:\n${businessContext.trim()}`
     : "\n\nBusiness context: not specified."
 
+  const callerBlock = caller
+    ? `\n\nCaller context:\nPhone: ${caller.callerPhone || "unknown"}\nKnown customer (already in Customers tab): ${caller.knownCustomer ? "yes — connect" : "no"}\nPrior inbound calls from this number: ${caller.priorInboundCalls}\n${caller.geo.note}`
+    : ""
+
   try {
     const oa = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -169,7 +322,7 @@ export async function classifyCallScreeningAnswers(
       },
       body: JSON.stringify({
         model: firstEnv("OPENAI_MODEL") || "gpt-4o-mini",
-        temperature: 0.2,
+        temperature: 0.1,
         response_format: { type: "json_object" },
         messages: [
           {
@@ -178,34 +331,35 @@ export async function classifyCallScreeningAnswers(
           },
           {
             role: "user",
-            content: `Spam screening ${spamScreenEnabled ? "enabled" : "disabled"}.${contextBlock}\n\nCaller transcript:\n${transcript}`,
+            content: `Spam screening ${spamScreenEnabled ? "enabled" : "disabled"}.${contextBlock}${callerBlock}\n\nCaller transcript:\n${transcript}`,
           },
         ],
       }),
     })
-    if (!oa.ok) return fallback!
+    if (!oa.ok) return applyConnectSafety(fallback, answers, caller)
     const data = (await oa.json()) as { choices?: Array<{ message?: { content?: string } }> }
     const raw = data.choices?.[0]?.message?.content
-    if (!raw) return fallback!
+    if (!raw) return applyConnectSafety(fallback, answers, caller)
     const parsed = JSON.parse(raw) as Record<string, unknown>
     const verdictRaw = String(parsed.verdict ?? "")
     const verdict: ScreeningVerdict =
       verdictRaw === "good_lead" || verdictRaw === "spam" || verdictRaw === "cold_call" || verdictRaw === "uncertain"
         ? verdictRaw
-        : fallback!.verdict
-    return {
+        : fallback.verdict
+    const classified: ScreeningClassification = {
       verdict: spamScreenEnabled ? verdict : verdict === "spam" || verdict === "cold_call" ? "uncertain" : verdict,
-      intentSummary: typeof parsed.intentSummary === "string" ? parsed.intentSummary.slice(0, 500) : fallback!.intentSummary,
-      confidence: typeof parsed.confidence === "number" ? Math.min(1, Math.max(0, parsed.confidence)) : fallback!.confidence,
+      intentSummary: typeof parsed.intentSummary === "string" ? parsed.intentSummary.slice(0, 500) : fallback.intentSummary,
+      confidence: typeof parsed.confidence === "number" ? Math.min(1, Math.max(0, parsed.confidence)) : fallback.confidence,
       spamSignals: Array.isArray(parsed.spamSignals)
         ? parsed.spamSignals.filter((x): x is string => typeof x === "string").slice(0, 12)
-        : fallback!.spamSignals,
-      callerName: typeof parsed.callerName === "string" ? parsed.callerName.trim() || null : fallback!.callerName,
+        : fallback.spamSignals,
+      callerName: typeof parsed.callerName === "string" ? parsed.callerName.trim() || null : fallback.callerName,
       callbackPhone:
-        typeof parsed.callbackPhone === "string" ? parsed.callbackPhone.trim() || null : fallback!.callbackPhone,
+        typeof parsed.callbackPhone === "string" ? parsed.callbackPhone.trim() || null : fallback.callbackPhone,
     }
+    return applyConnectSafety(classified, answers, caller)
   } catch (e) {
     console.error("[call-screening] classify error", e instanceof Error ? e.message : e)
-    return fallback!
+    return applyConnectSafety(fallback, answers, caller)
   }
 }

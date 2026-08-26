@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
-import { classifyCallScreeningAnswers, loadCallScreeningBusinessContext } from "./_callScreeningClassify.js"
+import { classifyCallScreeningAnswers, loadCallScreeningBusinessContext, loadScreeningCallerContext } from "./_callScreeningClassify.js"
 import type { CommunicationChannel } from "./_communications.js"
 import {
   buildVoicemailTwiml,
@@ -26,6 +26,7 @@ import {
   type VoiceAutoAttendantSettings,
   type VoiceScreeningStep,
 } from "./_voiceAutoAttendant.js"
+import { isPromotionalHubCaller } from "./_callScreeningSkip.js"
 
 const SAY = `voice="Polly.Matthew" language="en-US"`
 
@@ -65,7 +66,8 @@ function screeningBaseQuery(req: VercelRequest, channel: CommunicationChannel | 
   return q
 }
 
-function introVerb(settings: VoiceAutoAttendantSettings, introText?: string): string {
+function introVerb(settings: VoiceAutoAttendantSettings, playIntro: boolean, introText?: string): string {
+  if (!playIntro) return ""
   const url = settings.introRecordingUrl?.trim() || ""
   if (url) return `<Play>${xmlEscape(url)}</Play>`
   const text = introText?.trim() || ""
@@ -88,10 +90,12 @@ function buildGatherStepTwiml(params: {
   recordingUrl?: string
   voiceSource?: VoiceScreeningStep["voiceSource"]
   responseTimeoutSeconds?: number
+  /** First question only — later questions wait for the caller, then ask the next prompt. */
+  playIntro?: boolean
   intro?: string
   speechHints?: string
 }): string {
-  const intro = introVerb(params.settings, params.intro)
+  const intro = introVerb(params.settings, params.playIntro === true, params.intro)
   const prompt = promptVerb(params.settings, {
     id: "prompt",
     kind: "custom",
@@ -139,6 +143,10 @@ async function logScreeningEvent(params: {
   answers: ScreeningAnswer[]
   classification: Awaited<ReturnType<typeof classifyCallScreeningAnswers>>
   action: "forwarded" | "voicemail" | "uncertain_voicemail"
+  knownCustomer?: boolean
+  priorInboundCalls?: number
+  callerNpa?: string | null
+  inServiceArea?: boolean | null
 }): Promise<void> {
   const transcript = params.answers.map((a) => `${a.question}\n→ ${a.answer || "(no response)"}`).join("\n\n")
   const verdictLabel =
@@ -170,6 +178,10 @@ async function logScreeningEvent(params: {
       screening_spam_signals: params.classification.spamSignals,
       screening_answers: params.answers,
       screening_action: params.action,
+      screening_known_customer: params.knownCustomer === true,
+      screening_prior_calls: params.priorInboundCalls ?? 0,
+      screening_caller_npa: params.callerNpa ?? null,
+      screening_in_service_area: params.inServiceArea ?? null,
       enrich_source: "auto_attendant_live",
       from: params.from,
       to: params.to,
@@ -315,6 +327,26 @@ export async function callScreeningHandler(req: VercelRequest, res: VercelRespon
   const voicemailActionUrl = `${origin}/api/voicemail-result?${voicemailQuery.toString()}`
   const transcribeUrl = `${voicemailActionUrl}&phase=transcribe`
 
+  if (from) {
+    try {
+      const promotional = await isPromotionalHubCaller(supabase, channel.user_id, from)
+      if (promotional) {
+        sendTwiml(
+          res,
+          buildVoicemailTwiml({
+            recordAction: voicemailActionUrl,
+            transcribeCallback: transcribeUrl,
+            routingProfile,
+            preambleSay: "Please leave a message after the tone.",
+          }),
+        )
+        return
+      }
+    } catch (e) {
+      console.error("[call-screening] promotional hub check failed", e instanceof Error ? e.message : e)
+    }
+  }
+
   const gatherSpeech = pickFirstString(req.body?.SpeechResult, req.query?.SpeechResult)
   const isGatherCallback = req.body?.SpeechResult !== undefined || req.query?.SpeechResult !== undefined
 
@@ -360,7 +392,13 @@ export async function callScreeningHandler(req: VercelRequest, res: VercelRespon
 
     // Final step — classify and route
     const businessContext = await loadCallScreeningBusinessContext(supabase, channel.user_id)
-    const classification = await classifyCallScreeningAnswers(nextAnswers, settings.spamScreenEnabled, businessContext)
+    const callerContext = await loadScreeningCallerContext(supabase, channel.user_id, from, callSid)
+    const classification = await classifyCallScreeningAnswers(
+      nextAnswers,
+      settings.spamScreenEnabled,
+      businessContext,
+      callerContext,
+    )
     const transcript = nextAnswers.map((a) => `${a.question}\n→ ${a.answer || "(no response)"}`).join("\n\n")
     let customerId: string | null = null
     if (from) {
@@ -370,7 +408,10 @@ export async function callScreeningHandler(req: VercelRequest, res: VercelRespon
       await applyCustomerUpdates(supabase, channel.user_id, customerId, classification)
     }
     const leadId =
-      classification.verdict === "good_lead" || classification.verdict === "uncertain"
+      classification.verdict === "good_lead" ||
+      classification.verdict === "uncertain" ||
+      callerContext.knownCustomer ||
+      callerContext.priorInboundCalls > 0
         ? await ensureLeadForScreeningCall(
             supabase,
             channel.user_id,
@@ -392,13 +433,23 @@ export async function callScreeningHandler(req: VercelRequest, res: VercelRespon
       to,
       answers: nextAnswers,
       classification,
+      knownCustomer: callerContext.knownCustomer,
+      priorInboundCalls: callerContext.priorInboundCalls,
+      callerNpa: callerContext.geo.callerNpa,
+      inServiceArea: callerContext.geo.inServiceArea,
     }
 
     const isBad =
       settings.spamScreenEnabled &&
       settings.spamToVoicemail &&
+      !callerContext.knownCustomer &&
+      callerContext.priorInboundCalls === 0 &&
       (classification.verdict === "spam" || classification.verdict === "cold_call")
-    const isGood = classification.verdict === "good_lead" || classification.verdict === "uncertain"
+    const isGood =
+      classification.verdict === "good_lead" ||
+      classification.verdict === "uncertain" ||
+      callerContext.knownCustomer ||
+      callerContext.priorInboundCalls > 0
 
     if (isBad) {
       await logScreeningEvent({ ...screeningBase, action: "voicemail" })
@@ -456,6 +507,7 @@ export async function callScreeningHandler(req: VercelRequest, res: VercelRespon
         recordingUrl: first.recordingUrl,
         voiceSource: first.voiceSource,
         responseTimeoutSeconds: first.responseTimeoutSeconds,
+        playIntro: true,
         intro: intro || undefined,
         speechHints,
       }),

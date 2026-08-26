@@ -39,6 +39,7 @@ import {
   randomizeBusinessProfileTheme,
   canvasItemOnAllEnabledPages,
   enabledWebsitePublicPageIds,
+  isWebsiteImageFreeScale,
   type BusinessProfileTemplateId,
   type BusinessPublicProfileSettings,
   type WebsiteBuiltInLinkTarget,
@@ -784,7 +785,9 @@ export default function WebsiteBuilderPage() {
           offsetX,
           offsetY,
           maxWidth: 200,
-          imageSize: 150,
+          imageSize: 200,
+          scaleMode: "fixed",
+          showFieldBackground: false,
         },
       ),
     )
@@ -1493,13 +1496,45 @@ export default function WebsiteBuilderPage() {
               </button>
             </div>
             {selectedCanvasItem ? canvasPageScopeControl(selectedCanvasItem) : null}
+            {selectedTargetId === "slot.background" ? (
             <p style={{ margin: 0, fontSize: 12, color: "#475569" }}>
-              {selectedTargetId === "slot.background"
-                ? "Click the page photo (or the empty area behind your headlines) to keep this panel open. Grayscale and tint can be used together. Zoom and focus move the crop."
-                : selectedCanvasItem
-                  ? "Drag a photo from the tray onto this field on the page. Drag to move; corner handle to resize."
-                  : "Drag a photo from the tray below onto this slot, or clear it."}
+              Click the page photo (or the empty area behind your headlines) to keep this panel open. Grayscale and tint can be used together. Zoom and focus move the crop.
             </p>
+            ) : !selectedCanvasItem ? (
+            <p style={{ margin: 0, fontSize: 12, color: "#475569" }}>
+              Drag a photo from the tray below onto this slot, or clear it.
+            </p>
+            ) : null}
+            {selectedCanvasItem ? (
+              <div style={{ display: "grid", gap: 8 }}>
+                <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, fontWeight: 700 }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedStyle.showFieldBackground === true}
+                    onChange={(e) =>
+                      patchTextStyle(selectedTargetId, {
+                        showFieldBackground: e.target.checked,
+                        ...(e.target.checked && !selectedStyle.fieldBackgroundColor
+                          ? { fieldBackgroundColor: "#ffffff" }
+                          : {}),
+                      })
+                    }
+                  />
+                  Photo background panel
+                </label>
+                {selectedStyle.showFieldBackground ? (
+                  <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
+                    Background color
+                    <input
+                      type="color"
+                      value={selectedStyle.fieldBackgroundColor || "#ffffff"}
+                      onChange={(e) => patchTextStyle(selectedTargetId, { fieldBackgroundColor: e.target.value })}
+                      style={{ width: "100%", height: 34, borderRadius: 8, border: `1px solid ${theme.border}` }}
+                    />
+                  </label>
+                ) : null}
+              </div>
+            ) : null}
             {selectedTargetId === "slot.background" ? (
               <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, fontWeight: 700 }}>
                 <input
@@ -1515,35 +1550,41 @@ export default function WebsiteBuilderPage() {
             <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
               Scale mode
               <select
-                value={selectedStyle.scaleMode || "fixed"}
-                onChange={(e) =>
+                value={selectedStyle.scaleMode || (isWebsiteImageFreeScale(selectedStyle) ? "free" : "fixed")}
+                onChange={(e) => {
+                  const mode = e.target.value === "free" ? "free" : "fixed"
+                  const n = selectedStyle.maxWidth ?? selectedStyle.imageSize ?? (selectedCanvasItem ? 200 : 120)
                   patchTextStyle(selectedTargetId, {
-                    scaleMode: e.target.value === "free" ? "free" : "fixed",
+                    scaleMode: mode,
+                    ...(mode === "fixed" ? { maxWidth: n, imageSize: n } : {}),
                   })
-                }
+                }}
                 style={field}
               >
                 <option value="fixed">Fixed scale</option>
                 <option value="free">Free scale</option>
               </select>
             </label>
+            {isWebsiteImageFreeScale(selectedStyle) ? (
+            <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+              Free scale: set width and height separately. The photo fills the box (may crop).
+            </p>
+            ) : null}
             <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
-              Size ({selectedStyle.imageSize ?? selectedStyle.maxWidth ?? 120}px)
+              {isWebsiteImageFreeScale(selectedStyle) ? "Width" : "Size"} ({selectedStyle.maxWidth ?? selectedStyle.imageSize ?? 120}px)
               <input
                 type="range"
                 min={40}
                 max={640}
-                value={selectedStyle.imageSize ?? selectedStyle.maxWidth ?? (selectedCanvasItem ? 200 : 120)}
+                value={selectedStyle.maxWidth ?? selectedStyle.imageSize ?? (selectedCanvasItem ? 200 : 120)}
                 onChange={(e) => {
                   const n = Number(e.target.value)
-                  patchTextStyle(selectedTargetId, {
-                    imageSize: n,
-                    maxWidth: n,
-                  })
+                  const fixed = !isWebsiteImageFreeScale(selectedStyle)
+                  patchTextStyle(selectedTargetId, fixed ? { imageSize: n, maxWidth: n } : { maxWidth: n })
                 }}
               />
             </label>
-            {(selectedStyle.scaleMode === "free" || selectedCanvasItem) && (
+            {isWebsiteImageFreeScale(selectedStyle) && (
               <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
                 Height ({selectedStyle.imageSize ?? 150}px)
                 <input
@@ -1555,6 +1596,23 @@ export default function WebsiteBuilderPage() {
                 />
               </label>
             )}
+            <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
+              Link to
+              <select
+                value={(selectedStyle.linkTarget as WebsiteBuiltInLinkTarget | undefined) || "none"}
+                onChange={(e) => {
+                  const value = e.target.value as WebsiteBuiltInLinkTarget
+                  patchTextStyle(selectedTargetId, { linkTarget: value === "none" ? undefined : value })
+                }}
+                style={field}
+              >
+                {WEBSITE_BUILT_IN_LINK_OPTIONS.map((opt) => (
+                  <option key={opt.id} value={opt.id}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             </>
             ) : null}
             <div style={{ display: "grid", gap: 6 }}>
@@ -2312,10 +2370,6 @@ export default function WebsiteBuilderPage() {
             />
             Keep background photo fixed while bars scroll over it
           </label>
-          <p style={{ margin: 0, fontSize: 11, color: "#475569", lineHeight: 1.45 }}>
-            Drag a photo from the library onto the page background, or click <strong>BG</strong> on a thumbnail. Keep
-            “stationary background” checked so sections scroll over the image.
-          </p>
         </details>
 
         <details style={sectionCard}>
@@ -3005,13 +3059,16 @@ Working URL today: ${slug ? businessWebProfilePublicUrl(slug, typeof window !== 
                   }}
                   onClick={() => {
                     const id = contextMenu.targetId
-                    const cur = layoutStyles[id]?.scaleMode || "fixed"
-                    patchTextStyle(id, { scaleMode: cur === "free" ? "fixed" : "free" })
+                    const curFree = isWebsiteImageFreeScale(layoutStyles[id])
+                    const n = layoutStyles[id]?.maxWidth ?? layoutStyles[id]?.imageSize ?? 120
+                    patchTextStyle(id, curFree
+                      ? { scaleMode: "fixed", maxWidth: n, imageSize: n }
+                      : { scaleMode: "free" })
                     setSelectedTargetId(id)
                     setContextMenu(null)
                   }}
                 >
-                  {(layoutStyles[contextMenu.targetId]?.scaleMode || "fixed") === "free"
+                  {isWebsiteImageFreeScale(layoutStyles[contextMenu.targetId])
                     ? "Use fixed scale"
                     : "Use free scale"}
                 </button>

@@ -37,6 +37,7 @@ import {
   resolveWebsiteSlotImage,
   resolveWebsiteTextStylesForViewport,
   canvasItemVisibleOnPage,
+  isWebsiteImageFreeScale,
   websiteCustomPagePathId,
   websiteTextStyleToCss,
   scaleWebsiteFontSize,
@@ -153,21 +154,28 @@ function imageSlotVisualStyle(
 } {
   const s = scale > 0 ? scale : 1
   const size = (style?.imageSize ?? 120) * s
-  const free = style?.scaleMode === "free"
+  const free = isWebsiteImageFreeScale(style)
   const zoom = (style?.cropZoom ?? 100) / 100
   const posX = style?.cropX ?? 50
   const posY = style?.cropY ?? 50
   const wrap: CSSProperties = {
     position: "relative",
-    overflow: "hidden",
-    width: free ? size : size,
-    height: free ? Math.round(size * 0.75) : size,
+    overflow: free ? "hidden" : "visible",
+    width: free && typeof style?.maxWidth === "number" ? style.maxWidth * s : size,
+    height: free
+      ? typeof style?.imageSize === "number"
+        ? style.imageSize * s
+        : Math.round(size * 0.75)
+      : "auto",
     maxWidth: typeof style?.maxWidth === "number" ? style.maxWidth * s : style?.maxWidth,
+    background: style?.showFieldBackground
+      ? style.fieldBackgroundColor || "rgba(255,255,255,0.88)"
+      : "transparent",
   }
   const img: CSSProperties = {
     width: "100%",
-    height: "100%",
-    objectFit: "cover",
+    height: free ? "100%" : "auto",
+    objectFit: free ? "cover" : "contain",
     objectPosition: `${posX}% ${posY}%`,
     transform: zoom !== 1 ? `scale(${zoom})` : undefined,
     transformOrigin: `${posX}% ${posY}%`,
@@ -687,6 +695,23 @@ function AboutBlock({ aboutUs }: { aboutUs?: string }) {
   )
 }
 
+type BuiltInLink = { href: string; page: WebsitePublicPageId | null }
+
+function optionalBuiltInLink(
+  target: WebsiteBuiltInLinkTarget | undefined,
+  hrefFor: (page: WebsitePublicPageId) => string,
+  telHref: string | null,
+  email?: string | null,
+): BuiltInLink | null {
+  if (!target || target === "none") return null
+  if (target === "home") return { href: hrefFor("home"), page: "home" }
+  if (target === "about") return { href: hrefFor("about"), page: "about" }
+  if (target === "contact") return { href: hrefFor("contact"), page: "contact" }
+  if (target === "phone" && telHref) return { href: telHref, page: null }
+  if (target === "email" && email) return { href: `mailto:${email}`, page: null }
+  return null
+}
+
 function CanvasEditable({
   targetId,
   editMode,
@@ -922,6 +947,8 @@ function FreeformCanvasLayer({
   pinnedOnly = false,
   activePage = "home",
   tagline = "",
+  resolveLink,
+  onFollowPage,
 }: {
   items: WebsiteCanvasItem[]
   textStyles: WebsiteTextStyles
@@ -932,6 +959,8 @@ function FreeformCanvasLayer({
   pinnedOnly?: boolean
   activePage?: WebsitePublicPageId
   tagline?: string
+  resolveLink?: (target: WebsiteBuiltInLinkTarget | undefined) => BuiltInLink | null
+  onFollowPage?: (page: WebsitePublicPageId, e: MouseEvent) => void
 }) {
   const layerRef = useRef<HTMLDivElement | null>(null)
   const [layerWidth, setLayerWidth] = useState(WEBSITE_FREEFORM_DESIGN_WIDTH)
@@ -987,15 +1016,26 @@ function FreeformCanvasLayer({
         const st = textStyles[targetId] ?? {}
         const ox = st.offsetX ?? 0
         const oy = st.offsetY ?? 0
-        const width = st.maxWidth ?? (item.kind === "photo" ? 200 : 280)
-        const height = st.imageSize ?? (item.kind === "photo" ? 150 : undefined)
+        const freeScale = isWebsiteImageFreeScale(st)
+        const photoSize = st.imageSize ?? st.maxWidth ?? 200
+        const width = item.kind === "photo"
+          ? (freeScale ? (st.maxWidth ?? 200) : photoSize)
+          : (st.maxWidth ?? 280)
+        const height = item.kind === "photo"
+          ? (freeScale ? (st.imageSize ?? Math.round(width * 0.75)) : photoSize)
+          : undefined
         const selected = editor?.selectedTargetId === targetId
         const css = websiteTextStyleToCss(st)
         const pinnedClass = st.scrollFixed ? " bp-freeform-item-pinned" : ""
+        const itemLink = !editMode ? resolveLink?.(st.linkTarget) ?? null : null
 
         if (item.kind === "photo") {
           const url = item.imageUrl?.trim() || ""
           if (!url && !editMode) return null
+          const hugImage = !freeScale && Boolean(url)
+          const photoBg = st.showFieldBackground
+            ? st.fieldBackgroundColor || "rgba(255,255,255,0.88)"
+            : "transparent"
           return (
             <div
               key={item.id}
@@ -1003,11 +1043,14 @@ function FreeformCanvasLayer({
               data-edit-target={targetId}
               style={{
                 width: width * scale,
-                height: (height || 150) * scale,
+                height: hugImage ? undefined : (height || 150) * scale,
                 transform: `translate(${ox * scale}px, ${oy * scale}px)`,
                 left: "50%",
                 marginLeft: -(width * scale) / 2,
                 top: 140 * scale,
+                background: photoBg,
+                borderRadius: st.showFieldBackground ? 12 : 0,
+                overflow: freeScale || st.showFieldBackground ? "hidden" : "visible",
               }}
               onClick={(e) => {
                 if (!editMode) return
@@ -1073,10 +1116,64 @@ function FreeformCanvasLayer({
               }}
             >
               {url ? (
+                itemLink ? (
+                <a
+                  className="bp-freeform-photo"
+                  href={itemLink.href}
+                  style={{
+                    position: "relative",
+                    overflow: freeScale || st.showFieldBackground ? "hidden" : "visible",
+                    width: "100%",
+                    height: hugImage ? "auto" : "100%",
+                    background: photoBg,
+                    borderRadius: st.showFieldBackground ? 12 : 0,
+                    cursor: "pointer",
+                    textDecoration: "none",
+                    color: "inherit",
+                    display: "block",
+                  }}
+                  onClick={(e) => {
+                    if (itemLink.page) onFollowPage?.(itemLink.page, e)
+                  }}
+                >
+                  <img
+                    src={url}
+                    alt=""
+                    style={{
+                      width: "100%",
+                      height: hugImage ? "auto" : "100%",
+                      objectFit: freeScale ? "cover" : "contain",
+                      objectPosition: `${st.cropX ?? 50}% ${st.cropY ?? 50}%`,
+                      transform: st.cropZoom && st.cropZoom !== 100 ? `scale(${st.cropZoom / 100})` : undefined,
+                      transformOrigin: `${st.cropX ?? 50}% ${st.cropY ?? 50}%`,
+                      display: "block",
+                      filter: websiteImageFilterCss(st),
+                    }}
+                  />
+                  {st.tintColor && (st.tintOpacity ?? 0) > 0 ? (
+                    <span
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        background: st.tintColor,
+                        opacity: (st.tintOpacity ?? 0) / 100,
+                        pointerEvents: "none",
+                      }}
+                    />
+                  ) : null}
+                </a>
+                ) : (
                 <button
                   type="button"
                   className="bp-freeform-photo"
-                  style={{ position: "relative", overflow: "hidden", width: "100%", height: "100%" }}
+                  style={{
+                    position: "relative",
+                    overflow: freeScale || st.showFieldBackground ? "hidden" : "visible",
+                    width: "100%",
+                    height: hugImage ? "auto" : "100%",
+                    background: photoBg,
+                    borderRadius: st.showFieldBackground ? 12 : 0,
+                  }}
                   onClick={() => {
                     if (editMode) editor?.onSelectTarget?.(targetId)
                     else onPhotoClick(url)
@@ -1087,8 +1184,8 @@ function FreeformCanvasLayer({
                     alt=""
                     style={{
                       width: "100%",
-                      height: "100%",
-                      objectFit: "cover",
+                      height: hugImage ? "auto" : "100%",
+                      objectFit: freeScale ? "cover" : "contain",
                       objectPosition: `${st.cropX ?? 50}% ${st.cropY ?? 50}%`,
                       transform: st.cropZoom && st.cropZoom !== 100 ? `scale(${st.cropZoom / 100})` : undefined,
                       transformOrigin: `${st.cropX ?? 50}% ${st.cropY ?? 50}%`,
@@ -1108,6 +1205,7 @@ function FreeformCanvasLayer({
                     />
                   ) : null}
                 </button>
+                )
               ) : (
                 <div className="bp-freeform-photo bp-freeform-photo-empty">Drop photo</div>
               )}
@@ -1127,7 +1225,9 @@ function FreeformCanvasLayer({
                         const startX = e.clientX
                         const startY = e.clientY
                         const startW = width
-                        const startH = height || 150
+                        const startH = hugImage
+                          ? Math.max(40, Math.round((handle.parentElement?.getBoundingClientRect().height || startW) / scale))
+                          : (height || 150)
                         const ox0 = ox
                         const parent = handle.parentElement
                         try {
@@ -1139,11 +1239,13 @@ function FreeformCanvasLayer({
                           const dxDesign = (ev.clientX - startX) / scale
                           const dyDesign = (ev.clientY - startY) / scale
                           const w = Math.max(60, Math.round(edge === "sw" ? startW - dxDesign : startW + dxDesign))
-                          const h = Math.max(60, Math.round(startH + dyDesign))
+                          const h = freeScale
+                            ? Math.max(60, Math.round(startH + dyDesign))
+                            : Math.max(60, Math.round(w * (startH / Math.max(1, startW))))
                           const nextOx = clampWebsiteOffsetX(ox0 + dxDesign / 2)
                           if (parent) {
                             parent.style.width = `${w * scale}px`
-                            parent.style.height = `${h * scale}px`
+                            parent.style.height = freeScale ? `${h * scale}px` : "auto"
                             parent.style.marginLeft = `${(-(w * scale)) / 2}px`
                             parent.style.transform = `translate(${nextOx * scale}px, ${oy * scale}px)`
                           }
@@ -1160,9 +1262,11 @@ function FreeformCanvasLayer({
                           } catch {
                             /* ignore */
                           }
+                          const nextW = Number(handle.dataset.rw ?? startW)
+                          const nextH = Number(handle.dataset.rh ?? startH)
                           editor.onPatchTextStyle?.(targetId, {
-                            maxWidth: Number(handle.dataset.rw ?? startW),
-                            imageSize: Number(handle.dataset.rh ?? startH),
+                            maxWidth: nextW,
+                            imageSize: freeScale ? nextH : nextW,
                             offsetX: Number(handle.dataset.rx ?? ox0),
                           })
                         }
@@ -1196,7 +1300,11 @@ function FreeformCanvasLayer({
         return (
           <CanvasEditable
             key={item.id}
-            as="p"
+            as={itemLink ? "a" : "p"}
+            href={itemLink?.href}
+            onAnchorClick={(e) => {
+              if (itemLink?.page) onFollowPage?.(itemLink.page, e)
+            }}
             targetId={targetId}
             className={`bp-freeform-item bp-freeform-text${bgClass}${pinnedClass}`}
             editMode={editMode}
@@ -1229,6 +1337,9 @@ function FreeformCanvasLayer({
                 : "transparent",
               padding: st.showFieldBackground ? "6px 8px" : 0,
               borderRadius: st.showFieldBackground ? 8 : 0,
+              cursor: itemLink ? "pointer" : undefined,
+              textDecoration: itemLink ? "none" : undefined,
+              color: itemLink ? "inherit" : undefined,
             }}
           >
             {text}
@@ -1704,6 +1815,7 @@ function ShowcaseLayout({
                         : st.scaleMode === "free"
                           ? Math.round((st.maxWidth ?? 220) * 0.75)
                           : undefined
+                    const slotLink = optionalBuiltInLink(st.linkTarget, hrefFor, telHref, data.email)
                     return (
                     <article key={card.id || i} className="bp-showcase-service-photo-card">
                       {serviceImgs[i] ? (
@@ -1734,11 +1846,14 @@ function ShowcaseLayout({
                               border: 0,
                               display: "block",
                               background: "#e2e8f0",
-                              cursor: editMode ? "grab" : "zoom-in",
+                              cursor: editMode ? "grab" : slotLink ? "pointer" : "zoom-in",
                             }}
-                            onClick={() => {
+                            onClick={(e) => {
                               if (editMode) editor?.onSelectTarget?.(slotTarget)
-                              else onPhotoClick(serviceImgs[i]!)
+                              else if (slotLink) {
+                                if (slotLink.page && onNavigatePage) go(slotLink.page, e)
+                                else window.location.assign(slotLink.href)
+                              } else onPhotoClick(serviceImgs[i]!)
                             }}
                             onDragOver={(e) => editMode && e.preventDefault()}
                             onDrop={(e) => onSlotDrop(`service_${i + 1}`, e)}
@@ -1837,6 +1952,7 @@ function ShowcaseLayout({
                     const slotTarget = `slot.${slotId}`
                     const slotChrome = textChrome(slotTarget)
                     const vis = imageSlotVisualStyle(textStyles[slotTarget], designScale)
+                    const slotLink = optionalBuiltInLink(textStyles[slotTarget]?.linkTarget, hrefFor, telHref, data.email)
                     return (
                       <div key={card.id || idx} className="bp-showcase-feature-item">
                         {url ? (
@@ -1846,10 +1962,13 @@ function ShowcaseLayout({
                               className={`bp-showcase-feature-thumb${editMode ? " bp-edit-target" : ""}${
                                 editor?.selectedTargetId === slotTarget ? " bp-edit-selected" : ""
                               }`}
-                              style={{ ...vis.wrap, cursor: editMode ? "grab" : "zoom-in", width: "100%" }}
-                              onClick={() => {
+                              style={{ ...vis.wrap, cursor: editMode ? "grab" : slotLink ? "pointer" : "zoom-in", width: "100%" }}
+                              onClick={(e) => {
                                 if (editMode) editor?.onSelectTarget?.(slotTarget)
-                                else onPhotoClick(url)
+                                else if (slotLink) {
+                                  if (slotLink.page && onNavigatePage) go(slotLink.page, e)
+                                  else window.location.assign(slotLink.href)
+                                } else onPhotoClick(url)
                               }}
                               onDragOver={(e) => editMode && e.preventDefault()}
                               onDrop={(e) => onSlotDrop(slotId, e)}
@@ -2116,6 +2235,8 @@ function ShowcaseLayout({
           pinnedOnly={false}
           activePage={activePage}
           tagline={data.tagline}
+          resolveLink={(target) => optionalBuiltInLink(target, hrefFor, telHref, data.email)}
+          onFollowPage={go}
         />
       </div>
       <FreeformCanvasLayer
@@ -2127,6 +2248,8 @@ function ShowcaseLayout({
         pinnedOnly
         activePage={activePage}
         tagline={data.tagline}
+        resolveLink={(target) => optionalBuiltInLink(target, hrefFor, telHref, data.email)}
+        onFollowPage={go}
       />
     </div>
   )
@@ -2525,25 +2648,26 @@ export function BusinessProfilePublicSite({
           height: 100%;
           padding: 0;
           border: 0;
-          border-radius: 12px;
-          overflow: hidden;
-          background: #e2e8f0;
+          border-radius: 0;
+          overflow: visible;
+          background: transparent;
           cursor: inherit;
         }
         .bp-freeform-photo img {
           width: 100%;
-          height: 100%;
-          object-fit: cover;
+          height: auto;
+          object-fit: contain;
           display: block;
         }
         .bp-freeform-photo-empty {
           display: grid;
           place-items: center;
+          height: 100%;
           font-size: 12px;
           font-weight: 800;
           color: #64748b;
           border: 2px dashed rgba(15,23,42,0.25);
-          background: rgba(255,255,255,0.85);
+          background: transparent;
         }
         .bp-showcase-bg-photo {
           position: absolute; inset: 0;
