@@ -148,6 +148,11 @@ export type WebsiteCanvasItem = {
   text?: string
   /** Image URL when kind === "photo". */
   imageUrl?: string | null
+  /**
+   * Pages this item appears on. Missing/empty = every page (legacy).
+   * New items default to the page being edited.
+   */
+  pages?: WebsitePublicPageId[]
 }
 
 export function parseWebsiteCanvasItems(raw: unknown): WebsiteCanvasItem[] {
@@ -168,6 +173,9 @@ export function parseWebsiteCanvasItems(raw: unknown): WebsiteCanvasItem[] {
       kind,
       text: typeof o.text === "string" ? o.text.slice(0, 2000) : kind === "text" ? "New text" : undefined,
       imageUrl: typeof o.imageUrl === "string" && o.imageUrl.trim() ? o.imageUrl.trim().slice(0, 800) : null,
+      pages: Array.isArray(o.pages)
+        ? o.pages.map(parseWebsitePublicPageId).filter((p): p is WebsitePublicPageId => p != null).slice(0, 12)
+        : undefined,
     })
     if (out.length >= 24) break
   }
@@ -275,6 +283,15 @@ export function websiteDesignScale(containerWidthPx: number): number {
   return Math.max(0.2, Math.min(1, w / WEBSITE_FREEFORM_DESIGN_WIDTH))
 }
 
+/** Scale authored px font sizes with the 1200 design rail so editor and live match. */
+export function scaleWebsiteFontSize(fontSize: string | undefined, scale: number): string | undefined {
+  if (!fontSize) return undefined
+  if (!Number.isFinite(scale) || scale <= 0 || Math.abs(scale - 1) < 0.004) return fontSize
+  const m = /^(\d+(?:\.\d+)?)px$/i.exec(fontSize.trim())
+  if (!m) return fontSize
+  return `${Math.max(8, Math.round(Number(m[1]) * scale))}px`
+}
+
 /** Shared drag/save clamps (design-space px). Keep editor + parser in sync. */
 export const WEBSITE_OFFSET_MIN_X = -1400
 export const WEBSITE_OFFSET_MAX_X = 1400
@@ -333,6 +350,75 @@ export type WebsiteSubPages = {
 }
 
 export type WebsitePublicPageId = "home" | WebsiteSubPageId | `custom:${string}`
+
+export function parseWebsitePublicPageId(raw: unknown): WebsitePublicPageId | null {
+  if (typeof raw !== "string") return null
+  const id = raw.trim()
+  if (id === "home" || id === "about" || id === "contact") return id
+  if (id.startsWith("custom:") && id.length > 7 && id.length <= 48) return id as WebsitePublicPageId
+  return null
+}
+
+/** Enabled site pages (home + About/Contact + custom) for canvas item scope. */
+export function enabledWebsitePublicPageIds(settings: {
+  subPages: WebsiteSubPages
+  customPages: WebsiteCustomPage[]
+}): WebsitePublicPageId[] {
+  const ids: WebsitePublicPageId[] = ["home"]
+  if (settings.subPages.about.enabled) ids.push("about")
+  if (settings.subPages.contact.enabled) ids.push("contact")
+  for (const page of settings.customPages) {
+    if (page.enabled) ids.push(`custom:${page.id}`)
+  }
+  return ids
+}
+
+/** Missing/empty `pages` = legacy site-wide item (all pages). */
+export function normalizeWebsiteCanvasText(value: string | undefined | null): string {
+  return (value ?? "").replace(/\s+/g, " ").trim().toLowerCase()
+}
+
+/** Custom canvas text that repeats the built-in hero tagline (seed leftover / replacement). */
+export function canvasTextItemDuplicatesTagline(item: WebsiteCanvasItem, tagline: string | undefined): boolean {
+  if (item.kind !== "text") return false
+  const t = normalizeWebsiteCanvasText(tagline)
+  if (!t) return false
+  return normalizeWebsiteCanvasText(item.text) === t
+}
+
+export function websiteHasCanvasTaglineReplacement(
+  items: WebsiteCanvasItem[] | undefined,
+  tagline: string | undefined,
+): boolean {
+  if (!items?.length) return false
+  return items.some((item) => canvasTextItemDuplicatesTagline(item, tagline))
+}
+
+/**
+ * Missing/empty `pages` = legacy site-wide item (all pages).
+ * Tagline-duplicate overlays without an explicit page list stay on Home only.
+ */
+export function canvasItemVisibleOnPage(
+  item: WebsiteCanvasItem,
+  page: WebsitePublicPageId,
+  tagline?: string,
+): boolean {
+  if (canvasTextItemDuplicatesTagline(item, tagline)) {
+    const pages = item.pages && item.pages.length ? item.pages : (["home"] as WebsitePublicPageId[])
+    return pages.includes(page)
+  }
+  if (!item.pages || item.pages.length === 0) return true
+  return item.pages.includes(page)
+}
+
+export function canvasItemOnAllEnabledPages(
+  item: WebsiteCanvasItem,
+  allPages: WebsitePublicPageId[],
+): boolean {
+  if (!item.pages || item.pages.length === 0) return true
+  if (allPages.length === 0) return true
+  return allPages.every((p) => item.pages!.includes(p))
+}
 
 export function websiteCustomPagePathId(pageId: string): string {
   return pageId.replace(/^custom:/, "").replace(/[^a-z0-9-]/gi, "").slice(0, 40)

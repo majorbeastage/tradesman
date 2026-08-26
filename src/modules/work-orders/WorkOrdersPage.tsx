@@ -19,6 +19,8 @@ import WorkflowToolGuidanceBanner from "../../components/WorkflowToolGuidanceBan
 import DocumentTemplateModal from "../../components/DocumentTemplateModal"
 import { WORK_ORDER_DOCUMENT_TEMPLATE_ITEMS } from "../../lib/workOrderDocumentTemplate"
 import { isTemplateItemVisible, mergeTemplateFormIntoMetadata, templateFormFromMetadata } from "../../lib/jobDocumentTemplate"
+import CustomerSearchPicker from "../../components/CustomerSearchPicker"
+import { loadCustomersForCustomReceipt, type CustomerReceiptPickerRow } from "../../lib/customReceipt"
 
 type Props = {
   setPage?: (page: string) => void
@@ -33,6 +35,8 @@ export default function WorkOrdersPage({ embedded }: Props) {
   const [err, setErr] = useState("")
   const [selectedQuoteId, setSelectedQuoteId] = useState("")
   const [filterCustomerId, setFilterCustomerId] = useState("")
+  const [customers, setCustomers] = useState<CustomerReceiptPickerRow[]>([])
+  const [customersLoading, setCustomersLoading] = useState(false)
   const [prefillCustomerName, setPrefillCustomerName] = useState("")
   const [customerOnlyJobTitle, setCustomerOnlyJobTitle] = useState("")
   const [woNumber, setWoNumber] = useState("")
@@ -62,6 +66,15 @@ export default function WorkOrdersPage({ embedded }: Props) {
   useEffect(() => {
     void loadTemplateFromProfile()
   }, [loadTemplateFromProfile])
+
+  useEffect(() => {
+    if (!supabase || !userId) return
+    setCustomersLoading(true)
+    void loadCustomersForCustomReceipt(supabase, userId)
+      .then(setCustomers)
+      .catch(() => setCustomers([]))
+      .finally(() => setCustomersLoading(false))
+  }, [userId])
 
   useEffect(() => {
     const customerId = consumeWorkOrdersCustomerPrefill()
@@ -129,7 +142,7 @@ export default function WorkOrdersPage({ embedded }: Props) {
         }
         await createWorkOrderForCustomer(supabase, userId, {
           customerId: filterCustomerId,
-          customerName: prefillCustomerName || customerFilterOptions.find((c) => c.id === filterCustomerId)?.name || "Customer",
+          customerName: prefillCustomerName || customers.find((c) => c.id === filterCustomerId)?.display_name || customerFilterOptions.find((c) => c.id === filterCustomerId)?.name || "Customer",
           workOrderNumber: woNumber,
           jobTitle: customerOnlyJobTitle,
         })
@@ -195,21 +208,20 @@ export default function WorkOrdersPage({ embedded }: Props) {
             Document fields…
           </button>
         </div>
-        <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, marginBottom: 12, maxWidth: 520 }}>
-          <select
+        <div style={{ marginBottom: 12, maxWidth: 520 }}>
+          <CustomerSearchPicker
+            customers={customers}
             value={filterCustomerId}
-            onChange={(e) => setFilterCustomerId(e.target.value)}
-            style={theme.formInput}
-            aria-label="Customer"
-          >
-            <option value="">All customers</option>
-            {customerFilterOptions.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </label>
+            onChange={(id, row) => {
+              setFilterCustomerId(id)
+              if (row?.display_name) setPrefillCustomerName(row.display_name)
+              else if (!id) setPrefillCustomerName("")
+            }}
+            allowEmpty
+            emptyLabel="— No customer —"
+            loading={customersLoading}
+          />
+        </div>
         {loading ? (
           <p style={{ margin: 0, color: "#64748b", fontSize: 13 }}>Loading estimates…</p>
         ) : !filterCustomerId && quotes.length === 0 ? (

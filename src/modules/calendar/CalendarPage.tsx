@@ -129,6 +129,7 @@ import {
 } from "../../lib/workflowNavigation"
 import { resolveDemoTeamPolicyFromOwnerMetadata } from "../../lib/sandboxDemoTeamPolicies"
 import { loadCustomersForCustomReceipt, type CustomerReceiptPickerRow } from "../../lib/customReceipt"
+import CustomerSearchPicker, { formatCustomerSearchPickerLabel } from "../../components/CustomerSearchPicker"
 import {
   loadEntityAttachmentsForCalendarEvent,
   deleteEntityAttachmentRow,
@@ -188,12 +189,6 @@ function formatJobTypeSelectLabel(jt: JobType): string {
     return `${jt.name} · ${hours === 1 ? "1 hr" : `${hours} hr`}`
   }
   return `${jt.name} · ${mins} min`
-}
-
-function formatAddCustomerPickerLabel(c: CustomerReceiptPickerRow): string {
-  const name = (c.display_name ?? "").trim() || c.id
-  const contact = c.phone?.trim() || c.email?.trim() || c.service_address?.trim()
-  return contact ? `${name} · ${contact}` : name
 }
 
 function isAddRecurrencePortalItem(item: PortalSettingItem): boolean {
@@ -3486,7 +3481,7 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     if (!showAddItem) return
     if (!addCustomerId) return
     const row = addCustomerOptions.find((c) => c.id === addCustomerId)
-    if (row) setAddCustomerSearch(formatAddCustomerPickerLabel(row))
+    if (row) setAddCustomerSearch(formatCustomerSearchPickerLabel(row))
   }, [showAddItem, addCustomerId, addCustomerOptions])
 
   useEffect(() => {
@@ -3702,21 +3697,6 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
   const addInputStyle: React.CSSProperties = {
     ...theme.formInput,
   }
-
-  const filteredAddCustomers = useMemo(() => {
-    const q = addCustomerSearch.trim().toLowerCase()
-    if (!q) return addCustomerOptions
-    return addCustomerOptions
-      .filter(
-        (c) =>
-          c.display_name.toLowerCase().includes(q) ||
-          c.phone.toLowerCase().includes(q) ||
-          c.email.toLowerCase().includes(q) ||
-          c.service_address.toLowerCase().includes(q) ||
-          c.id.toLowerCase().includes(q),
-      )
-      .slice(0, 40)
-  }, [addCustomerOptions, addCustomerSearch])
 
   const selectedAddCustomer = useMemo(() => {
     if (!addCustomerId) return null
@@ -4908,98 +4888,24 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
             </div>
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, alignItems: "start" }}>
               <div>
-                <label style={{ fontSize: "12px", color: theme.text }}>Customer</label>
-                <input
-                  type="search"
-                  autoComplete="off"
-                  placeholder="Type to search customers…"
-                  value={addCustomerSearch}
-                  onChange={(e) => {
-                    const v = e.target.value
-                    setAddCustomerSearch(v)
-                    if (!addCustomerId) return
-                    const row = addCustomerOptions.find((c) => c.id === addCustomerId)
-                    const label = row ? formatAddCustomerPickerLabel(row) : ""
-                    if (label && v.trim().toLowerCase() !== label.trim().toLowerCase()) {
-                      setAddCustomerId(null)
+                <CustomerSearchPicker
+                  customers={addCustomerOptions}
+                  value={addCustomerId ?? ""}
+                  searchQuery={addCustomerSearch}
+                  onSearchQueryChange={setAddCustomerSearch}
+                  onChange={(id) => {
+                    if (id) {
+                      onAddCustomerPick(id)
+                      return
                     }
+                    setAddCustomerId(null)
+                    setAddNotifyEmail(false)
+                    setAddNotifySms(false)
                   }}
-                  style={{ ...addInputStyle, marginTop: 4 }}
+                  allowEmpty
+                  emptyLabel="— No customer —"
+                  listMaxHeight={isMobile ? 180 : 140}
                 />
-                <div
-                  role="listbox"
-                  aria-label="Matching customers"
-                  style={{
-                    marginTop: 6,
-                    maxHeight: isMobile ? 180 : 140,
-                    overflowY: "auto",
-                    border: `1px solid ${theme.border}`,
-                    borderRadius: 8,
-                    background: "#fafafa",
-                  }}
-                >
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={!addCustomerId}
-                    onClick={() => {
-                      setAddCustomerId(null)
-                      setAddCustomerSearch("")
-                      setAddNotifyEmail(false)
-                      setAddNotifySms(false)
-                    }}
-                    style={{
-                      display: "block",
-                      width: "100%",
-                      textAlign: "left",
-                      padding: "10px 14px",
-                      fontSize: 14,
-                      border: "none",
-                      borderBottom: `1px solid ${theme.border}`,
-                      background: !addCustomerId ? "#eff6ff" : "transparent",
-                      cursor: "pointer",
-                      color: "#64748b",
-                      fontWeight: !addCustomerId ? 700 : 500,
-                    }}
-                  >
-                    — No customer —
-                  </button>
-                  {filteredAddCustomers.length === 0 ? (
-                    <div style={{ padding: "12px 14px", fontSize: 13, color: "#64748b" }}>No matches.</div>
-                  ) : (
-                    filteredAddCustomers.map((c) => {
-                      const label = formatAddCustomerPickerLabel(c)
-                      const selected = addCustomerId === c.id
-                      return (
-                        <button
-                          key={c.id}
-                          type="button"
-                          role="option"
-                          aria-selected={selected}
-                          onClick={() => {
-                            onAddCustomerPick(c.id)
-                            setAddCustomerSearch(label)
-                          }}
-                          style={{
-                            display: "block",
-                            width: "100%",
-                            textAlign: "left",
-                            padding: "10px 14px",
-                            fontSize: 14,
-                            border: "none",
-                            borderBottom: `1px solid ${theme.border}`,
-                            background: selected ? "#eff6ff" : "transparent",
-                            cursor: "pointer",
-                            color: theme.text,
-                            fontWeight: selected ? 700 : 500,
-                          }}
-                        >
-                          {label}
-                        </button>
-                      )
-                    })
-                  )}
-                </div>
               </div>
               <div>
                 <label style={{ fontSize: "12px", color: theme.text, fontWeight: 600 }}>Assign to team member</label>

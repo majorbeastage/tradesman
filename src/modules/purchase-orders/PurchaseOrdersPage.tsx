@@ -11,6 +11,8 @@ import WorkflowToolGuidanceBanner from "../../components/WorkflowToolGuidanceBan
 import DocumentTemplateModal from "../../components/DocumentTemplateModal"
 import { PURCHASE_ORDER_DOCUMENT_TEMPLATE_ITEMS } from "../../lib/purchaseOrderDocumentTemplate"
 import { isTemplateItemVisible, mergeTemplateFormIntoMetadata, templateFormFromMetadata } from "../../lib/jobDocumentTemplate"
+import CustomerSearchPicker from "../../components/CustomerSearchPicker"
+import { loadCustomersForCustomReceipt, type CustomerReceiptPickerRow } from "../../lib/customReceipt"
 
 type Props = { setPage?: (page: string) => void; embedded?: boolean }
 
@@ -21,6 +23,9 @@ export default function PurchaseOrdersPage({ setPage, embedded }: Props) {
   const [vendor, setVendor] = useState("")
   const [description, setDescription] = useState("")
   const [poNumber, setPoNumber] = useState("")
+  const [customerId, setCustomerId] = useState("")
+  const [customers, setCustomers] = useState<CustomerReceiptPickerRow[]>([])
+  const [customersLoading, setCustomersLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [workflow, setWorkflow] = useState<BusinessWorkflowDoc | null>(null)
   const [templateFormValues, setTemplateFormValues] = useState<Record<string, string>>({})
@@ -48,6 +53,15 @@ export default function PurchaseOrdersPage({ setPage, embedded }: Props) {
     void loadTemplateFromProfile()
   }, [loadTemplateFromProfile])
 
+  useEffect(() => {
+    if (!supabase || !userId) return
+    setCustomersLoading(true)
+    void loadCustomersForCustomReceipt(supabase, userId)
+      .then(setCustomers)
+      .catch(() => setCustomers([]))
+      .finally(() => setCustomersLoading(false))
+  }, [userId])
+
   async function handleCreate() {
     if (!supabase || !userId) return
     setBusy(true)
@@ -57,10 +71,12 @@ export default function PurchaseOrdersPage({ setPage, embedded }: Props) {
         po_number: poNumber.trim() || undefined,
         vendor_name: vendor,
         description,
+        customer_id: customerId || null,
       })
       setVendor("")
       setDescription("")
       setPoNumber("")
+      setCustomerId("")
     } catch (e: unknown) {
       setErr(formatAppError(e))
     } finally {
@@ -111,6 +127,14 @@ export default function PurchaseOrdersPage({ setPage, embedded }: Props) {
           </button>
         </div>
         <div style={{ display: "grid", gap: 10, maxWidth: 520 }}>
+          <CustomerSearchPicker
+            customers={customers}
+            value={customerId}
+            onChange={(id) => setCustomerId(id)}
+            allowEmpty
+            emptyLabel="— No customer —"
+            loading={customersLoading}
+          />
           <label style={labelStyle}>
             Vendor
             <input value={vendor} onChange={(e) => setVendor(e.target.value)} style={theme.formInput} />

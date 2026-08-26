@@ -1,13 +1,20 @@
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { theme } from "../styles/theme"
 import SavedLineCategoryPicker from "./SavedLineCategoryPicker"
 import type { EstimateLinePresetRow } from "../lib/estimateLinePresets"
 import type { LibraryCategory } from "../lib/libraryCategories"
+import CustomerSearchPicker from "./CustomerSearchPicker"
 
 import type { EstimateWizardStep } from "../lib/estimateWizardStepUtils"
 import { estimateWizardMaxStep, estimateWizardPhase, estimateWizardPhaseTitle } from "../lib/estimateWizardStepUtils"
 
-type CustomerOpt = { id: string; display_name?: string | null }
+type CustomerOpt = {
+  id: string
+  display_name?: string | null
+  phone?: string
+  email?: string
+  service_address?: string
+}
 type JobTypeOpt = { id: string; name: string }
 
 type Props = {
@@ -23,6 +30,7 @@ type Props = {
   onCustomerContinue: () => void
   onCustomerSkip: () => void
   customerBusy: boolean
+  customersLoading?: boolean
   jobTypes: JobTypeOpt[]
   jobTypePick: string
   onJobTypePick: (id: string) => void
@@ -95,6 +103,7 @@ export default function EstimateStartGuideModal({
   onCustomerContinue,
   onCustomerSkip,
   customerBusy,
+  customersLoading = false,
   jobTypes,
   jobTypePick,
   onJobTypePick,
@@ -147,11 +156,22 @@ export default function EstimateStartGuideModal({
   onGenerateJobPackBullets,
   onMediaPickFiles,
 }: Props) {
-  const [customerQuery, setCustomerQuery] = useState("")
   const [aiLinesNote, setAiLinesNote] = useState<string | null>(null)
   const wizardPhase = estimateWizardPhase(step, includeJobDescription)
   const wizardTotalSteps = estimateWizardMaxStep(includeJobDescription)
   const wizardTitle = estimateWizardPhaseTitle(wizardPhase)
+
+  const pickerCustomers = useMemo(
+    () =>
+      customers.map((c) => ({
+        id: c.id,
+        display_name: c.display_name?.trim() || c.id,
+        phone: c.phone,
+        email: c.email,
+        service_address: c.service_address,
+      })),
+    [customers],
+  )
 
   const conversationBulletLines = useMemo(
     () =>
@@ -170,28 +190,6 @@ export default function EstimateStartGuideModal({
         .filter(Boolean),
     [jobPackBullets],
   )
-
-  useEffect(() => {
-    if (!open || step !== 1) return
-    const c = customers.find((x) => x.id === customerPick)
-    if (customerPick && c) {
-      setCustomerQuery(c.display_name?.trim() || c.id)
-    } else if (!customerPick) {
-      setCustomerQuery("")
-    }
-  }, [open, step, customerPick, customers])
-
-  const filteredCustomers = useMemo(() => {
-    const q = customerQuery.trim().toLowerCase()
-    if (!q) return customers.slice(0, 80)
-    return customers
-      .filter((c) => {
-        const name = (c.display_name ?? "").trim().toLowerCase()
-        const id = c.id.toLowerCase()
-        return name.includes(q) || id.includes(q)
-      })
-      .slice(0, 40)
-  }, [customers, customerQuery])
 
   if (!open) return null
 
@@ -253,73 +251,16 @@ export default function EstimateStartGuideModal({
 
         {wizardPhase === "customer" ? (
           <div style={{ display: "grid", gap: 12 }}>
-            <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.text }}>
-              Customer (search)
-              <input
-                type="search"
-                autoComplete="off"
-                placeholder="Type to filter customers…"
-                value={customerQuery}
-                onChange={(e) => {
-                  const v = e.target.value
-                  setCustomerQuery(v)
-                  if (!customerPick) return
-                  const sel = customers.find((c) => c.id === customerPick)
-                  const label = sel?.display_name?.trim() || sel?.id || ""
-                  if (label && v.trim().toLowerCase() !== label.trim().toLowerCase()) {
-                    onCustomerPick("")
-                  }
-                }}
-                style={{ ...theme.formInput, padding: "10px 12px", fontSize: 14 }}
-              />
-            </label>
-            <div
-              role="listbox"
-              aria-label="Matching customers"
-              style={{
-                maxHeight: 200,
-                overflowY: "auto",
-                border: `1px solid ${theme.border}`,
-                borderRadius: 8,
-                background: "#fafafa",
-              }}
-            >
-              {filteredCustomers.length === 0 ? (
-                <div style={{ padding: "12px 14px", fontSize: 13, color: "#64748b" }}>No matches.</div>
-              ) : (
-                filteredCustomers.map((c) => {
-                  const label = c.display_name?.trim() || c.id
-                  const selected = customerPick === c.id
-                  return (
-                    <button
-                      key={c.id}
-                      type="button"
-                      role="option"
-                      aria-selected={selected}
-                      onClick={() => {
-                        onCustomerPick(c.id)
-                        setCustomerQuery(label)
-                      }}
-                      style={{
-                        display: "block",
-                        width: "100%",
-                        textAlign: "left",
-                        padding: "10px 14px",
-                        fontSize: 14,
-                        border: "none",
-                        borderBottom: `1px solid ${theme.border}`,
-                        background: selected ? "#eff6ff" : "transparent",
-                        cursor: "pointer",
-                        color: theme.text,
-                        fontWeight: selected ? 700 : 500,
-                      }}
-                    >
-                      {label}
-                    </button>
-                  )
-                })
-              )}
-            </div>
+            <CustomerSearchPicker
+              label="Customer"
+              customers={pickerCustomers}
+              value={customerPick}
+              onChange={(id) => onCustomerPick(id)}
+              disabled={customerBusy}
+              loading={customersLoading}
+              allowEmpty
+              emptyLabel="— No customer —"
+            />
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "flex-end", marginTop: 4 }}>
               <button
                 type="button"

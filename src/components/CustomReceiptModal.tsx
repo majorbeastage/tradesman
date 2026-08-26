@@ -18,6 +18,7 @@ import {
 import { downloadPdfBlob, uint8ArrayToBase64 } from "../lib/documentPdf"
 import { useSandboxTrainingMode } from "../lib/sandboxTrainingUi"
 import { useAuth } from "../contexts/AuthContext"
+import CustomerSearchPicker, { customerSearchPickerRowToContact } from "./CustomerSearchPicker"
 import { outboundMessagesJsonBody } from "../lib/platformToolsJsonBody"
 import { uploadBytesForOutbound } from "../lib/uploadCommAttachment"
 
@@ -45,6 +46,7 @@ export default function CustomReceiptModal({
   const { session } = useAuth()
   const [form, setForm] = useState<CustomReceiptFormState>(() => defaultCustomReceiptFormState())
   const [customers, setCustomers] = useState<CustomerReceiptPickerRow[]>([])
+  const [customersLoading, setCustomersLoading] = useState(false)
   const [savedReceipts, setSavedReceipts] = useState<CustomReceiptDraft[]>([])
   const [loadedDraftId, setLoadedDraftId] = useState<string>("")
   const [newDesc, setNewDesc] = useState("")
@@ -70,6 +72,7 @@ export default function CustomReceiptModal({
     setNewKind("misc")
     if (!supabase || !userId) return
     void (async () => {
+      setCustomersLoading(true)
       try {
         const rows = await loadCustomersForCustomReceipt(supabase, userId)
         setCustomers(rows)
@@ -79,6 +82,8 @@ export default function CustomReceiptModal({
         }
       } catch (e) {
         setNotice(e instanceof Error ? e.message : String(e))
+      } finally {
+        setCustomersLoading(false)
       }
     })()
   }, [open, supabase, userId, initialCustomerId])
@@ -320,31 +325,22 @@ export default function CustomReceiptModal({
         </div>
 
         <div style={{ display: "grid", gap: 12 }}>
-          <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.text }}>
-            Link customer (optional)
-            <select
-              value={form.customerId}
-              onChange={(e) => {
-                const id = e.target.value
-                if (!id) {
-                  setForm((prev) => ({ ...prev, customerId: "" }))
-                  setSavedReceipts([])
-                  setLoadedDraftId("")
-                  return
-                }
-                const row = customers.find((c) => c.id === id)
-                if (row) applyCustomerRow(row)
-              }}
-              style={{ ...theme.formInput, fontSize: 14 }}
-            >
-              <option value="">— Manual entry —</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.display_name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <CustomerSearchPicker
+            customers={customers}
+            value={form.customerId}
+            onChange={(id, row) => {
+              if (!id) {
+                setForm((prev) => ({ ...prev, customerId: "" }))
+                setSavedReceipts([])
+                setLoadedDraftId("")
+                return
+              }
+              if (row) applyCustomerRow(customerSearchPickerRowToContact(row))
+            }}
+            allowEmpty
+            emptyLabel="— No customer —"
+            loading={customersLoading}
+          />
 
           {savedReceipts.length > 0 ? (
             <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.text }}>

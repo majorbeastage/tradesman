@@ -16,9 +16,11 @@ import {
   customReceiptDraftToFormState,
   formatCustomReceiptLineItems,
   loadAllCustomReceiptsForUser,
+  loadCustomersForCustomReceipt,
   loadReceiptTemplateSettings,
   type CustomReceiptDraft,
   type CustomReceiptTemplateSettings,
+  type CustomerReceiptPickerRow,
 } from "../lib/customReceipt"
 import { templateFormFromMetadata } from "../lib/jobDocumentTemplate"
 import { WORK_ORDER_DOCUMENT_TEMPLATE_ITEMS } from "../lib/workOrderDocumentTemplate"
@@ -27,6 +29,7 @@ import { openWorkOrderDocumentPdf } from "../lib/workOrderPdfExport"
 import { openPurchaseOrderDocumentPdf } from "../lib/purchaseOrderPdfExport"
 import { queueQuotesOpenQuote } from "../lib/workflowNavigation"
 import DocumentPdfViewerModal from "./DocumentPdfViewerModal"
+import CustomerSearchPicker from "./CustomerSearchPicker"
 import { WorkOrderEditorModal } from "./document-editors/WorkOrderEditorModal"
 import { PurchaseOrderEditorModal } from "./document-editors/PurchaseOrderEditorModal"
 
@@ -72,6 +75,8 @@ export default function OperationsDocumentSearchPanel({ userId, setPage }: Props
   const [poTemplate, setPoTemplate] = useState<Record<string, string>>({})
 
   const [query, setQuery] = useState("")
+  const [filterCustomerId, setFilterCustomerId] = useState("")
+  const [customers, setCustomers] = useState<CustomerReceiptPickerRow[]>([])
   const [kindFilter, setKindFilter] = useState<"all" | DocKind>("all")
   const [docBusyId, setDocBusyId] = useState<string | null>(null)
   const [pdfViewer, setPdfViewer] = useState<{ url: string; title: string } | null>(null)
@@ -83,19 +88,21 @@ export default function OperationsDocumentSearchPanel({ userId, setPage }: Props
     setLoading(true)
     setErr("")
     try {
-      const [wo, po, quotes, pays, rcpts, profileRow] = await Promise.all([
+      const [wo, po, quotes, pays, rcpts, profileRow, pickerCustomers] = await Promise.all([
         loadWorkOrdersFromProfile(supabase, userId),
         loadPurchaseOrdersFromProfile(supabase, userId),
         loadQuotesForWorkOrders(supabase, userId, null),
         loadPaymentRequests(userId, 200),
         loadAllCustomReceiptsForUser(supabase, userId).catch(() => [] as CustomReceiptDraft[]),
         supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle(),
+        loadCustomersForCustomReceipt(supabase, userId).catch(() => [] as CustomerReceiptPickerRow[]),
       ])
       setWorkOrders(wo)
       setPurchaseOrders(po)
       setEstimates(quotes)
       setInvoices(pays)
       setReceipts(rcpts)
+      setCustomers(pickerCustomers)
 
       const meta =
         profileRow.data?.metadata && typeof profileRow.data.metadata === "object" && !Array.isArray(profileRow.data.metadata)
@@ -156,6 +163,7 @@ export default function OperationsDocumentSearchPanel({ userId, setPage }: Props
         status: o.status,
         total: o.total ?? null,
         createdAt: o.created_at,
+        customerId: o.customer_id ?? null,
       })
     }
     for (const e of estimates) {
@@ -208,15 +216,17 @@ export default function OperationsDocumentSearchPanel({ userId, setPage }: Props
     return allHits
       .filter((h) => kindFilter === "all" || h.kind === kindFilter)
       .filter((h) => {
+        if (filterCustomerId && h.customerId !== filterCustomerId) return false
         if (!q) return true
-        return [h.docNumber, h.name, h.detail, h.status, KIND_META[h.kind].label].join(" ").toLowerCase().includes(q)
+        const selectedName = customers.find((c) => c.id === filterCustomerId)?.display_name ?? ""
+        return [h.docNumber, h.name, h.detail, h.status, KIND_META[h.kind].label, selectedName].join(" ").toLowerCase().includes(q)
       })
       .sort((a, b) => {
         if (a.createdAt && b.createdAt) return b.createdAt.localeCompare(a.createdAt)
         return a.name.localeCompare(b.name)
       })
       .slice(0, 60)
-  }, [allHits, query, kindFilter])
+  }, [allHits, query, kindFilter, filterCustomerId, customers])
 
   const counts = useMemo(() => {
     const c = { work_order: 0, purchase_order: 0, invoice: 0, estimate: 0, receipt: 0 } as Record<DocKind, number>
@@ -302,11 +312,19 @@ export default function OperationsDocumentSearchPanel({ userId, setPage }: Props
         })}
       </div>
 
+      <CustomerSearchPicker
+        customers={customers}
+        value={filterCustomerId}
+        onChange={(id) => setFilterCustomerId(id)}
+        allowEmpty
+        emptyLabel="— No customer —"
+        loading={loading && customers.length === 0}
+      />
       <input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         placeholder="Search by customer or vendor name, document number, title, or status…"
-        style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", marginBottom: 12 }}
+        style={{ ...theme.formInput, width: "100%", boxSizing: "border-box", margin: "12px 0" }}
       />
 
       {err ? <p style={{ color: "#b91c1c", fontSize: 13 }}>{err}</p> : null}

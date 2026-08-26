@@ -745,7 +745,7 @@ function App() {
   const customDomainSlug = (() => {
     const host = hostname.replace(/^www\./, "").split(":")[0] || ""
     const map: Record<string, string> = {
-      "hairplumbing.com": "hair-plumbing",
+      "hairplumbing.com": "hairplumbing",
     }
     return map[host] || null
   })()

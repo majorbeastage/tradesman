@@ -50,6 +50,7 @@ export default function PublicBusinessWebProfilePage({ slug, page = "home" }: Pr
       try {
         const res = await fetch(
           `/api/platform-tools?__route=public-business-profile&slug=${encodeURIComponent(safeSlug)}`,
+          { cache: "no-store" },
         )
         const text = await res.text()
         let json: PublicBusinessProfilePayload

@@ -303,17 +303,19 @@ export function seedCanvasStyleBothLayouts(
 export function hideWebsiteEditTarget(
   settings: BusinessPublicProfileSettings,
   targetId: string,
-  viewport: WebsiteLayoutViewport = "desktop",
+  _viewport: WebsiteLayoutViewport = "desktop",
 ): BusinessPublicProfileSettings {
-  return patchWebsiteLayoutStyle(settings, viewport, targetId, { hidden: true })
+  const desktop = patchWebsiteLayoutStyle(settings, "desktop", targetId, { hidden: true })
+  return patchWebsiteLayoutStyle(desktop, "mobile", targetId, { hidden: true })
 }
 
 export function showWebsiteEditTarget(
   settings: BusinessPublicProfileSettings,
   targetId: string,
-  viewport: WebsiteLayoutViewport = "desktop",
+  _viewport: WebsiteLayoutViewport = "desktop",
 ): BusinessPublicProfileSettings {
-  return patchWebsiteLayoutStyle(settings, viewport, targetId, { hidden: undefined })
+  const desktop = patchWebsiteLayoutStyle(settings, "desktop", targetId, { hidden: undefined })
+  return patchWebsiteLayoutStyle(desktop, "mobile", targetId, { hidden: undefined })
 }
 
 export function hiddenWebsiteEditTargetIds(styles: WebsiteTextStyles | undefined): string[] {

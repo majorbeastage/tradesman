@@ -37,9 +37,12 @@ import {
   parseBusinessProfileListField,
   parseBusinessPublicProfileSettings,
   randomizeBusinessProfileTheme,
+  canvasItemOnAllEnabledPages,
+  enabledWebsitePublicPageIds,
   type BusinessProfileTemplateId,
   type BusinessPublicProfileSettings,
   type WebsiteBuiltInLinkTarget,
+  type WebsiteCanvasItem,
   type WebsiteHomeSectionId,
   type WebsiteImageSlotId,
   type WebsitePublicPageId,
@@ -545,14 +548,16 @@ export default function WebsiteBuilderPage() {
     })
   }
 
-  async function persist(next: BusinessPublicProfileSettings, opts?: { logoUrl?: string | null }) {
+  async function persist(next: BusinessPublicProfileSettings, opts?: { logoUrl?: string | null; draft?: boolean }) {
     if (!supabase || !userId) return
     setSaving(true)
     setMessage("")
     setError("")
     try {
       const name = contact.businessName.trim()
-      const nextSlug = businessWebProfileSlugFromName(name)
+      const computedSlug = businessWebProfileSlugFromName(name)
+      const nextSlug =
+        isHairPlumbingAccount && (slug === "hair-plumbing" || slug === "hairplumbing") ? slug : computedSlug
       if (!nextSlug || nextSlug.length < 3) {
         throw new Error("Set a business name in MyT → Account (Contact & profile) before publishing.")
       }
@@ -596,7 +601,15 @@ export default function WebsiteBuilderPage() {
       setSettingsSilent({ ...next, customDomain: domain })
       setSlug(nextSlug)
       if (opts?.logoUrl) setContact((c) => ({ ...c, companyLogoUrl: opts.logoUrl ?? c.companyLogoUrl }))
-      setMessage(next.enabled ? "Website published." : "Website draft saved (not published).")
+      setMessage(
+        opts?.draft
+          ? next.enabled
+            ? "Draft saved. Live website is still published."
+            : "Website draft saved (not published)."
+          : next.enabled
+            ? "Website published."
+            : "Website draft saved (not published).",
+      )
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -728,13 +741,14 @@ export default function WebsiteBuilderPage() {
     const id = `t_${Date.now().toString(36)}`
     const targetId = `canvas.${id}`
     const stack = settings.canvasItems.length
+    const page = previewPage
     setSettings((s) =>
       seedCanvasStyleBothLayouts(
         {
           ...s,
           canvasItems: [
             ...s.canvasItems,
-            { id, kind: "text" as const, text: "New text — click to edit" },
+            { id, kind: "text" as const, text: "New text — click to edit", pages: [page] },
           ].slice(0, 24),
         },
         targetId,
@@ -755,13 +769,14 @@ export default function WebsiteBuilderPage() {
   function addPhotoFieldAt(imageUrl: string | null, offsetX: number, offsetY: number) {
     const id = `p_${Date.now().toString(36)}`
     const targetId = `canvas.${id}`
+    const page = previewPage
     setSettings((s) =>
       seedCanvasStyleBothLayouts(
         {
           ...s,
           canvasItems: [
             ...s.canvasItems,
-            { id, kind: "photo" as const, imageUrl: imageUrl?.trim() || null },
+            { id, kind: "photo" as const, imageUrl: imageUrl?.trim() || null, pages: [page] },
           ].slice(0, 24),
         },
         targetId,
@@ -802,6 +817,57 @@ export default function WebsiteBuilderPage() {
     })
     setSelectedTargetId(null)
     setContextMenu(null)
+  }
+
+  function setCanvasItemOnAllPages(itemId: string, allPages: boolean) {
+    setSettings((s) => {
+      const pages = allPages ? enabledWebsitePublicPageIds(s) : [previewPage]
+      return {
+        ...s,
+        canvasItems: s.canvasItems.map((c) => (c.id === itemId ? { ...c, pages } : c)),
+      }
+    })
+  }
+
+  function moveCanvasItem(itemId: string, dir: -1 | 1) {
+    setSettings((s) => {
+      const list = [...s.canvasItems]
+      const from = list.findIndex((c) => c.id === itemId)
+      const to = from + dir
+      if (from < 0 || to < 0 || to >= list.length) return s
+      const tmp = list[from]
+      list[from] = list[to]
+      list[to] = tmp
+      return { ...s, canvasItems: list }
+    })
+  }
+
+  function canvasPageScopeControl(item: WebsiteCanvasItem) {
+    const allPages = enabledWebsitePublicPageIds(settings)
+    const onAll = canvasItemOnAllEnabledPages(item, allPages)
+    return (
+      <fieldset style={{ display: "grid", gap: 6, margin: 0, padding: 0, border: "none" }}>
+        <legend style={{ fontSize: 11, fontWeight: 800, color: "#334155" }}>Show this field on</legend>
+        <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, fontWeight: 700 }}>
+          <input
+            type="radio"
+            name={`canvas-pages-${item.id}`}
+            checked={!onAll}
+            onChange={() => setCanvasItemOnAllPages(item.id, false)}
+          />
+          This page only
+        </label>
+        <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, fontWeight: 700 }}>
+          <input
+            type="radio"
+            name={`canvas-pages-${item.id}`}
+            checked={onAll}
+            onChange={() => setCanvasItemOnAllPages(item.id, true)}
+          />
+          Home and all subpages
+        </label>
+      </fieldset>
+    )
   }
 
   function addSubPage() {
@@ -940,14 +1006,13 @@ export default function WebsiteBuilderPage() {
       id: `draft_${stamp.getTime()}`,
       name: `Draft ${stamp.toLocaleString()}`,
       savedAt: stamp.toISOString(),
-      snapshot: cloneSettings({ ...settings, enabled: false }) as unknown as Record<string, unknown>,
+      snapshot: cloneSettings(settings) as unknown as Record<string, unknown>,
     }
     const next: BusinessPublicProfileSettings = {
       ...settings,
-      enabled: false,
       savedDrafts: [draft, ...(settings.savedDrafts ?? [])].slice(0, 20),
     }
-    await persist(next)
+    await persist(next, { draft: true })
   }
 
   function renderTemplatesCard(compact: boolean) {
@@ -1153,6 +1218,7 @@ export default function WebsiteBuilderPage() {
                 ×
               </button>
             </div>
+            {selectedCanvasItem ? canvasPageScopeControl(selectedCanvasItem) : null}
             <textarea
               rows={selectedTargetId.includes("body") || selectedTargetId === "hero.headline" || selectedCanvasItem ? 4 : 2}
               value={selectedText}
@@ -1305,7 +1371,10 @@ export default function WebsiteBuilderPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    if (selectedCanvasItem) removeCanvasItem(selectedCanvasItem.id)
+                    if (selectedCanvasItem) {
+                      removeCanvasItem(selectedCanvasItem.id)
+                      setMessage("Field removed from the editor. Tap Save & publish to update the live site.")
+                    }
                     else removeSelected()
                   }}
                   style={{
@@ -1423,6 +1492,7 @@ export default function WebsiteBuilderPage() {
                 ×
               </button>
             </div>
+            {selectedCanvasItem ? canvasPageScopeControl(selectedCanvasItem) : null}
             <p style={{ margin: 0, fontSize: 12, color: "#475569" }}>
               {selectedTargetId === "slot.background"
                 ? "Background selected — set tint below, or drag a tray photo onto the page to replace the background."
@@ -1626,9 +1696,13 @@ export default function WebsiteBuilderPage() {
                 Clear image
               </button>
               {selectedCanvasItem ? (
-                <button
-                  type="button"
-                  onClick={() => removeCanvasItem(selectedCanvasItem.id)}
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      removeCanvasItem(selectedCanvasItem.id)
+                      setMessage("Field removed from the editor. Tap Save & publish to update the live site.")
+                    }}
                   style={{
                     padding: "8px 12px",
                     borderRadius: 8,
@@ -1641,6 +1715,7 @@ export default function WebsiteBuilderPage() {
                 >
                   Remove field
                 </button>
+                </>
               ) : null}
               <button
                 type="button"
@@ -2289,6 +2364,75 @@ export default function WebsiteBuilderPage() {
               )
             })}
           </div>
+          {settings.canvasItems.length ? (
+            <>
+              <div style={{ fontSize: 12, fontWeight: 900, color: EDITOR_INK, marginTop: 10 }}>Custom fields</div>
+              <div style={{ display: "grid", gap: 6 }}>
+                {settings.canvasItems.map((item) => {
+                  const label =
+                    item.kind === "text"
+                      ? (item.text || "Text field").replace(/\s+/g, " ").trim().slice(0, 42) || "Text field"
+                      : "Photo field"
+                  const pages = item.pages && item.pages.length ? item.pages : enabledWebsitePublicPageIds(settings)
+                  const scope =
+                    !item.pages || item.pages.length === 0 || canvasItemOnAllEnabledPages(item, enabledWebsitePublicPageIds(settings))
+                      ? "All pages"
+                      : pages.length === 1
+                        ? "This page"
+                        : `${pages.length} pages`
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() => {
+                        const targetId = `canvas.${item.id}`
+                        setSelectedTargetId(targetId)
+                        setContextMenu(null)
+                      }}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        padding: "8px 10px",
+                        borderRadius: 8,
+                        border: `1px solid ${theme.border}`,
+                        background: selectedTargetId === `canvas.${item.id}` ? "#eff6ff" : "#fff",
+                        color: EDITOR_INK,
+                        cursor: "pointer",
+                      }}
+                    >
+                      <span style={{ fontWeight: 900, fontSize: 12, color: "#64748b" }}>⋮⋮</span>
+                      <span style={{ flex: 1, fontSize: 12, fontWeight: 800, color: EDITOR_INK }}>
+                        {label}
+                        <span style={{ display: "block", fontSize: 10, fontWeight: 700, color: "#64748b" }}>{scope}</span>
+                      </span>
+                      <button
+                        type="button"
+                        title="Move up"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          moveCanvasItem(item.id, -1)
+                        }}
+                        style={{ border: "none", background: "transparent", cursor: "pointer", color: EDITOR_INK, fontWeight: 900 }}
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        title="Move down"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          moveCanvasItem(item.id, 1)
+                        }}
+                        style={{ border: "none", background: "transparent", cursor: "pointer", color: EDITOR_INK, fontWeight: 900 }}
+                      >
+                        ↓
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            </>
+          ) : null}
           <div style={{ fontSize: 12, fontWeight: 900, color: EDITOR_INK, marginTop: 10 }}>Add / restore sections</div>
           {hiddenSections.length === 0 ? (
             <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>All sections are on the page.</p>

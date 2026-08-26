@@ -76,10 +76,17 @@ type BusinessPublicProfileSettings = {
     contact: { enabled: boolean; title: string }
   }
   customPages: Array<{ id: string; enabled: boolean; title: string; body: string }>
-  canvasItems: Array<{ id: string; kind: "text" | "photo"; text?: string; imageUrl?: string | null }>
+  canvasItems: Array<{
+    id: string
+    kind: "text" | "photo"
+    text?: string
+    imageUrl?: string | null
+    pages?: string[]
+  }>
   featureCards: Array<{ id: string; title: string; body: string }>
   serviceCards: Array<{ id: string; title: string; body: string }>
-  textStyles: Record<string, Record<string, string | number>>
+  textStyles: Record<string, Record<string, string | number | boolean>>
+  textStylesMobile: Record<string, Record<string, string | number | boolean>>
   homeSectionOrder: string[]
   fixedBackground: boolean
   footerCopyright: string
@@ -270,6 +277,7 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
     featureCards: [],
     serviceCards: [],
     textStyles: {},
+    textStylesMobile: {},
     homeSectionOrder: ["hero", "about_band", "services_band", "gallery", "areas_hours", "contact_home", "sticky_cta"],
     fixedBackground: true,
     footerCopyright: "",
@@ -418,6 +426,7 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
     featureCards: parseContentCards(o.featureCards, 4),
     serviceCards: parseContentCards(o.serviceCards, 6),
     textStyles: parseTextStyles(o.textStyles),
+    textStylesMobile: parseTextStyles(o.textStylesMobile),
     homeSectionOrder: Array.isArray(o.homeSectionOrder)
       ? (o.homeSectionOrder.filter((x): x is string => typeof x === "string") as BusinessPublicProfileSettings["homeSectionOrder"])
       : base.homeSectionOrder,
@@ -428,9 +437,21 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
   }
 }
 
-function parseCanvasItems(raw: unknown): Array<{ id: string; kind: "text" | "photo"; text?: string; imageUrl?: string | null }> {
+function parseCanvasItems(raw: unknown): Array<{
+  id: string
+  kind: "text" | "photo"
+  text?: string
+  imageUrl?: string | null
+  pages?: string[]
+}> {
   if (!Array.isArray(raw)) return []
-  const out: Array<{ id: string; kind: "text" | "photo"; text?: string; imageUrl?: string | null }> = []
+  const out: Array<{
+    id: string
+    kind: "text" | "photo"
+    text?: string
+    imageUrl?: string | null
+    pages?: string[]
+  }> = []
   for (const item of raw.slice(0, 24)) {
     if (!item || typeof item !== "object" || Array.isArray(item)) continue
     const c = item as Record<string, unknown>
@@ -438,14 +459,48 @@ function parseCanvasItems(raw: unknown): Array<{ id: string; kind: "text" | "pho
     if (!id) continue
     const kind = c.kind === "photo" ? "photo" : c.kind === "text" ? "text" : null
     if (!kind) continue
+    const pages = Array.isArray(c.pages)
+      ? c.pages
+          .filter((p): p is string => typeof p === "string" && (p === "home" || p === "about" || p === "contact" || p.startsWith("custom:")))
+          .slice(0, 12)
+      : undefined
     out.push({
       id,
       kind,
       text: typeof c.text === "string" ? c.text.slice(0, 2000) : kind === "text" ? "New text" : undefined,
       imageUrl: typeof c.imageUrl === "string" && c.imageUrl.trim() ? c.imageUrl.trim().slice(0, 800) : null,
+      pages: pages && pages.length ? pages : undefined,
     })
   }
   return out
+}
+
+function normalizeCanvasText(value: string | undefined): string {
+  return (value ?? "").replace(/\s+/g, " ").trim().toLowerCase()
+}
+
+/** If a freeform text block repeats the built-in tagline, hide the original and keep the overlay on Home. */
+function applyCanvasTaglineReplacement(settings: BusinessPublicProfileSettings): {
+  canvasItems: BusinessPublicProfileSettings["canvasItems"]
+  textStyles: BusinessPublicProfileSettings["textStyles"]
+} {
+  const tagline = normalizeCanvasText(settings.tagline)
+  if (!tagline) return { canvasItems: settings.canvasItems, textStyles: settings.textStyles }
+  let replaced = false
+  const canvasItems = settings.canvasItems.map((item) => {
+    if (item.kind !== "text" || normalizeCanvasText(item.text) !== tagline) return item
+    replaced = true
+    if (item.pages && item.pages.length) return item
+    return { ...item, pages: ["home"] }
+  })
+  if (!replaced) return { canvasItems: settings.canvasItems, textStyles: settings.textStyles }
+  return {
+    canvasItems,
+    textStyles: {
+      ...settings.textStyles,
+      "hero.tagline": { ...(settings.textStyles["hero.tagline"] ?? {}), hidden: true },
+    },
+  }
 }
 
 function parseSocialLinks(raw: unknown, facebookUrl: string, instagramUrl: string): Record<string, string> {
@@ -493,26 +548,38 @@ function parseContentCards(raw: unknown, max: number): Array<{ id: string; title
   return out
 }
 
-function parseTextStyles(raw: unknown): Record<string, Record<string, string | number>> {
+function parseTextStyles(raw: unknown): Record<string, Record<string, string | number | boolean>> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
-  const out: Record<string, Record<string, string | number>> = {}
+  const out: Record<string, Record<string, string | number | boolean>> = {}
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     if (!key.trim() || !value || typeof value !== "object" || Array.isArray(value)) continue
-    const style: Record<string, string | number> = {}
+    const style: Record<string, string | number | boolean> = {}
     for (const [sk, sv] of Object.entries(value as Record<string, unknown>)) {
       if (typeof sv === "string" && sv.trim()) style[sk] = sv.trim().slice(0, 120)
       else if (typeof sv === "number" && Number.isFinite(sv)) style[sk] = sv
+      else if (sv === true && (sk === "hidden" || sk === "scrollFixed" || sk === "showFieldBackground")) style[sk] = true
     }
     if (Object.keys(style).length) out[key.trim().slice(0, 80)] = style
   }
   return out
 }
 
+/** Custom domain historically requested `hair-plumbing`; Website Builder publishes `hairplumbing`. */
+function hairPlumbingSlugAlias(slug: string): string | null {
+  if (slug === "hair-plumbing") return "hairplumbing"
+  if (slug === "hairplumbing") return "hair-plumbing"
+  return null
+}
+
+function slugsMatch(a: string, b: string): boolean {
+  return a === b || hairPlumbingSlugAlias(a) === b
+}
+
 function profileMatchesSlug(row: ProfileRow, slug: string): boolean {
   const settings = parseSettings(row.metadata)
   const published = settings.publishedSlug || slugFromDisplayName(row.display_name ?? "")
   const colSlug = typeof row.business_web_profile_slug === "string" ? normalizeSlug(row.business_web_profile_slug) : ""
-  return published === slug || colSlug === slug
+  return slugsMatch(published, slug) || slugsMatch(colSlug, slug)
 }
 
 function isPublishedProfile(row: ProfileRow): boolean {
@@ -534,19 +601,23 @@ function isMissingSlugColumnError(message: string): boolean {
 async function findPublishedProfileBySlug(supabase: SupabaseClient, slug: string): Promise<ProfileRow | null> {
   // Indexed / cheap path only. Never scan profiles+metadata for unknown slugs —
   // public `/{slug}` is a catch-all and bots would burn egress (GB/day).
-  const { data: byCol, error: colErr } = await supabase
-    .from("profiles")
-    .select(PROFILE_SELECT)
-    .eq("business_web_profile_slug", slug)
-    .maybeSingle()
+  const slugCandidates = [slug, hairPlumbingSlugAlias(slug)].filter((s, i, arr): s is string => Boolean(s) && arr.indexOf(s) === i)
 
-  if (!colErr && byCol?.id) {
-    const row = byCol as ProfileRow
-    if (isPublishedProfile(row) && profileMatchesSlug(row, slug)) return row
-  }
+  for (const candidate of slugCandidates) {
+    const { data: byCol, error: colErr } = await supabase
+      .from("profiles")
+      .select(PROFILE_SELECT)
+      .eq("business_web_profile_slug", candidate)
+      .maybeSingle()
 
-  if (colErr && !isMissingSlugColumnError(colErr.message ?? "")) {
-    console.warn("[public-business-profile] slug column lookup", colErr.message)
+    if (!colErr && byCol?.id) {
+      const row = byCol as ProfileRow
+      if (isPublishedProfile(row) && profileMatchesSlug(row, slug)) return row
+    }
+
+    if (colErr && !isMissingSlugColumnError(colErr.message ?? "")) {
+      console.warn("[public-business-profile] slug column lookup", colErr.message)
+    }
   }
 
   const { data: byPublishedSlug, error: pubSlugErr } = await supabase
@@ -741,7 +812,7 @@ export async function handlePublicBusinessProfile(req: VercelRequest, res: Verce
       try {
         const seeded = await bootstrapHairPlumbingWebsiteIfNeeded(supabase, {
           userId: profile.id,
-          slug: (profile.business_web_profile_slug || "").trim() || "hair-plumbing",
+          slug: (profile.business_web_profile_slug || "").trim() || "hairplumbing",
           metadata: metaRaw,
           publicOrigin,
         })
@@ -754,9 +825,39 @@ export async function handlePublicBusinessProfile(req: VercelRequest, res: Verce
       }
     }
 
-    const settings = parseSettings(profile.metadata)
+    const latestMeta =
+      profile.metadata && typeof profile.metadata === "object" && !Array.isArray(profile.metadata)
+        ? (profile.metadata as Record<string, unknown>)
+        : metaRaw
+    let settings = parseSettings(profile.metadata)
+    if (!settings.enabled && isHairPlumbing) {
+      const siteRaw = latestMeta[BUSINESS_PUBLIC_PROFILE_META_KEY]
+      if (siteRaw && typeof siteRaw === "object" && !Array.isArray(siteRaw)) {
+        const nextSite = { ...(siteRaw as Record<string, unknown>), enabled: true, publishedSlug: (siteRaw as { publishedSlug?: string }).publishedSlug || "hairplumbing" }
+        const nextMeta = { ...latestMeta, [BUSINESS_PUBLIC_PROFILE_META_KEY]: nextSite }
+        const liveSlug =
+          (typeof profile.business_web_profile_slug === "string" && profile.business_web_profile_slug.trim()
+            ? normalizeSlug(profile.business_web_profile_slug)
+            : "") || "hairplumbing"
+        try {
+          await supabase
+            .from("profiles")
+            .update({
+              metadata: nextMeta,
+              business_web_profile_slug: liveSlug,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", profile.id)
+          profile = { ...profile, metadata: nextMeta, business_web_profile_slug: liveSlug }
+          settings = parseSettings(nextMeta)
+        } catch (republishErr) {
+          console.error("[public-business-profile] hair plumbing republish", republishErr)
+        }
+      }
+    }
     if (!settings.enabled) {
-      res.setHeader("Cache-Control", "public, max-age=60, s-maxage=120")
+      // Do not CDN-cache this — a later Save & publish must show immediately.
+      res.setHeader("Cache-Control", "private, no-store, max-age=0")
       res.status(404).json({ ok: false, error: "This business profile is not published yet." })
       return
     }
@@ -774,8 +875,9 @@ export async function handlePublicBusinessProfile(req: VercelRequest, res: Verce
     const address = settings.showAddress ? formatAddressFromProfile(profile) : null
     const serviceArea = settings.showServiceArea ? formatServiceArea(profile) : null
     const businessHours = settings.showBusinessHours ? formatBusinessHoursForPublic(profile.business_hours) : []
+    const publicCanvas = applyCanvasTaglineReplacement(settings)
 
-    res.setHeader("Cache-Control", "public, max-age=120, s-maxage=300, stale-while-revalidate=600")
+    res.setHeader("Cache-Control", "public, max-age=15, s-maxage=30, must-revalidate")
     res.status(200).json({
       ok: true,
       slug,
@@ -810,10 +912,11 @@ export async function handlePublicBusinessProfile(req: VercelRequest, res: Verce
       homeSections: settings.homeSections,
       subPages: settings.subPages,
       customPages: settings.customPages.length ? settings.customPages : undefined,
-      canvasItems: settings.canvasItems.length ? settings.canvasItems : undefined,
+      canvasItems: publicCanvas.canvasItems.length ? publicCanvas.canvasItems : undefined,
       featureCards: settings.featureCards.length ? settings.featureCards : undefined,
       serviceCards: settings.serviceCards.length ? settings.serviceCards : undefined,
-      textStyles: Object.keys(settings.textStyles).length ? settings.textStyles : undefined,
+      textStyles: Object.keys(publicCanvas.textStyles).length ? publicCanvas.textStyles : undefined,
+      textStylesMobile: Object.keys(settings.textStylesMobile).length ? settings.textStylesMobile : undefined,
       homeSectionOrder: settings.homeSectionOrder,
       fixedBackground: settings.fixedBackground !== false,
       footerCopyright: settings.footerCopyright.trim() || undefined,

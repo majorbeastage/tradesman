@@ -123,6 +123,8 @@ import {
   type AssistantHandoffPayload,
 } from "../../lib/assistantHandoff"
 import EstimateStartGuideModal, { EstimateGuideStatusMarker } from "../../components/EstimateStartGuideModal"
+import CustomerSearchPicker from "../../components/CustomerSearchPicker"
+import { loadCustomersForCustomReceipt } from "../../lib/customReceipt"
 import SpecialtyReportWizardModal from "../../components/SpecialtyReportWizardModal"
 import {
   loadEstimateGuideFlags,
@@ -724,6 +726,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [notesCustomerName, setNotesCustomerName] = useState<string>("")
   const [showAddCustomer, setShowAddCustomer] = useState(false)
   const [customerList, setCustomerList] = useState<any[]>([])
+  const [customerListLoading, setCustomerListLoading] = useState(false)
   const [addNewName, setAddNewName] = useState("")
   const [addNewPhone, setAddNewPhone] = useState("")
   const [addNewEmail, setAddNewEmail] = useState("")
@@ -779,6 +782,18 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [existingPurchaseOrder, setExistingPurchaseOrder] = useState<PurchaseOrderRecord | null>(null)
   const [profileRole, setProfileRole] = useState<string | null>(null)
   const [profileMetadata, setProfileMetadata] = useState<Record<string, unknown>>({})
+
+  const estimateCustomerPickerRows = useMemo(
+    () =>
+      customerList.map((c: { id: string; display_name?: string | null; phone?: string; email?: string; service_address?: string }) => ({
+        id: c.id,
+        display_name: (c.display_name ?? "").trim() || c.id,
+        phone: c.phone,
+        email: c.email,
+        service_address: c.service_address,
+      })),
+    [customerList],
+  )
 
   const selectableUsers = useMemo(() => {
     if (scopeCtx?.clients?.length) return scopeCtx.clients
@@ -2355,8 +2370,12 @@ export default function QuotesPage(_props: QuotesPageProps) {
   }, [userId])
 
   useEffect(() => {
-    if (selectedQuoteId && !selectedQuote?.customer_id) void loadCustomerList()
-  }, [selectedQuoteId, selectedQuote?.customer_id])
+    if (selectedQuoteId) void loadCustomerList()
+  }, [selectedQuoteId])
+
+  useEffect(() => {
+    setCustomerPickerCustomerId(selectedQuote?.customer_id ?? "")
+  }, [selectedQuote?.customer_id])
 
   useEffect(() => {
     globalAssistant?.setPageSnapshot({
@@ -2471,8 +2490,15 @@ export default function QuotesPage(_props: QuotesPageProps) {
 
   async function loadCustomerList() {
     if (!supabase || !userId) return
-    const { data } = await supabase.from("customers").select("id, display_name").eq("user_id", userId).order("display_name")
-    setCustomerList(data || [])
+    setCustomerListLoading(true)
+    try {
+      const rows = await loadCustomersForCustomReceipt(supabase, userId)
+      setCustomerList(rows)
+    } catch {
+      setCustomerList([])
+    } finally {
+      setCustomerListLoading(false)
+    }
   }
 
   async function addCustomerToQuotesFlow() {
@@ -6514,15 +6540,13 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               includeJobDescription={quoteIncludeJobDescription}
                               jobDescriptionLabel={quoteJobDescriptionLabel}
                               onClose={closeGuideWizard}
-                              customers={customerList.map((c: { id: string; display_name?: string | null }) => ({
-                                id: c.id,
-                                display_name: c.display_name,
-                              }))}
+                              customers={estimateCustomerPickerRows}
                               customerPick={estimateGuideCustomerPick}
                               onCustomerPick={setEstimateGuideCustomerPick}
                               onCustomerContinue={() => void handleEstimateGuideCustomerContinue()}
                               onCustomerSkip={handleEstimateGuideCustomerSkip}
                               customerBusy={estimateGuideBusy}
+                              customersLoading={customerListLoading}
                               jobTypes={quoteDetailJobTypes}
                               jobTypePick={estimateGuideJobTypePick}
                               onJobTypePick={setEstimateGuideJobTypePick}
@@ -6663,38 +6687,20 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                   gap: 10,
                                 }}
                               >
-                              {!selectedQuote.customer_id ? (
-                                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                                    <select
-                                      value={customerPickerCustomerId}
-                                      onChange={(e) => setCustomerPickerCustomerId(e.target.value)}
-                                      style={{ ...theme.formInput, padding: "8px 10px", minWidth: 220 }}
-                                    >
-                                      <option value="">Select existing customer…</option>
-                                      {customerList.map((c: { id: string; display_name?: string | null }) => (
-                                        <option key={c.id} value={c.id}>
-                                          {c.display_name ?? c.id}
-                                        </option>
-                                      ))}
-                                    </select>
-                                    <button
-                                      type="button"
-                                      disabled={!customerPickerCustomerId}
-                                      onClick={() => void persistQuoteCustomerLink(customerPickerCustomerId)}
-                                      style={{
-                                        padding: "8px 14px",
-                                        borderRadius: 6,
-                                        border: "none",
-                                        background: customerPickerCustomerId ? theme.primary : "#cbd5e1",
-                                        color: "#fff",
-                                        fontWeight: 600,
-                                        cursor: customerPickerCustomerId ? "pointer" : "not-allowed",
-                                      }}
-                                    >
-                                      Apply
-                                    </button>
-                                  </div>
+                              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                <CustomerSearchPicker
+                                  customers={estimateCustomerPickerRows}
+                                  value={selectedQuote.customer_id ?? customerPickerCustomerId}
+                                  onChange={(id) => {
+                                    setCustomerPickerCustomerId(id)
+                                    if (id) void persistQuoteCustomerLink(id)
+                                    else if (selectedQuote.customer_id) void persistQuoteCustomerLink(null)
+                                  }}
+                                  allowEmpty
+                                  emptyLabel="— No customer —"
+                                  loading={customerListLoading}
+                                />
+                                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
                                   <button
                                     type="button"
                                     onClick={() => {
@@ -6716,10 +6722,8 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                   >
                                     Add new customer
                                   </button>
-                                </div>
-                              ) : (
-                                <>
-                                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+                                  {selectedQuote.customer_id ? (
+                                    <>
                                     <button
                                       type="button"
                                       onClick={() => setCustomerSummaryExpanded((v) => !v)}
@@ -6734,7 +6738,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                         color: theme.text,
                                       }}
                                     >
-                                      {selectedQuote.customers?.display_name ?? "Customer"} <span style={{ fontWeight: 400, color: "#64748b" }}>▾</span>
+                                      Contact details <span style={{ fontWeight: 400, color: "#64748b" }}>▾</span>
                                     </button>
                                     <button
                                       type="button"
@@ -6761,8 +6765,10 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                     >
                                       Notes
                                     </button>
-                                  </div>
-                                  {(customerSummaryExpanded || quoteCustomerEditMode) ? (
+                                    </>
+                                  ) : null}
+                                </div>
+                                  {selectedQuote.customer_id && (customerSummaryExpanded || quoteCustomerEditMode) ? (
                               quoteCustomerEditMode ? (
                                 <div
                                   data-quote-customer-editor="1"
@@ -6949,8 +6955,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
                                 </>
                               )
                                   ) : null}
-                                </>
-                              )}
+                              </div>
                               </div>
                             </details>
                             <details

@@ -36,8 +36,10 @@ import {
   emptyWebsiteHomeSections,
   resolveWebsiteSlotImage,
   resolveWebsiteTextStylesForViewport,
+  canvasItemVisibleOnPage,
   websiteCustomPagePathId,
   websiteTextStyleToCss,
+  scaleWebsiteFontSize,
 } from "../../lib/businessPublicProfile"
 import { isWebsiteEditTargetHidden } from "../../lib/websiteBuilderEdit"
 
@@ -916,6 +918,8 @@ function FreeformCanvasLayer({
   editor,
   onPhotoClick,
   pinnedOnly = false,
+  activePage = "home",
+  tagline = "",
 }: {
   items: WebsiteCanvasItem[]
   textStyles: WebsiteTextStyles
@@ -924,6 +928,8 @@ function FreeformCanvasLayer({
   onPhotoClick: (url: string) => void
   /** When true, only scroll-fixed items; when false, skip pinned items. */
   pinnedOnly?: boolean
+  activePage?: WebsitePublicPageId
+  tagline?: string
 }) {
   const layerRef = useRef<HTMLDivElement | null>(null)
   const [layerWidth, setLayerWidth] = useState(WEBSITE_FREEFORM_DESIGN_WIDTH)
@@ -942,6 +948,8 @@ function FreeformCanvasLayer({
   }, [items.length, pinnedOnly])
   const scale = websiteDesignScale(layerWidth)
   const filtered = items.filter((item) => {
+    if (!canvasItemVisibleOnPage(item, activePage, tagline)) return false
+    if (!editMode && isWebsiteEditTargetHidden(textStyles, `canvas.${item.id}`)) return false
     const pinned = Boolean(textStyles[`canvas.${item.id}`]?.scrollFixed)
     return pinnedOnly ? pinned : !pinned
   })
@@ -1178,6 +1186,10 @@ function FreeformCanvasLayer({
           maxWidth: _cssMaxW,
           ...textCss
         } = css
+        const scaledFontSize = scaleWebsiteFontSize(
+          typeof textCss.fontSize === "string" ? textCss.fontSize : undefined,
+          scale,
+        )
         return (
           <CanvasEditable
             key={item.id}
@@ -1196,6 +1208,7 @@ function FreeformCanvasLayer({
             resizeAnchor="center"
             style={{
               ...textCss,
+              ...(scaledFontSize ? { fontSize: scaledFontSize } : null),
               boxSizing: "border-box",
               left: "50%",
               marginLeft: -(width * scale) / 2,
@@ -1347,6 +1360,10 @@ function ShowcaseLayout({
     const { transform: _t, maxWidth: _mw, ...cssSansTransform } = css
     const designW = typeof st?.maxWidth === "number" ? st.maxWidth : undefined
     const screenW = designW != null ? designW * (designScale > 0 ? designScale : 1) : undefined
+    const scaledFontSize = scaleWebsiteFontSize(
+      typeof cssSansTransform.fontSize === "string" ? cssSansTransform.fontSize : undefined,
+      designScale > 0 ? designScale : 1,
+    )
     return {
       editMode,
       selectedTargetId: editor?.selectedTargetId,
@@ -1359,6 +1376,7 @@ function ShowcaseLayout({
       positionScale: designScale > 0 ? designScale : 1,
       style: {
         ...cssSansTransform,
+        ...(scaledFontSize ? { fontSize: scaledFontSize } : null),
         ...(screenW != null
           ? {
               width: screenW,
@@ -2067,6 +2085,8 @@ function ShowcaseLayout({
           editor={editor}
           onPhotoClick={onPhotoClick}
           pinnedOnly={false}
+          activePage={activePage}
+          tagline={data.tagline}
         />
       </div>
       <FreeformCanvasLayer
@@ -2076,6 +2096,8 @@ function ShowcaseLayout({
         editor={editor}
         onPhotoClick={onPhotoClick}
         pinnedOnly
+        activePage={activePage}
+        tagline={data.tagline}
       />
     </div>
   )

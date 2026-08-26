@@ -28,6 +28,7 @@ import { buildInvoicePdfBytes, loadInvoiceTemplateSettings } from "../../lib/inv
 import { consumeInvoicesPrefill } from "../../lib/workflowNavigation"
 import { formatDisplayText } from "../../lib/formatDisplayText"
 import { formatAppError, isAuthSessionError } from "../../lib/formatAppError"
+import CustomerSearchPicker, { customerSearchPickerRowToContact } from "../../components/CustomerSearchPicker"
 import { getFreshAccessToken } from "../../lib/authPlatformApi"
 import { useCustomerDataScope } from "../../hooks/useCustomerDataScope"
 import {
@@ -917,31 +918,31 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
 
       <div style={{ display: "grid", gap: 12, padding: 14, border: `1px solid ${theme.border}`, borderRadius: 10, background: "#f8fafc" }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
-          <label style={{ fontSize: 13 }}>
-            <span style={{ fontWeight: 600, display: "block", marginBottom: 4 }}>Customer</span>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <select
-                value={form.customerId}
-                onChange={(e) => {
-                  const row = customers.find((c) => c.id === e.target.value)
-                  if (row) applyCustomer(row)
-                }}
-                disabled={customersLoading}
-                style={{ ...inputStyle, flex: 1 }}
-              >
-                <option value="">
-                  {customersLoading
-                    ? "Loading customers…"
-                    : customers.length
-                      ? "Select customer…"
-                      : "No customers found"}
-                </option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.display_name}
-                  </option>
-                ))}
-              </select>
+          <div>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <CustomerSearchPicker
+                  customers={customers}
+                  value={form.customerId}
+                  onChange={(id, row) => {
+                    if (row) applyCustomer(customerSearchPickerRowToContact(row))
+                    else {
+                      setForm((prev) => ({
+                        ...prev,
+                        customerId: id,
+                        customerName: id ? prev.customerName : "",
+                        customerPhone: id ? prev.customerPhone : "",
+                        customerEmail: id ? prev.customerEmail : "",
+                        customerAddress: id ? prev.customerAddress : "",
+                      }))
+                    }
+                  }}
+                  allowEmpty
+                  emptyLabel="— No customer —"
+                  loading={customersLoading}
+                  disabled={customersLoading}
+                />
+              </div>
               <button
                 type="button"
                 onClick={() => {
@@ -949,12 +950,12 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
                   setCustomerLoadKey((n) => n + 1)
                 }}
                 disabled={customersLoading}
-                style={{ ...secondaryBtn, padding: "8px 10px", flexShrink: 0 }}
+                style={{ ...secondaryBtn, padding: "8px 10px", flexShrink: 0, marginTop: 22 }}
               >
                 Retry
               </button>
             </div>
-          </label>
+          </div>
           <label style={{ fontSize: 13 }}>
             <span style={{ fontWeight: 600, display: "block", marginBottom: 4 }}>From estimate</span>
             <select
