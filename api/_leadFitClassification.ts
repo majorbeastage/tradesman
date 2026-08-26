@@ -4,7 +4,20 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { maybeCreateConversationAfterLeadFitHot } from "./_ensureConversationFromLeadPolicy.js"
-import { urgencyPatchFromFitClassification } from "../src/lib/customerUrgency.js"
+
+/** Keep this in api/ — platform-tools cannot import ../src or the public site 500s. */
+function urgencyPatchFromFitClassification(
+  classification: string,
+  currentRaw: string | null | undefined,
+): string | null {
+  const current = typeof currentRaw === "string" ? currentRaw.trim() : ""
+  if (classification === "bad") {
+    if (current === "Complete" || current === "Lost") return null
+    return "Suspected Spam"
+  }
+  if (current === "Suspected Spam") return "Good Standing"
+  return null
+}
 
 export type LeadFitBucket = "hot" | "maybe" | "bad"
 

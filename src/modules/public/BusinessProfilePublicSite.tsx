@@ -2175,9 +2175,12 @@ function ShowcaseLayout({
 
   const isHairPlumbing = data.templateId === "hair_plumbing"
   const canvasReach = websiteCanvasReachPx(data.canvasItems, textStyles, activePage, data.tagline)
+  const homeCanvasFloorPx = 720 + 120
   const pageCanvasMinPx = editMode
-    ? Math.max(WEBSITE_EDITOR_PAGE_CANVAS_MIN_PX, canvasReach + 480)
-    : Math.max(activePage === "home" ? 0 : 720, canvasReach + 120)
+    ? activePage === "home"
+      ? Math.max(homeCanvasFloorPx, canvasReach + 120)
+      : Math.max(WEBSITE_EDITOR_PAGE_CANVAS_MIN_PX, canvasReach + 480)
+    : Math.max(activePage === "home" ? homeCanvasFloorPx : 720, canvasReach + 120)
 
   return (
     <div
@@ -2809,7 +2812,7 @@ export function BusinessProfilePublicSite({
           background: #fff; color: #000; border-radius: 4px;
         }
         .bp-showcase-hero {
-          min-height: min(68vh, 560px);
+          min-height: 560px;
           background-size: cover;
           background-position: center;
           color: #fff;
@@ -2818,7 +2821,7 @@ export function BusinessProfilePublicSite({
           position: relative; z-index: 1;
         }
         .bp-showcase-hero-parallax {
-          min-height: min(78vh, 720px);
+          min-height: 720px;
           background: transparent;
           align-items: center;
           color: #0f172a;
