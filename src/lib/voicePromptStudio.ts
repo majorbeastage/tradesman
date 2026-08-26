@@ -80,6 +80,11 @@ export async function voiceStudioAdminRequest(action: string, body: Record<strin
 
 export const voiceStudioUserRequest = voiceStudioAdminRequest
 
+export async function transcribeAttendantAudio(audioUrl: string): Promise<string> {
+  const payload = await voiceStudioUserRequest("client-transcribe-attendant", { audioUrl })
+  return typeof payload.text === "string" ? payload.text.trim() : ""
+}
+
 export async function voiceStudioExternalRequest(
   action: string,
   body: Record<string, unknown>,

@@ -13,7 +13,6 @@ import {
   normalizePhone,
   pickFirstString,
   toTwilioE164,
-  twilioPlayLikelySupportedRecordingUrl,
 } from "./_communications.js"
 import {
   activeScreeningSteps,
@@ -22,8 +21,10 @@ import {
   loadVoiceAutoAttendantForUser,
   priorAnswersMap,
   resolveScreeningPrompt,
+  resolveStepVoiceSource,
   type ScreeningAnswer,
   type VoiceAutoAttendantSettings,
+  type VoiceScreeningStep,
 } from "./_voiceAutoAttendant.js"
 
 const SAY = `voice="Polly.Matthew" language="en-US"`
@@ -64,14 +65,20 @@ function screeningBaseQuery(req: VercelRequest, channel: CommunicationChannel | 
   return q
 }
 
-function promptVerb(settings: VoiceAutoAttendantSettings, step: { prompt: string; recordingUrl?: string }): string {
+function introVerb(settings: VoiceAutoAttendantSettings, introText?: string): string {
+  const url = settings.introRecordingUrl?.trim() || ""
+  if (url) return `<Play>${xmlEscape(url)}</Play>`
+  const text = introText?.trim() || ""
+  return text ? `<Say ${SAY}>${xmlEscape(text)}</Say>` : ""
+}
+
+function promptVerb(settings: VoiceAutoAttendantSettings, step: VoiceScreeningStep, promptText: string): string {
+  const source = resolveStepVoiceSource(settings, step)
   const url = step.recordingUrl?.trim() || ""
-  const wantsRecording =
-    (settings.mode === "recorded_menu" || settings.mode === "record_own_menu") && !!url
-  if (wantsRecording && twilioPlayLikelySupportedRecordingUrl(url)) {
+  if ((source === "hannah" || source === "own") && url) {
     return `<Play>${xmlEscape(url)}</Play>`
   }
-  return `<Say ${SAY}>${xmlEscape(step.prompt)}</Say>`
+  return `<Say ${SAY}>${xmlEscape(promptText)}</Say>`
 }
 
 function buildGatherStepTwiml(params: {
@@ -79,12 +86,20 @@ function buildGatherStepTwiml(params: {
   settings: VoiceAutoAttendantSettings
   promptText: string
   recordingUrl?: string
+  voiceSource?: VoiceScreeningStep["voiceSource"]
   responseTimeoutSeconds?: number
   intro?: string
   speechHints?: string
 }): string {
-  const intro = params.intro ? `<Say ${SAY}>${xmlEscape(params.intro)}</Say>` : ""
-  const prompt = promptVerb(params.settings, { prompt: params.promptText, recordingUrl: params.recordingUrl })
+  const intro = introVerb(params.settings, params.intro)
+  const prompt = promptVerb(params.settings, {
+    id: "prompt",
+    kind: "custom",
+    prompt: params.promptText,
+    recordingUrl: params.recordingUrl,
+    voiceSource: params.voiceSource,
+    enabled: true,
+  }, params.promptText)
   const hintsAttr = params.speechHints?.trim() ? ` hints="${xmlEscape(params.speechHints.trim())}"` : ""
   const responseTimeout = Math.min(20, Math.max(5, Math.round(params.responseTimeoutSeconds ?? 12)))
   return (
@@ -334,6 +349,7 @@ export async function callScreeningHandler(req: VercelRequest, res: VercelRespon
             settings,
             promptText: nextPrompt,
             recordingUrl: nextStep.recordingUrl,
+            voiceSource: nextStep.voiceSource,
             responseTimeoutSeconds: nextStep.responseTimeoutSeconds,
             speechHints,
           }),
@@ -438,6 +454,7 @@ export async function callScreeningHandler(req: VercelRequest, res: VercelRespon
         settings,
         promptText: firstPrompt,
         recordingUrl: first.recordingUrl,
+        voiceSource: first.voiceSource,
         responseTimeoutSeconds: first.responseTimeoutSeconds,
         intro: intro || undefined,
         speechHints,

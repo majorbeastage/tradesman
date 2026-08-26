@@ -5,20 +5,77 @@ import { useAuth } from "../contexts/AuthContext"
 import { useLocale } from "../i18n/LocaleContext"
 import { theme } from "../styles/theme"
 
-type Props = {
-  onRecorded: (publicUrl: string) => void
+type SpeechRecognitionLike = {
+  continuous: boolean
+  interimResults: boolean
+  lang: string
+  onresult: ((ev: { results: SpeechRecognitionResultList }) => void) | null
+  onerror: ((ev?: Event) => void) | null
+  onend: (() => void) | null
+  start: () => void
+  stop: () => void
 }
 
-export function AttendantStepRecorder({ onRecorded }: Props) {
+type Props = {
+  onRecorded: (publicUrl: string, transcript?: string) => void
+  onTranscript?: (text: string) => void
+  recordLabel?: string
+}
+
+function speechCtor(): (new () => SpeechRecognitionLike) | undefined {
+  if (typeof window === "undefined") return undefined
+  const w = window as unknown as {
+    SpeechRecognition?: new () => SpeechRecognitionLike
+    webkitSpeechRecognition?: new () => SpeechRecognitionLike
+  }
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition
+}
+
+export function AttendantStepRecorder({ onRecorded, onTranscript, recordLabel }: Props) {
   const { t } = useLocale()
   const { user } = useAuth()
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<BlobPart[]>([])
   const streamRef = useRef<MediaStream | null>(null)
   const fileRef = useRef<HTMLInputElement | null>(null)
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
+  const transcriptRef = useRef("")
   const [recording, setRecording] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState("")
+
+  function startSpeechCapture() {
+    const Ctor = speechCtor()
+    if (!Ctor) return
+    try {
+      const rec = new Ctor()
+      rec.continuous = true
+      rec.interimResults = true
+      rec.lang = "en-US"
+      transcriptRef.current = ""
+      rec.onresult = (ev) => {
+        let text = ""
+        for (let i = 0; i < ev.results.length; i++) {
+          text += ev.results[i]?.[0]?.transcript ?? ""
+        }
+        transcriptRef.current = text.replace(/\s+/g, " ").trim()
+        if (transcriptRef.current) onTranscript?.(transcriptRef.current)
+      }
+      rec.start()
+      recognitionRef.current = rec
+    } catch {
+      recognitionRef.current = null
+    }
+  }
+
+  function stopSpeechCapture() {
+    try {
+      recognitionRef.current?.stop()
+    } catch {
+      /* ignore */
+    }
+    recognitionRef.current = null
+  }
 
   async function startRecording() {
     setError("")
@@ -37,9 +94,11 @@ export function AttendantStepRecorder({ onRecorded }: Props) {
       recorder.onstop = () => {
         stream.getTracks().forEach((track) => track.stop())
         streamRef.current = null
-        void saveBlob(new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" }), recorder.mimeType || "audio/webm")
+        const transcript = transcriptRef.current
+        void saveBlob(new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" }), recorder.mimeType || "audio/webm", transcript)
       }
       recorderRef.current = recorder
+      startSpeechCapture()
       recorder.start()
       setRecording(true)
     } catch (e) {
@@ -48,12 +107,13 @@ export function AttendantStepRecorder({ onRecorded }: Props) {
   }
 
   function stopRecording() {
+    stopSpeechCapture()
     recorderRef.current?.stop()
     recorderRef.current = null
     setRecording(false)
   }
 
-  async function saveBlob(blob: Blob, mimeType: string) {
+  async function saveBlob(blob: Blob, mimeType: string, transcript?: string) {
     if (!user?.id) {
       setError(t("account.callScreening.recordSignIn"))
       return
@@ -66,7 +126,7 @@ export function AttendantStepRecorder({ onRecorded }: Props) {
     setError("")
     try {
       const publicUrl = await uploadAttendantAudio(user.id, blob, mimeType)
-      onRecorded(publicUrl)
+      onRecorded(publicUrl, transcript?.trim() || undefined)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -99,7 +159,7 @@ export function AttendantStepRecorder({ onRecorded }: Props) {
               cursor: uploading ? "wait" : "pointer",
             }}
           >
-            {uploading ? t("account.callScreening.recordSaving") : t("account.callScreening.recordButton")}
+            {uploading ? t("account.callScreening.recordSaving") : recordLabel || t("account.callScreening.recordButton")}
           </button>
         ) : (
           <button
@@ -144,7 +204,6 @@ export function AttendantStepRecorder({ onRecorded }: Props) {
           onChange={(e) => void onPickFile(e.target.files?.[0])}
         />
       </div>
-      <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.45 }}>{t("account.callScreening.recordConvertHelp")}</span>
       {error ? <p style={{ margin: 0, fontSize: 12, color: "#b91c1c" }}>{error}</p> : null}
     </div>
   )

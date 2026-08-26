@@ -51,7 +51,15 @@ import { loadOrgRosterForUser, type OrgRosterEntry } from "../../lib/orgRoster"
 import { canUsePortalViewBar } from "../../lib/portalViewRules"
 import { CallForwardAdvancedOptions } from "../../components/CallForwardAdvancedOptions"
 import { useLocale } from "../../i18n/LocaleContext"
-import { INTRO_PROMPT_MAX_LENGTH } from "../../lib/voiceAutoAttendant"
+import { AttendantIntroGreetingEditor } from "../../components/AttendantIntroGreetingEditor"
+import { reencodeAttendantRecordingUrl } from "../../lib/attendantRecordingUpload"
+import { isTwilioPlaySafeAudioUrl } from "../../lib/audioToTwilioWav"
+import {
+  attendantModeWhenEnabled,
+  resolveMenuLayout,
+  stampStepVoiceSources,
+  type VoiceMenuLayout,
+} from "../../lib/voiceAutoAttendant"
 
 type ScheduleView = "week" | "month" | "day" | "year"
 
@@ -790,7 +798,7 @@ function FunctionEditModal({
                     autoAttendant: {
                       ...draft.autoAttendant,
                       enabled: e.target.checked,
-                      mode: e.target.checked && draft.autoAttendant.mode === "off" ? "ai_menu" : draft.autoAttendant.mode,
+                      mode: attendantModeWhenEnabled(e.target.checked, draft.autoAttendant.mode),
                     },
                   })
                 }
@@ -798,40 +806,43 @@ function FunctionEditModal({
               Play menu before connecting
             </label>
             <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 700 }}>
-              Menu type
+              {t("account.callScreening.layout")}
               <select
-                value={draft.autoAttendant.mode}
+                value={resolveMenuLayout(draft.autoAttendant)}
                 disabled={!draft.autoAttendant.enabled}
                 onChange={(e) =>
                   setDraft({
                     ...draft,
-                    autoAttendant: { ...draft.autoAttendant, mode: e.target.value as typeof draft.autoAttendant.mode },
+                    autoAttendant: {
+                      ...draft.autoAttendant,
+                      menuLayout: e.target.value as VoiceMenuLayout,
+                      mode: attendantModeWhenEnabled(draft.autoAttendant.enabled, draft.autoAttendant.mode),
+                    },
                   })
                 }
                 style={{ padding: "8px 10px", borderRadius: 8, border: `1px solid ${theme.border}` }}
               >
-                <option value="ai_menu">AI menu</option>
-                <option value="recorded_menu">Hannah recordings</option>
-                <option value="record_own_menu">{t("account.callScreening.modeRecordOwn")}</option>
+                <option value="standard">{t("account.callScreening.layoutStandard")}</option>
+                <option value="custom">{t("account.callScreening.layoutCustom")}</option>
               </select>
             </label>
-            <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 700 }}>
-              {t("account.callScreening.openingLine")}
-              <textarea
-                value={draft.autoAttendant.introPrompt}
-                disabled={!draft.autoAttendant.enabled}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    autoAttendant: { ...draft.autoAttendant, introPrompt: e.target.value.slice(0, INTRO_PROMPT_MAX_LENGTH) },
-                  })
-                }
-                rows={3}
-                style={{ padding: "8px 10px", borderRadius: 8, border: `1px solid ${theme.border}`, resize: "vertical", fontWeight: 500 }}
-                placeholder={t("account.callScreening.openingLinePlaceholder")}
-              />
-              <span style={{ fontWeight: 500, color: "#64748b" }}>{t("account.callScreening.openingLineHelp")}</span>
-            </label>
+            <AttendantIntroGreetingEditor
+              introPrompt={draft.autoAttendant.introPrompt}
+              introRecordingUrl={draft.autoAttendant.introRecordingUrl}
+              disabled={!draft.autoAttendant.enabled}
+              onIntroPromptChange={(value) =>
+                setDraft({
+                  ...draft,
+                  autoAttendant: { ...draft.autoAttendant, introPrompt: value },
+                })
+              }
+              onIntroRecordingUrlChange={(url) =>
+                setDraft({
+                  ...draft,
+                  autoAttendant: { ...draft.autoAttendant, introRecordingUrl: url },
+                })
+              }
+            />
             <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600 }}>
               <input
                 type="checkbox"
@@ -1325,6 +1336,16 @@ export function CallSchedulePanel({ profileUserId, onOpenMyT }: Props) {
     if (!profile || !draft) return false
     return JSON.stringify(profile) !== JSON.stringify(draft)
   }, [profile, draft])
+  const dirtyRef = useRef(dirty)
+  dirtyRef.current = dirty
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "visible" && !dirtyRef.current) void load()
+    }
+    document.addEventListener("visibilitychange", onVis)
+    return () => document.removeEventListener("visibilitychange", onVis)
+  }, [load])
 
   const active = draft ?? profile
   const weekDates = useMemo(() => weekDatesContaining(weekAnchor), [weekAnchor])
@@ -1338,6 +1359,11 @@ export function CallSchedulePanel({ profileUserId, onOpenMyT }: Props) {
     if (!supabase || !toSave) return
     setSaving(true)
     setMessage("")
+    let introRecordingUrl = toSave.autoAttendant.introRecordingUrl?.trim() || undefined
+    if (introRecordingUrl && !isTwilioPlaySafeAudioUrl(introRecordingUrl)) {
+      introRecordingUrl = await reencodeAttendantRecordingUrl(toSave.profileUserId, introRecordingUrl)
+    }
+    const stampedSteps = stampStepVoiceSources(toSave.autoAttendant, toSave.autoAttendant.menuSteps)
     const { error } = await saveCallRoutingProfile(supabase, toSave.profileUserId, {
       businessHours: toSave.businessHours,
       timezone: toSave.timezone,
@@ -1350,12 +1376,13 @@ export function CallSchedulePanel({ profileUserId, onOpenMyT }: Props) {
       forwardWhisperAnnouncementTemplate: toSave.forwardWhisperAnnouncementTemplate,
       callHunting: toSave.callHunting,
       autoAttendant: {
+        ...toSave.autoAttendant,
         enabled: toSave.autoAttendant.enabled,
-        mode: toSave.autoAttendant.enabled ? toSave.autoAttendant.mode : "off",
-        spamScreenEnabled: toSave.autoAttendant.spamScreenEnabled,
-        forwardGoodLeads: toSave.autoAttendant.forwardGoodLeads,
-        unknownCallerShowTradesmanId: toSave.autoAttendant.unknownCallerShowTradesmanId,
+        mode: attendantModeWhenEnabled(toSave.autoAttendant.enabled, toSave.autoAttendant.mode),
+        menuLayout: resolveMenuLayout(toSave.autoAttendant),
+        menuSteps: stampedSteps,
         introPrompt: toSave.autoAttendant.introPrompt,
+        introRecordingUrl,
       },
       scheduleVisual: toSave.scheduleVisual,
     })
@@ -1410,7 +1437,7 @@ export function CallSchedulePanel({ profileUserId, onOpenMyT }: Props) {
     } else if (id === "auto_attendant" && !draft.autoAttendant.enabled) {
       setDraft({
         ...draft,
-        autoAttendant: { ...draft.autoAttendant, enabled: true, mode: draft.autoAttendant.mode === "off" ? "ai_menu" : draft.autoAttendant.mode },
+        autoAttendant: { ...draft.autoAttendant, enabled: true, mode: attendantModeWhenEnabled(true, draft.autoAttendant.mode) },
       })
     }
     setEditFunction(id)

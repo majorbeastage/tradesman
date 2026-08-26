@@ -271,10 +271,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .map((row) => ({
           id: String(row.id ?? "").slice(0, 100),
           kind: (allowedKinds.has(String(row.kind)) ? String(row.kind) : "custom") as VoiceScreeningStepKind,
-          prompt: String(row.prompt ?? "").trim().slice(0, 500),
+          prompt: String(row.prompt ?? "").trim().slice(0, 500) || "Recorded question",
         }))
-        .filter((row) => row.id && row.prompt)
+        .filter((row) => row.id)
       return res.status(200).json({ steps: await analyzeAutoAttendantTimings(steps) })
+    }
+
+    if (action === "client-transcribe-attendant") {
+      const user = await supabaseUser(req)
+      if (!user) throw new Error("Unauthorized")
+      const audioUrl = String(body.audioUrl ?? "").trim()
+      if (!/^https?:\/\//i.test(audioUrl) || audioUrl.length > 800) throw new Error("Missing audio")
+      const openaiKey = firstEnv("OPENAI_API_KEY")
+      if (!openaiKey) return res.status(200).json({ text: "" })
+      const audioRes = await fetch(audioUrl)
+      if (!audioRes.ok) throw new Error("Could not load recording for transcription.")
+      const buf = Buffer.from(await audioRes.arrayBuffer())
+      const contentType = audioRes.headers.get("content-type") || "audio/wav"
+      const form = new FormData()
+      form.append("file", new Blob([new Uint8Array(buf)], { type: contentType }), "attendant-prompt.wav")
+      form.append("model", "whisper-1")
+      form.append("language", "en")
+      const whisper = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${openaiKey}` },
+        body: form,
+      })
+      const payload = (await whisper.json().catch(() => ({}))) as { text?: string; error?: { message?: string } }
+      if (!whisper.ok) throw new Error(payload.error?.message || "Transcription failed.")
+      return res.status(200).json({ text: typeof payload.text === "string" ? payload.text.trim().slice(0, 500) : "" })
     }
 
     const adminId = await requireAdmin(req, service)

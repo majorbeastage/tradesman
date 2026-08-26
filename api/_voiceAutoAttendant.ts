@@ -3,6 +3,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 export type VoiceAutoAttendantMode = "off" | "ai_menu" | "recorded_menu" | "record_own_menu"
+export type VoiceMenuLayout = "standard" | "custom"
+export type VoiceStepVoiceSource = "ai" | "hannah" | "own"
 
 export type VoiceScreeningStepKind =
   | "service_intent"
@@ -17,21 +19,34 @@ export type VoiceScreeningStep = {
   kind: VoiceScreeningStepKind
   prompt: string
   recordingUrl?: string
+  voiceSource?: VoiceStepVoiceSource
   responseTimeoutSeconds?: number
   enabled: boolean
+}
+
+export type VoiceSavedPrompt = {
+  id: string
+  prompt: string
+  voiceSource: VoiceStepVoiceSource
+  recordingUrl?: string
+  kind: VoiceScreeningStepKind
 }
 
 export type VoiceAutoAttendantSettings = {
   enabled: boolean
   mode: VoiceAutoAttendantMode
+  menuLayout?: VoiceMenuLayout
   spamScreenEnabled: boolean
   forwardGoodLeads: boolean
   spamToVoicemail: boolean
   menuSteps: VoiceScreeningStep[]
+  savedPrompts?: VoiceSavedPrompt[]
   unknownCallerShowTradesmanId: boolean
   collectContactInfo: boolean
   /** AI opening line before the first question. Empty string skips it. */
   introPrompt: string
+  /** Optional recorded opening greeting — independent of how questions are voiced. */
+  introRecordingUrl?: string
 }
 
 const RECOMMENDED: VoiceScreeningStep[] = [
@@ -62,13 +77,21 @@ function parseIntroPrompt(raw: unknown): string {
   return raw.slice(0, INTRO_PROMPT_MAX_LENGTH)
 }
 
+function parseIntroRecordingUrl(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined
+  const url = raw.trim().slice(0, 800)
+  return url || undefined
+}
+
 export const DEFAULT_VOICE_AUTO_ATTENDANT: VoiceAutoAttendantSettings = {
   enabled: false,
   mode: "off",
+  menuLayout: "standard",
   spamScreenEnabled: true,
   forwardGoodLeads: true,
   spamToVoicemail: true,
   menuSteps: [...RECOMMENDED],
+  savedPrompts: [],
   unknownCallerShowTradesmanId: false,
   collectContactInfo: true,
   introPrompt: DEFAULT_INTRO_PROMPT,
@@ -91,11 +114,14 @@ function parseStep(raw: unknown): VoiceScreeningStep | null {
   const responseTimeout = Number(o.responseTimeoutSeconds)
   const id = typeof o.id === "string" && o.id.trim() ? o.id.trim() : `step_${Math.random().toString(36).slice(2, 9)}`
   if (!prompt && !recordingUrl) return null
+  const voiceSource =
+    o.voiceSource === "ai" || o.voiceSource === "hannah" || o.voiceSource === "own" ? o.voiceSource : undefined
   return {
     id,
     kind,
     prompt: prompt || "Please leave a brief message.",
     recordingUrl: recordingUrl || undefined,
+    voiceSource,
     responseTimeoutSeconds: Number.isFinite(responseTimeout)
       ? Math.min(20, Math.max(5, Math.round(responseTimeout)))
       : recommendedResponseTimeoutSeconds(kind, prompt),
@@ -131,22 +157,76 @@ export function parseVoiceAutoAttendant(raw: unknown): VoiceAutoAttendantSetting
     o.mode === "ai_menu" || o.mode === "recorded_menu" || o.mode === "record_own_menu" || o.mode === "off"
       ? o.mode
       : DEFAULT_VOICE_AUTO_ATTENDANT.mode
-  const menuStepsRaw = Array.isArray(o.menuSteps) ? o.menuSteps : null
-  const menuSteps =
-    menuStepsRaw && menuStepsRaw.length > 0
-      ? menuStepsRaw.map(parseStep).filter((s): s is VoiceScreeningStep => s !== null)
-      : parseLegacyMenuPrompts(o.menuPrompts)
+  const hasMenuStepsArray = Array.isArray(o.menuSteps)
+  const menuStepsRaw = hasMenuStepsArray ? o.menuSteps : null
+  const menuSteps = menuStepsRaw
+    ? menuStepsRaw.map(parseStep).filter((s): s is VoiceScreeningStep => s !== null)
+    : parseLegacyMenuPrompts(o.menuPrompts)
+  const menuLayout =
+    o.menuLayout === "standard" || o.menuLayout === "custom"
+      ? o.menuLayout
+      : mode === "recorded_menu" || mode === "record_own_menu"
+        ? "custom"
+        : "standard"
+  const savedPrompts = Array.isArray(o.savedPrompts)
+    ? o.savedPrompts
+        .map((raw) => {
+          if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null
+          const p = raw as Record<string, unknown>
+          const prompt = typeof p.prompt === "string" ? p.prompt.trim().slice(0, 500) : ""
+          if (!prompt) return null
+          const recordingUrl = typeof p.recordingUrl === "string" ? p.recordingUrl.trim().slice(0, 800) : ""
+          const voiceSource =
+            p.voiceSource === "ai" || p.voiceSource === "hannah" || p.voiceSource === "own"
+              ? p.voiceSource
+              : recordingUrl
+                ? "own"
+                : "ai"
+          return {
+            id: typeof p.id === "string" && p.id.trim() ? p.id.trim() : `saved_${Math.random().toString(36).slice(2, 9)}`,
+            prompt,
+            voiceSource,
+            recordingUrl: recordingUrl || undefined,
+            kind:
+              p.kind === "service_intent" ||
+              p.kind === "schedule_timing" ||
+              p.kind === "caller_name" ||
+              p.kind === "callback_number" ||
+              p.kind === "sms_opt_in" ||
+              p.kind === "custom"
+                ? p.kind
+                : "custom",
+          } satisfies VoiceSavedPrompt
+        })
+        .filter((p): p is VoiceSavedPrompt => p !== null)
+        .slice(0, 40)
+    : []
   return {
     enabled: o.enabled === true,
     mode,
+    menuLayout,
     spamScreenEnabled: o.spamScreenEnabled !== false,
     forwardGoodLeads: o.forwardGoodLeads !== false,
     spamToVoicemail: o.spamToVoicemail !== false,
-    menuSteps: menuSteps.length > 0 ? menuSteps : [...RECOMMENDED],
+    menuSteps: hasMenuStepsArray ? menuSteps : menuSteps.length > 0 ? menuSteps : [...RECOMMENDED],
+    savedPrompts,
     unknownCallerShowTradesmanId: o.unknownCallerShowTradesmanId === true,
     collectContactInfo: o.collectContactInfo !== false,
     introPrompt: parseIntroPrompt(o.introPrompt),
+    introRecordingUrl: parseIntroRecordingUrl(o.introRecordingUrl),
   }
+}
+
+export function resolveStepVoiceSource(
+  settings: Pick<VoiceAutoAttendantSettings, "mode">,
+  step: Pick<VoiceScreeningStep, "voiceSource" | "recordingUrl">,
+): VoiceStepVoiceSource {
+  if (step.voiceSource === "ai" || step.voiceSource === "hannah" || step.voiceSource === "own") return step.voiceSource
+  if (step.recordingUrl) {
+    if (settings.mode === "recorded_menu") return "hannah"
+    return "own"
+  }
+  return "ai"
 }
 
 export function resolveScreeningPrompt(step: VoiceScreeningStep, prior: Record<string, string>): string {

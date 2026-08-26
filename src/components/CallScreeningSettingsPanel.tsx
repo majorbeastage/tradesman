@@ -7,8 +7,13 @@ import {
   mergeVoiceAutoAttendantMetadata,
   parseVoiceAutoAttendant,
   recommendedResponseTimeoutSeconds,
-  type VoiceAutoAttendantMode,
+  recommendedStepsWithContact,
+  resolveMenuLayout,
+  stampStepVoiceSources,
+  attendantModeWhenEnabled,
   type VoiceAutoAttendantSettings,
+  type VoiceMenuLayout,
+  type VoiceSavedPrompt,
 } from "../lib/voiceAutoAttendant"
 import { reencodeAttendantRecordingUrl } from "../lib/attendantRecordingUpload"
 import { isTwilioPlaySafeAudioUrl } from "../lib/audioToTwilioWav"
@@ -16,6 +21,7 @@ import { voiceStudioUserRequest } from "../lib/voicePromptStudio"
 import { useLocale } from "../i18n/LocaleContext"
 import { CallScreeningMenuBuilder } from "./CallScreeningMenuBuilder"
 import { CallScheduleCalendarLink } from "./CallScheduleCalendarLink"
+import { AttendantIntroGreetingEditor } from "./AttendantIntroGreetingEditor"
 
 type Props = {
   profileUserId: string
@@ -26,6 +32,9 @@ export function CallScreeningSettingsPanel({ profileUserId }: Props) {
   const [settings, setSettings] = useState<VoiceAutoAttendantSettings>(DEFAULT_VOICE_AUTO_ATTENDANT)
   const [menuDraft, setMenuDraft] = useState(DEFAULT_VOICE_AUTO_ATTENDANT.menuSteps)
   const [introDraft, setIntroDraft] = useState(DEFAULT_VOICE_AUTO_ATTENDANT.introPrompt)
+  const [introRecordingDraft, setIntroRecordingDraft] = useState<string | undefined>()
+  const [layoutDraft, setLayoutDraft] = useState<VoiceMenuLayout>("standard")
+  const [savedPromptsDraft, setSavedPromptsDraft] = useState<VoiceSavedPrompt[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState("")
@@ -43,6 +52,9 @@ export function CallScreeningSettingsPanel({ profileUserId }: Props) {
     setSettings(parsed)
     setMenuDraft(parsed.menuSteps)
     setIntroDraft(parsed.introPrompt)
+    setIntroRecordingDraft(parsed.introRecordingUrl)
+    setLayoutDraft(resolveMenuLayout(parsed))
+    setSavedPromptsDraft(parsed.savedPrompts ?? [])
     setMenuDirty(false)
     setLoading(false)
   }, [profileUserId])
@@ -51,7 +63,19 @@ export function CallScreeningSettingsPanel({ profileUserId }: Props) {
     void load()
   }, [load])
 
-  async function persist(next: VoiceAutoAttendantSettings) {
+  function draftSettings(patch: Partial<VoiceAutoAttendantSettings> = {}): VoiceAutoAttendantSettings {
+    return {
+      ...settings,
+      introPrompt: introDraft.slice(0, INTRO_PROMPT_MAX_LENGTH),
+      introRecordingUrl: introRecordingDraft,
+      menuLayout: layoutDraft,
+      savedPrompts: savedPromptsDraft,
+      menuSteps: stampStepVoiceSources(settings, menuDraft),
+      ...patch,
+    }
+  }
+
+  async function persist(next: VoiceAutoAttendantSettings, opts?: { keepDirty?: boolean }) {
     if (!supabase || !profileUserId) return
     setSaving(true)
     setMessage("")
@@ -72,33 +96,42 @@ export function CallScreeningSettingsPanel({ profileUserId }: Props) {
     setSettings(next)
     setMenuDraft(next.menuSteps)
     setIntroDraft(next.introPrompt)
-    setMenuDirty(false)
-    setMessage(t("account.callScreening.saved"))
+    setIntroRecordingDraft(next.introRecordingUrl)
+    setLayoutDraft(resolveMenuLayout(next))
+    setSavedPromptsDraft(next.savedPrompts ?? [])
+    if (!opts?.keepDirty) {
+      setMenuDirty(false)
+      setMessage(t("account.callScreening.saved"))
+    }
   }
 
   async function saveToggles(patch: Partial<VoiceAutoAttendantSettings>) {
-    await persist({ ...settings, ...patch })
+    await persist(draftSettings(patch), { keepDirty: menuDirty })
   }
 
   async function saveMenu() {
     setSaving(true)
-    let timedSteps = menuDraft.map((step) => ({
+    let timedSteps = stampStepVoiceSources(settings, menuDraft)
+      .filter((step) => step.prompt.trim() || step.recordingUrl?.trim())
+      .map((step) => ({
       ...step,
       responseTimeoutSeconds: recommendedResponseTimeoutSeconds(step.kind, step.prompt),
     }))
-    if (settings.mode === "record_own_menu") {
-      timedSteps = await Promise.all(
-        timedSteps.map(async (step) => {
-          const url = step.recordingUrl?.trim()
-          if (!url || isTwilioPlaySafeAudioUrl(url)) return step
-          const converted = await reencodeAttendantRecordingUrl(profileUserId, url)
-          return converted !== url ? { ...step, recordingUrl: converted } : step
-        }),
-      )
+    timedSteps = await Promise.all(
+      timedSteps.map(async (step) => {
+        const url = step.recordingUrl?.trim()
+        if (!url || isTwilioPlaySafeAudioUrl(url)) return step
+        const converted = await reencodeAttendantRecordingUrl(profileUserId, url)
+        return converted !== url ? { ...step, recordingUrl: converted } : step
+      }),
+    )
+    let introRecordingUrl = introRecordingDraft?.trim() || undefined
+    if (introRecordingUrl && !isTwilioPlaySafeAudioUrl(introRecordingUrl)) {
+      introRecordingUrl = await reencodeAttendantRecordingUrl(profileUserId, introRecordingUrl)
     }
     try {
       const payload = await voiceStudioUserRequest("client-analyze-auto-attendant", {
-        steps: menuDraft.map(({ id, kind, prompt }) => ({ id, kind, prompt })),
+        steps: timedSteps.map(({ id, kind, prompt }) => ({ id, kind, prompt })),
       })
       const analyzed = Array.isArray(payload.steps)
         ? (payload.steps as Array<{ id?: string; responseTimeoutSeconds?: number }>)
@@ -115,8 +148,11 @@ export function CallScreeningSettingsPanel({ profileUserId }: Props) {
     }
     setSaving(false)
     await persist({
-      ...settings,
+      ...draftSettings(),
+      enabled: settings.enabled,
+      mode: attendantModeWhenEnabled(settings.enabled, settings.mode),
       introPrompt: introDraft.slice(0, INTRO_PROMPT_MAX_LENGTH),
+      introRecordingUrl,
       menuSteps: timedSteps,
     })
   }
@@ -130,7 +166,10 @@ export function CallScreeningSettingsPanel({ profileUserId }: Props) {
           type="checkbox"
           checked={settings.enabled}
           onChange={(e) =>
-            void saveToggles({ enabled: e.target.checked, mode: e.target.checked ? settings.mode === "off" ? "ai_menu" : settings.mode : "off" })
+            void saveToggles({
+              enabled: e.target.checked,
+              mode: attendantModeWhenEnabled(e.target.checked, settings.mode),
+            })
           }
           style={{ marginTop: 3 }}
         />
@@ -139,32 +178,39 @@ export function CallScreeningSettingsPanel({ profileUserId }: Props) {
       {settings.enabled ? (
         <>
           <label style={{ display: "grid", gap: 6, maxWidth: 420 }}>
-            <span style={{ fontSize: 12, fontWeight: 600 }}>{t("account.callScreening.mode")}</span>
+            <span style={{ fontSize: 12, fontWeight: 600 }}>{t("account.callScreening.layout")}</span>
             <select
-              value={settings.mode === "off" ? "ai_menu" : settings.mode}
-              onChange={(e) => void saveToggles({ mode: e.target.value as VoiceAutoAttendantMode })}
-              style={theme.formInput}
-            >
-              <option value="ai_menu">{t("account.callScreening.modeAi")}</option>
-              <option value="recorded_menu">{t("account.callScreening.modeRecorded")}</option>
-              <option value="record_own_menu">{t("account.callScreening.modeRecordOwn")}</option>
-            </select>
-          </label>
-
-          <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontSize: 12, fontWeight: 600 }}>{t("account.callScreening.openingLine")}</span>
-            <textarea
-              value={introDraft}
+              value={layoutDraft}
               onChange={(e) => {
-                setIntroDraft(e.target.value.slice(0, INTRO_PROMPT_MAX_LENGTH))
+                const layout = e.target.value as VoiceMenuLayout
+                setLayoutDraft(layout)
+                if (layout === "standard") {
+                  setMenuDraft(recommendedStepsWithContact(settings.collectContactInfo))
+                } else {
+                  setMenuDraft([])
+                }
                 setMenuDirty(true)
               }}
-              rows={3}
-              style={{ ...theme.formInput, resize: "vertical", minHeight: 72, maxWidth: 640 }}
-              placeholder={t("account.callScreening.openingLinePlaceholder")}
-            />
-            <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.45 }}>{t("account.callScreening.openingLineHelp")}</span>
+              style={theme.formInput}
+            >
+              <option value="standard">{t("account.callScreening.layoutStandard")}</option>
+              <option value="custom">{t("account.callScreening.layoutCustom")}</option>
+            </select>
+            <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.45 }}>{t("account.callScreening.layoutHelp")}</span>
           </label>
+
+          <AttendantIntroGreetingEditor
+            introPrompt={introDraft}
+            introRecordingUrl={introRecordingDraft}
+            onIntroPromptChange={(value) => {
+              setIntroDraft(value)
+              setMenuDirty(true)
+            }}
+            onIntroRecordingUrlChange={(url) => {
+              setIntroRecordingDraft(url)
+              setMenuDirty(true)
+            }}
+          />
 
           <div
             style={{
@@ -177,21 +223,23 @@ export function CallScreeningSettingsPanel({ profileUserId }: Props) {
             }}
           >
             <CallScreeningMenuBuilder
-              mode={
-                settings.mode === "recorded_menu"
-                  ? "recorded_menu"
-                  : settings.mode === "record_own_menu"
-                    ? "record_own_menu"
-                    : "ai_menu"
-              }
+              layout={layoutDraft}
               steps={menuDraft}
+              savedPrompts={savedPromptsDraft}
               collectContactInfo={settings.collectContactInfo}
               onChange={(steps) => {
                 setMenuDraft(steps)
                 setMenuDirty(true)
               }}
+              onSavedPromptsChange={(prompts) => {
+                setSavedPromptsDraft(prompts)
+                setMenuDirty(true)
+              }}
               onCollectContactChange={(v) => {
                 setSettings((s) => ({ ...s, collectContactInfo: v }))
+                if (layoutDraft === "standard") {
+                  setMenuDraft(recommendedStepsWithContact(v))
+                }
                 setMenuDirty(true)
               }}
             />

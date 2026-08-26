@@ -4,6 +4,7 @@ import type { CallHuntException } from "./callHunting"
 import { exceptionActiveOn } from "./callHunting"
 import type { CallRoutingProfile, DayKey } from "./callRoutingProfile"
 import { formatMinutesLabel, timeToMinutes } from "./callRoutingProfile"
+import { resolveMenuLayout } from "./voiceAutoAttendant"
 
 export type ScheduleFunctionId =
   | "auto_attendant"
@@ -282,7 +283,7 @@ export function buildDayLanePlan(profile: CallRoutingProfile, dayKey: DayKey, is
     lanes.push({
       functionId: "auto_attendant",
       label: "Menu",
-      hint: profile.autoAttendant.mode === "ai_menu" ? "AI menu" : "Recorded menu",
+      hint: resolveMenuLayout(profile.autoAttendant) === "custom" ? "Custom menu" : "Standard template",
       blocks: forwardBlocks,
     })
   }
