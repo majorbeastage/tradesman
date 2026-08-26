@@ -80,6 +80,7 @@ import { GlobalAssistantProvider } from "./contexts/GlobalAssistantContext"
 import { SetupWizardProvider } from "./contexts/SetupWizardContext"
 import RegisterSetupGuideOpener from "./components/RegisterSetupGuideOpener"
 import { supabase } from "./lib/supabase"
+import { withTimeout } from "./lib/withTimeout"
 import { useLocale } from "./i18n/LocaleContext"
 import { formatPortalTabLabel } from "./i18n/navLabel"
 import { PRODUCT_PACKAGE_IDS, SIGNUP_OPEN_PRODUCT_ADVISOR_KEY, SIGNUP_PRODUCT_PACKAGE_STORAGE_KEY, type ProductPackageId } from "./lib/productPackages"
@@ -414,38 +415,38 @@ function MainAppInner() {
     let cancelled = false
     setConnectionError("")
     void (async () => {
-      const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-      let lastErr = ""
-      for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const uid = user?.id?.trim()
+        const probe = uid
+          ? supabase.from("profiles").select("id").eq("id", uid).maybeSingle()
+          : supabase.from("profiles").select("id").limit(1)
+        const { error } = await withTimeout(Promise.resolve(probe), 3500)
         if (cancelled) return
-        if (attempt > 0) await sleep(600 * attempt)
-        try {
-          const uid = user?.id?.trim()
-          const { error } = uid
-            ? await supabase.from("profiles").select("id").eq("id", uid).maybeSingle()
-            : await supabase.from("profiles").select("id").limit(1)
-          if (cancelled) return
-          if (!error) {
-            setConnectionStatus("ok")
-            return
-          }
-          lastErr = error.message
-          const retry = /fetch|network|timeout/i.test(error.message)
-          if (!retry) break
-        } catch (err: unknown) {
-          lastErr = err instanceof Error ? err.message : String(err)
-          const retry = /fetch|network|timeout/i.test(lastErr)
-          if (!retry) break
+        if (!error) {
+          setConnectionStatus("ok")
+          return
         }
+        throw new Error(error.message)
+      } catch (err: unknown) {
+        if (cancelled) return
+        const msg = err instanceof Error ? err.message : String(err)
+        // Signed-in shell must not stay behind this banner while the Data API is hung.
+        if (user?.id) {
+          setConnectionStatus("ok")
+          return
+        }
+        setConnectionStatus("failed")
+        setConnectionError(
+          /schema cache|PGRST002/i.test(msg)
+            ? t("app.connection.schemaCache")
+            : msg,
+        )
       }
-      if (cancelled) return
-      setConnectionStatus("failed")
-      setConnectionError(lastErr)
     })()
     return () => {
       cancelled = true
     }
-  }, [authLoading, user?.id])
+  }, [authLoading, user?.id, t])
 
   const currentTabMeta = portalTabs?.find((x) => x.tab_id === page)
   const currentPageTitle =

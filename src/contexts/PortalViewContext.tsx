@@ -39,6 +39,7 @@ import {
   type SandboxDemoTeamMember,
 } from "../lib/sandboxDemoTeam"
 import { isSandboxProfile } from "../lib/sandboxEnvironment"
+import { withTimeout } from "../lib/withTimeout"
 
 const STORAGE_VIEW_ROLE = "tradesman_portal_view_role"
 const STORAGE_TARGET_USER = "tradesman_portal_target_user"
@@ -443,40 +444,53 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
     }
 
     const loadSeq = ++usersLoadSeqRef.current
+    const selfRow: ManageableUserRow = {
+      userId: authUserId,
+      label: user?.email ? resolveInternalMemberLabel({ display_name: null, email: user.email, metadata: null }) : "Me",
+      email: user?.email ?? null,
+      role: authRole ?? "user",
+      clientId: null,
+      isSelf: true,
+    }
+    if (authRole === "admin") adminSelfRowRef.current = selfRow
+    if (!usersLoadedOnceRef.current) {
+      setManageableUsers([selfRow])
+      setOrgScopedUsers([selfRow])
+    }
     const showSpinner = !usersLoadedOnceRef.current
     if (showSpinner) setLoadingUsers(true)
     setError("")
     ;(async () => {
       try {
-        const selfRow: ManageableUserRow = {
-          userId: authUserId,
-          label: user?.email ? resolveInternalMemberLabel({ display_name: null, email: user.email, metadata: null }) : "Me",
-          email: user?.email ?? null,
-          role: authRole ?? "user",
-          clientId: null,
-          isSelf: true,
-        }
-        if (authRole === "admin") adminSelfRowRef.current = selfRow
-
         const token = accessTokenRef.current
         let rows: ManageableUserRow[] = []
         let orgRows: ManageableUserRow[] = []
-        if (authRole === "admin" && token) {
-          const loaded = await loadAdminOrgScopedUsers(authUserId, targetUserId, token, selfRow)
-          rows = loaded.directory
-          orgRows = loaded.orgRows
-        } else if (authRole === "corporate_management" || authRole === "office_manager") {
-          rows = await loadManagedOrgUsers(authUserId)
-          orgRows = rows
-        } else if (authRole) {
-          rows = await loadEndUserManageableRows(authUserId, selfRow)
-          orgRows = rows
+        const loadDirectory = async () => {
+          if (authRole === "admin" && token) {
+            return loadAdminOrgScopedUsers(authUserId, targetUserId, token, selfRow)
+          }
+          if (authRole === "corporate_management" || authRole === "office_manager") {
+            const managed = await loadManagedOrgUsers(authUserId)
+            return { directory: managed, orgRows: managed }
+          }
+          if (authRole) {
+            const endUser = await loadEndUserManageableRows(authUserId, selfRow)
+            return { directory: endUser, orgRows: endUser }
+          }
+          return { directory: [selfRow], orgRows: [selfRow] }
         }
+        const loaded = await withTimeout(loadDirectory(), 4000)
+        rows = loaded.directory
+        orgRows = loaded.orgRows
         const demoSourceId = resolveDemoTeamSourceUserId(authUserId, targetUserId)
-        const team = await loadSandboxDemoTeamForProfile(demoSourceId)
-        setSandboxDemoTeam(team)
-        rows = appendSandboxDemoRows(rows, team)
-        orgRows = appendSandboxDemoRows(orgRows, team)
+        try {
+          const team = await withTimeout(loadSandboxDemoTeamForProfile(demoSourceId), 2000)
+          setSandboxDemoTeam(team)
+          rows = appendSandboxDemoRows(rows, team)
+          orgRows = appendSandboxDemoRows(orgRows, team)
+        } catch {
+          /* directory still usable without sandbox personas */
+        }
         if (loadSeq !== usersLoadSeqRef.current) return
         setManageableUsers(rows)
         setOrgScopedUsers(orgRows)
@@ -484,8 +498,9 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
       } catch (e) {
         if (loadSeq !== usersLoadSeqRef.current) return
         setError(e instanceof Error ? e.message : "Could not load users.")
-        setManageableUsers([])
-        setOrgScopedUsers([])
+        setManageableUsers((prev) => (prev.length > 0 ? prev : [selfRow]))
+        setOrgScopedUsers((prev) => (prev.length > 0 ? prev : [selfRow]))
+        usersLoadedOnceRef.current = true
       } finally {
         if (loadSeq === usersLoadSeqRef.current) setLoadingUsers(false)
       }
@@ -508,20 +523,28 @@ export function PortalViewProvider({ children, onShellChange }: Props) {
       try {
         let orgOwnerId: string | null = null
         if (supabase) {
-          orgOwnerId = await resolveOrgRosterOwnerId(supabase, targetUserId)
+          orgOwnerId = await withTimeout(resolveOrgRosterOwnerId(supabase, targetUserId), 4000)
         }
         if (cancelled) return
         if (orgOwnerId === lastOrgOwnerRef.current) return
         lastOrgOwnerRef.current = orgOwnerId
-        const loaded = await loadAdminOrgScopedUsers(
-          authUserId,
-          targetUserId,
-          accessTokenRef.current ?? "",
-          adminSelfRowRef.current,
-          orgOwnerId,
+        const loaded = await withTimeout(
+          loadAdminOrgScopedUsers(
+            authUserId,
+            targetUserId,
+            accessTokenRef.current ?? "",
+            adminSelfRowRef.current,
+            orgOwnerId,
+          ),
+          4000,
         )
         const demoSourceId = resolveDemoTeamSourceUserId(authUserId, targetUserId)
-        const team = await loadSandboxDemoTeamForProfile(demoSourceId)
+        let team = parseSandboxDemoTeam(null)
+        try {
+          team = await withTimeout(loadSandboxDemoTeamForProfile(demoSourceId), 2000)
+        } catch {
+          /* keep empty demo team */
+        }
         if (!cancelled) {
           setSandboxDemoTeam(team)
           setManageableUsers(appendSandboxDemoRows(loaded.directory, team))
