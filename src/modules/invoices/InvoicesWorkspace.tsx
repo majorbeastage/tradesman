@@ -71,7 +71,6 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
   const [savedInvoices, setSavedInvoices] = useState<InvoiceRecord[]>([])
   const [customers, setCustomers] = useState<CustomerInvoicePickerRow[]>([])
   const [customersLoading, setCustomersLoading] = useState(false)
-  const [customerLoadKey, setCustomerLoadKey] = useState(0)
   const [quotes, setQuotes] = useState<InvoiceQuotePick[]>([])
   const [busy, setBusy] = useState(false)
   const [uploadBusy, setUploadBusy] = useState(false)
@@ -232,7 +231,7 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
     return () => {
       cancelled = true
     }
-  }, [supabase, userId, customerOwnerId, customerScopeLoading, customerLoadKey, signOut])
+  }, [supabase, userId, customerOwnerId, customerScopeLoading, signOut])
 
   useEffect(() => {
     if (!supabase || !userId) return
@@ -917,45 +916,28 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
       </div>
 
       <div style={{ display: "grid", gap: 12, padding: 14, border: `1px solid ${theme.border}`, borderRadius: 10, background: "#f8fafc" }}>
+        <CustomerSearchPicker
+          customers={customers}
+          value={form.customerId}
+          onChange={(id, row) => {
+            if (row) applyCustomer(customerSearchPickerRowToContact(row))
+            else {
+              setForm((prev) => ({
+                ...prev,
+                customerId: id,
+                customerName: id ? prev.customerName : "",
+                customerPhone: id ? prev.customerPhone : "",
+                customerEmail: id ? prev.customerEmail : "",
+                customerAddress: id ? prev.customerAddress : "",
+              }))
+            }
+          }}
+          allowEmpty
+          emptyLabel="— No customer —"
+          loading={customersLoading}
+          disabled={customersLoading}
+        />
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
-          <div>
-            <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <CustomerSearchPicker
-                  customers={customers}
-                  value={form.customerId}
-                  onChange={(id, row) => {
-                    if (row) applyCustomer(customerSearchPickerRowToContact(row))
-                    else {
-                      setForm((prev) => ({
-                        ...prev,
-                        customerId: id,
-                        customerName: id ? prev.customerName : "",
-                        customerPhone: id ? prev.customerPhone : "",
-                        customerEmail: id ? prev.customerEmail : "",
-                        customerAddress: id ? prev.customerAddress : "",
-                      }))
-                    }
-                  }}
-                  allowEmpty
-                  emptyLabel="— No customer —"
-                  loading={customersLoading}
-                  disabled={customersLoading}
-                />
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setNotice(null)
-                  setCustomerLoadKey((n) => n + 1)
-                }}
-                disabled={customersLoading}
-                style={{ ...secondaryBtn, padding: "8px 10px", flexShrink: 0, marginTop: 22 }}
-              >
-                Retry
-              </button>
-            </div>
-          </div>
           <label style={{ fontSize: 13 }}>
             <span style={{ fontWeight: 600, display: "block", marginBottom: 4 }}>From estimate</span>
             <select

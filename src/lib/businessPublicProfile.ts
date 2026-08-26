@@ -221,6 +221,8 @@ export type WebsiteTextStyle = {
   cropX?: number
   cropY?: number
   cropZoom?: number
+  /** 0–100 grayscale on photos / background. */
+  grayscale?: number
   /** Optional solid/panel behind freeform (and other) text — off by default. */
   showFieldBackground?: boolean
   /** Background fill when showFieldBackground is on. */
@@ -290,6 +292,12 @@ export function scaleWebsiteFontSize(fontSize: string | undefined, scale: number
   const m = /^(\d+(?:\.\d+)?)px$/i.exec(fontSize.trim())
   if (!m) return fontSize
   return `${Math.max(8, Math.round(Number(m[1]) * scale))}px`
+}
+
+export function websiteImageFilterCss(style: WebsiteTextStyle | undefined): string | undefined {
+  const g = style?.grayscale ?? 0
+  if (g <= 0) return undefined
+  return `grayscale(${Math.min(100, Math.max(0, g)) / 100})`
 }
 
 /** Shared drag/save clamps (design-space px). Keep editor + parser in sync. */
@@ -690,7 +698,10 @@ export function parseWebsiteTextStyles(raw: unknown): WebsiteTextStyles {
     if (typeof o.cropX === "number" && Number.isFinite(o.cropX)) style.cropX = Math.max(0, Math.min(100, Math.round(o.cropX)))
     if (typeof o.cropY === "number" && Number.isFinite(o.cropY)) style.cropY = Math.max(0, Math.min(100, Math.round(o.cropY)))
     if (typeof o.cropZoom === "number" && Number.isFinite(o.cropZoom)) {
-      style.cropZoom = Math.max(100, Math.min(300, Math.round(o.cropZoom)))
+      style.cropZoom = Math.max(50, Math.min(300, Math.round(o.cropZoom)))
+    }
+    if (typeof o.grayscale === "number" && Number.isFinite(o.grayscale)) {
+      style.grayscale = Math.max(0, Math.min(100, Math.round(o.grayscale)))
     }
     if (o.showFieldBackground === true) style.showFieldBackground = true
     if (typeof o.fieldBackgroundColor === "string" && HEX_COLOR_RE.test(o.fieldBackgroundColor.trim())) {

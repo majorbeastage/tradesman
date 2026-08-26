@@ -1495,44 +1495,23 @@ export default function WebsiteBuilderPage() {
             {selectedCanvasItem ? canvasPageScopeControl(selectedCanvasItem) : null}
             <p style={{ margin: 0, fontSize: 12, color: "#475569" }}>
               {selectedTargetId === "slot.background"
-                ? "Background selected — set tint below, or drag a tray photo onto the page to replace the background."
+                ? "Click the page photo (or the empty area behind your headlines) to keep this panel open. Grayscale and tint can be used together. Zoom and focus move the crop."
                 : selectedCanvasItem
                   ? "Drag a photo from the tray onto this field on the page. Drag to move; corner handle to resize."
                   : "Drag a photo from the tray below onto this slot, or clear it."}
             </p>
             {selectedTargetId === "slot.background" ? (
-              <div
-                style={{
-                  display: "grid",
-                  gap: 8,
-                  padding: 10,
-                  borderRadius: 8,
-                  border: `1px solid ${theme.border}`,
-                  background: "#f8fafc",
-                }}
-              >
-                <div style={{ fontSize: 11, fontWeight: 800, color: "#0f172a" }}>Background tint</div>
-                <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
-                  Tint color
-                  <input
-                    type="color"
-                    value={selectedStyle.tintColor || "#0f172a"}
-                    onChange={(e) => patchTextStyle(selectedTargetId, { tintColor: e.target.value })}
-                    style={{ width: "100%", height: 34, borderRadius: 8, border: `1px solid ${theme.border}` }}
-                  />
-                </label>
-                <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
-                  Tint strength ({selectedStyle.tintOpacity ?? 0}%)
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    value={selectedStyle.tintOpacity ?? 0}
-                    onChange={(e) => patchTextStyle(selectedTargetId, { tintOpacity: Number(e.target.value) })}
-                  />
-                </label>
-              </div>
+              <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, fontWeight: 700 }}>
+                <input
+                  type="checkbox"
+                  checked={settings.fixedBackground !== false}
+                  onChange={(e) => setSettings((s) => ({ ...s, fixedBackground: e.target.checked }))}
+                />
+                Keep background fixed while the page scrolls
+              </label>
             ) : null}
+            {selectedTargetId !== "slot.background" ? (
+            <>
             <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
               Scale mode
               <select
@@ -1576,7 +1555,20 @@ export default function WebsiteBuilderPage() {
                 />
               </label>
             )}
+            </>
+            ) : null}
             <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 11, fontWeight: 800 }}>Look</div>
+              <label style={{ display: "grid", gap: 4, fontSize: 11, fontWeight: 700 }}>
+                Grayscale ({selectedStyle.grayscale ?? 0}%)
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={selectedStyle.grayscale ?? 0}
+                  onChange={(e) => patchTextStyle(selectedTargetId, { grayscale: Number(e.target.value) })}
+                />
+              </label>
               <div style={{ fontSize: 11, fontWeight: 800 }}>Tint</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {brandSwatches.map((sw) => (
@@ -1654,13 +1646,14 @@ export default function WebsiteBuilderPage() {
                 Zoom ({selectedStyle.cropZoom ?? 100}%)
                 <input
                   type="range"
-                  min={100}
+                  min={50}
                   max={300}
                   value={selectedStyle.cropZoom ?? 100}
                   onChange={(e) => patchTextStyle(selectedTargetId, { cropZoom: Number(e.target.value) })}
                 />
               </label>
             </div>
+            {selectedTargetId !== "slot.background" ? (
             <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, fontWeight: 700 }}>
               <input
                 type="checkbox"
@@ -1669,6 +1662,7 @@ export default function WebsiteBuilderPage() {
               />
               Fixed while scrolling
             </label>
+            ) : null}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button
                 type="button"
@@ -1740,6 +1734,24 @@ export default function WebsiteBuilderPage() {
               Click a field in the preview, then drag it — headlines, body copy, service/feature photos, and freeform
               items all move. Use Quick add for new text/photo fields you can place anywhere.
             </p>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedTargetId("slot.background")
+                setContextMenu(null)
+              }}
+              style={{
+                padding: "8px 12px",
+                borderRadius: 8,
+                border: `1px solid ${theme.border}`,
+                background: "#fff",
+                fontWeight: 800,
+                cursor: "pointer",
+                fontSize: 12,
+              }}
+            >
+              Edit background photo
+            </button>
           </div>
         )}
 

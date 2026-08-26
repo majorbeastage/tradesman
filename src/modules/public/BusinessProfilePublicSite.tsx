@@ -40,6 +40,7 @@ import {
   websiteCustomPagePathId,
   websiteTextStyleToCss,
   scaleWebsiteFontSize,
+  websiteImageFilterCss,
 } from "../../lib/businessPublicProfile"
 import { isWebsiteEditTargetHidden } from "../../lib/websiteBuilderEdit"
 
@@ -171,6 +172,7 @@ function imageSlotVisualStyle(
     transform: zoom !== 1 ? `scale(${zoom})` : undefined,
     transformOrigin: `${posX}% ${posY}%`,
     display: "block",
+    filter: websiteImageFilterCss(style),
   }
   const tintOpacity = style?.tintOpacity ?? 0
   const tint =
@@ -1091,6 +1093,7 @@ function FreeformCanvasLayer({
                       transform: st.cropZoom && st.cropZoom !== 100 ? `scale(${st.cropZoom / 100})` : undefined,
                       transformOrigin: `${st.cropX ?? 50}% ${st.cropY ?? 50}%`,
                       display: "block",
+                      filter: websiteImageFilterCss(st),
                     }}
                   />
                   {st.tintColor && (st.tintOpacity ?? 0) > 0 ? (
@@ -1459,12 +1462,15 @@ function ShowcaseLayout({
     )
   }
 
-  const bgStyle = background
-    ? { backgroundImage: `url(${background})` }
-    : { background: `linear-gradient(135deg, ${theme.secondaryColor}, ${theme.primaryColor})` }
+  const backgroundUrl = background || ""
+  const bgStyle = !backgroundUrl
+    ? { background: `linear-gradient(135deg, ${theme.secondaryColor}, ${theme.primaryColor})` }
+    : undefined
   const navBar = { ...defaultWebsiteNavBar(), ...(data.navBar ?? {}) }
   const bgSlotStyle = textStyles["slot.background"]
   const bgTintOpacity = bgSlotStyle?.tintOpacity ?? 0
+  const bgZoom = (bgSlotStyle?.cropZoom ?? 100) / 100
+  const bgFilter = websiteImageFilterCss(bgSlotStyle)
 
   const nav = navBar.showLogo || navBar.showBusinessName || navBar.showHome || navBar.showAbout || navBar.showContact || navBar.showCall || customPages.length ? (
     <header
@@ -2031,17 +2037,21 @@ function ShowcaseLayout({
     <div
       ref={shellRef}
       className={`bp-shell bp-shell-showcase${isHairPlumbing ? " bp-shell-hair-plumbing" : ""}${previewMode ? " bp-shell-showcase-preview" : ""}${editMode ? " bp-edit-mode" : ""}`}
-      onClick={() => {
-        if (editMode) editor?.onSelectTarget?.(null)
+      onClick={(e) => {
+        if (!editMode) return
+        const t = e.target as HTMLElement
+        if (t.closest?.("[data-edit-target]")) return
+        editor?.onSelectTarget?.("slot.background")
       }}
     >
       <div
         className={
           fixedBackground
-            ? `bp-showcase-fixed-bg${previewMode ? " bp-showcase-fixed-bg-preview" : ""}${editMode ? " bp-edit-target" : ""}`
-            : `bp-showcase-scroll-bg${editMode ? " bp-edit-target" : ""}`
+            ? `bp-showcase-fixed-bg${previewMode ? " bp-showcase-fixed-bg-preview" : ""}${editMode ? " bp-edit-target" : ""}${editMode && editor?.selectedTargetId === "slot.background" ? " bp-edit-selected" : ""}`
+            : `bp-showcase-scroll-bg${editMode ? " bp-edit-target" : ""}${editMode && editor?.selectedTargetId === "slot.background" ? " bp-edit-selected" : ""}`
         }
         style={bgStyle}
+        data-edit-target="slot.background"
         aria-hidden
         onDragOver={(e) => editMode && e.preventDefault()}
         onDrop={(e) => onSlotDrop("background", e)}
@@ -2057,6 +2067,18 @@ function ShowcaseLayout({
           editor?.onTargetContextMenu?.("slot.background", e.clientX, e.clientY)
         }}
       >
+        {backgroundUrl ? (
+          <div
+            className="bp-showcase-bg-photo"
+            style={{
+              backgroundImage: `url(${backgroundUrl})`,
+              backgroundPosition: `${bgSlotStyle?.cropX ?? 50}% ${bgSlotStyle?.cropY ?? 50}%`,
+              transform: bgZoom !== 1 ? `scale(${bgZoom})` : undefined,
+              transformOrigin: `${bgSlotStyle?.cropX ?? 50}% ${bgSlotStyle?.cropY ?? 50}%`,
+              filter: bgFilter,
+            }}
+          />
+        ) : null}
         {bgSlotStyle?.tintColor && bgTintOpacity > 0 ? (
           <div
             style={{
@@ -2075,6 +2097,13 @@ function ShowcaseLayout({
           if (editMode && editor?.onCreatePhotoAtDrop) e.preventDefault()
         }}
         onDrop={onCanvasPhotoDrop}
+        onClick={(e) => {
+          if (!editMode) return
+          const t = e.target as HTMLElement
+          if (t.closest?.("[data-edit-target]")) return
+          e.stopPropagation()
+          editor?.onSelectTarget?.("slot.background")
+        }}
       >
         {nav}
         {pageContent}
@@ -2408,14 +2437,13 @@ export function BusinessProfilePublicSite({
         }
         .bp-showcase-scroll-bg {
           position: absolute; inset: 0; z-index: 0;
-          background-size: cover; background-position: center; background-repeat: no-repeat;
+          overflow: hidden;
           pointer-events: none;
         }
         .bp-showcase-scroll-bg.bp-edit-target { pointer-events: auto; }
         .bp-showcase-fixed-bg {
           position: fixed; inset: 0; z-index: 0;
-          background-size: cover; background-position: center; background-repeat: no-repeat;
-          background-attachment: fixed;
+          overflow: hidden;
           pointer-events: none;
         }
         /* Sticky bg inside editor overflow: height must be the scrollport (px via --wb-preview-h).
@@ -2517,10 +2545,24 @@ export function BusinessProfilePublicSite({
           border: 2px dashed rgba(15,23,42,0.25);
           background: rgba(255,255,255,0.85);
         }
+        .bp-showcase-bg-photo {
+          position: absolute; inset: 0;
+          background-size: cover; background-position: center; background-repeat: no-repeat;
+          pointer-events: none;
+        }
+        .bp-edit-mode .bp-showcase-hero {
+          pointer-events: none;
+        }
+        .bp-edit-mode .bp-showcase-hero [data-edit-target],
+        .bp-edit-mode .bp-showcase-hero a,
+        .bp-edit-mode .bp-showcase-hero button {
+          pointer-events: auto;
+        }
         .bp-showcase-fixed-bg::after,
         .bp-showcase-fixed-bg-preview::after {
           content: ""; position: absolute; inset: 0;
           background: linear-gradient(180deg, rgba(0,0,0,0.22) 0%, rgba(0,0,0,0.1) 40%, rgba(0,0,0,0.28) 100%);
+          pointer-events: none;
         }
         .bp-showcase-topbar {
           position: sticky; top: 0; z-index: 30;
