@@ -16,6 +16,11 @@ import { useCustomerDataScope } from "../../hooks/useCustomerDataScope"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import {
+  isWebsiteImageFile,
+  prepareWebsiteImageFile,
+  websiteImageUploadErrorMessage,
+} from "../../lib/websiteImageUpload"
+import {
   BUSINESS_PUBLIC_PROFILE_META_KEY,
   BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX,
   DEFAULT_BUSINESS_PROFILE_THEME,
@@ -634,22 +639,66 @@ export default function WebsiteBuilderPage() {
     }
   }
 
+  async function persistLibraryPhotos(urls: string[]) {
+    if (!supabase || !userId || !urls.length) return
+    const { data: metaRow, error: metaErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+    if (metaErr) throw metaErr
+    const prevMeta =
+      metaRow?.metadata && typeof metaRow.metadata === "object" && !Array.isArray(metaRow.metadata)
+        ? { ...(metaRow.metadata as Record<string, unknown>) }
+        : {}
+    const siteRaw = prevMeta[BUSINESS_PUBLIC_PROFILE_META_KEY]
+    const site =
+      siteRaw && typeof siteRaw === "object" && !Array.isArray(siteRaw)
+        ? { ...(siteRaw as Record<string, unknown>) }
+        : {}
+    const existing = Array.isArray(site.workPhotoUrls)
+      ? site.workPhotoUrls.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      : []
+    const merged = [...existing]
+    for (const url of urls) {
+      if (!merged.includes(url) && merged.length < BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX) merged.push(url)
+    }
+    const { error: upErr } = await supabase
+      .from("profiles")
+      .update({
+        metadata: {
+          ...prevMeta,
+          [BUSINESS_PUBLIC_PROFILE_META_KEY]: {
+            ...site,
+            workPhotoUrls: merged.slice(0, BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX),
+          },
+        },
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", userId)
+    if (upErr) throw upErr
+  }
+
   async function uploadImage(file: File, kind: "work" | "logo" | "favicon") {
     if (!supabase || !userId) return null
     if (!authUserId) {
       setError("Sign in again to upload images.")
       return null
     }
-    if (!file.type.startsWith("image/")) {
+    if (!file.type.startsWith("image/") && !isWebsiteImageFile(file)) {
       setError("Choose an image file.")
       return null
     }
-    const ext = file.name.split(".").pop()?.toLowerCase() || "jpg"
+    const rawExt = file.name.split(".").pop()?.toLowerCase() || "jpg"
+    const ext =
+      rawExt === "jpeg"
+        ? "jpg"
+        : ["png", "jpg", "webp", "gif", "ico", "svg"].includes(rawExt)
+          ? rawExt
+          : "jpg"
     // Storage RLS requires the first path segment to be auth.uid() (not the org data user).
-    const path = `${authUserId}/web-profile/${kind}_${Date.now()}.${ext}`
+    const uniq = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const path = `${authUserId}/web-profile/${kind}_${uniq}.${ext}`
     const { error: upErr } = await supabase.storage.from("profile-photos").upload(path, file, {
-      upsert: true,
-      contentType: file.type,
+      upsert: false,
+      contentType: file.type || "image/jpeg",
+      cacheControl: "3600",
     })
     if (upErr) throw upErr
     const { data: pub } = supabase.storage.from("profile-photos").getPublicUrl(path)
@@ -658,10 +707,11 @@ export default function WebsiteBuilderPage() {
   }
 
   async function onPhotoUpload(e: ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files ?? []).filter((f) => f.type.startsWith("image/"))
+    const picked = Array.from(e.target.files ?? [])
     e.target.value = ""
+    const files = picked.filter((f) => isWebsiteImageFile(f))
     if (!files.length) {
-      setError("Choose an image file.")
+      setError("Choose an image file (JPEG, PNG, or WebP).")
       return
     }
     const room = BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX - settings.workPhotoUrls.length
@@ -672,26 +722,46 @@ export default function WebsiteBuilderPage() {
     const toUpload = files.slice(0, room)
     setUploading(true)
     setError("")
+    const added: string[] = []
+    const failures: string[] = []
     try {
-      const added: string[] = []
       for (const file of toUpload) {
-        const url = await uploadImage(file, "work")
-        if (url) added.push(url)
+        try {
+          const prepared = await prepareWebsiteImageFile(file)
+          const url = await uploadImage(prepared, "work")
+          if (!url) continue
+          added.push(url)
+          setSettings((s) => {
+            if (s.workPhotoUrls.includes(url) || s.workPhotoUrls.length >= BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX) return s
+            return { ...s, workPhotoUrls: [...s.workPhotoUrls, url] }
+          })
+        } catch (err) {
+          failures.push(websiteImageUploadErrorMessage(file, err))
+        }
       }
       if (added.length) {
-        setSettings((s) => {
-          const next = [...s.workPhotoUrls]
-          for (const url of added) {
-            if (!next.includes(url) && next.length < BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX) next.push(url)
-          }
-          return { ...s, workPhotoUrls: next }
-        })
+        try {
+          await persistLibraryPhotos(added)
+          setMessage(
+            added.length === 1 ? "Photo saved to your library." : `${added.length} photos saved to your library.`,
+          )
+        } catch (err) {
+          setError(
+            `Photos are in the tray but not saved yet — click Save & publish. ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          )
+        }
       }
       if (files.length > toUpload.length) {
         setError(`Added ${added.length}. Up to ${BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX} photos — remove some to add the rest.`)
+      } else if (failures.length) {
+        setError(
+          added.length
+            ? `Saved ${added.length}. ${failures.length} failed — ${failures[0]}`
+            : failures[0] || "Could not add photos.",
+        )
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setUploading(false)
     }
@@ -954,7 +1024,8 @@ export default function WebsiteBuilderPage() {
       facebookUrl: platform === "facebook" ? s.facebookUrl || s.socialLinks.facebook || "" : s.facebookUrl,
       instagramUrl: platform === "instagram" ? s.instagramUrl || s.socialLinks.instagram || "" : s.instagramUrl,
     }))
-    setMessage(`Add the ${platform} URL below, then Save & publish.`)
+    const label = WEBSITE_SOCIAL_PLATFORM_OPTIONS.find((o) => o.id === platform)?.label || platform
+    setMessage(`Add the ${label} URL below, then Save & publish.`)
   }
 
   function setSocialUrl(platform: WebsiteSocialPlatformId, url: string) {
@@ -1077,7 +1148,7 @@ export default function WebsiteBuilderPage() {
       id: `draft_${stamp.getTime()}`,
       name: `Draft ${stamp.toLocaleString()}`,
       savedAt: stamp.toISOString(),
-      snapshot: cloneSettings(settings) as unknown as Record<string, unknown>,
+      snapshot: cloneSettings({ ...settings, savedDrafts: [] }) as unknown as Record<string, unknown>,
     }
     const next: BusinessPublicProfileSettings = {
       ...settings,
@@ -2013,7 +2084,7 @@ export default function WebsiteBuilderPage() {
                   <input
                     value={settings.socialLinks[opt.id] || ""}
                     onChange={(e) => setSocialUrl(opt.id, e.target.value)}
-                    placeholder={`https://…`}
+                    placeholder={opt.id === "nextdoor" ? "https://nextdoor.com/pages/…" : "https://…"}
                     style={field}
                   />
                 </label>
@@ -2308,8 +2379,9 @@ export default function WebsiteBuilderPage() {
             Photos ({photoLibraryUrls.length}/{BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX})
           </summary>
           <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
-            Upload photos here to see thumbnails. Drag a thumbnail onto the page. Use × to remove a photo from this
-            tray (also clears it from page slots that use it).
+            Upload photos here to see thumbnails. Large photos are resized automatically and saved to this library.
+            Drag a thumbnail onto the page. Use × to remove a photo from this tray (also clears it from page slots that
+            use it).
           </p>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             <label

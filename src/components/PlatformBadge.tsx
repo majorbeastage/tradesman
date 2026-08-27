@@ -16,6 +16,7 @@ export type PlatformBadgeId =
   | "instagram"
   | "linkedin"
   | "yelp"
+  | "nextdoor"
   | "tiktok"
   | "x"
   | "youtube"
@@ -34,6 +35,7 @@ const BADGES: Record<PlatformBadgeId, BadgeSpec> = {
   },
   linkedin: { glyph: "in", background: "#0a66c2", color: "#ffffff", fontScale: 0.42 },
   yelp: { glyph: "Y", background: "#d32323", color: "#ffffff" },
+  nextdoor: { glyph: "N", background: "#8ED500", color: "#1a1a1a" },
   tiktok: { glyph: "TT", background: "#111111", color: "#ffffff", fontScale: 0.4 },
   x: { glyph: "X", background: "#000000", color: "#ffffff" },
   youtube: { glyph: "▶", background: "#ff0000", color: "#ffffff", fontScale: 0.5 },

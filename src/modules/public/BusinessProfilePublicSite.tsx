@@ -23,6 +23,7 @@ import type {
 } from "../../lib/businessPublicProfile"
 import {
   DEFAULT_BUSINESS_PROFILE_THEME,
+  WEBSITE_SOCIAL_PLATFORM_OPTIONS,
   WEBSITE_FREEFORM_DESIGN_WIDTH,
   WEBSITE_MOBILE_LAYOUT_MAX_PX,
   websiteDesignScale,
@@ -218,7 +219,10 @@ function SocialFollowBlock({
     links.push({ id, url: href, label })
   }
   if (socialLinks) {
-    for (const [id, url] of Object.entries(socialLinks)) push(id, url, id)
+    for (const [id, url] of Object.entries(socialLinks)) {
+      const label = WEBSITE_SOCIAL_PLATFORM_OPTIONS.find((o) => o.id === id)?.label || id
+      push(id, url, label)
+    }
   }
   push("facebook", facebookUrl, "Facebook")
   push("instagram", instagramUrl, "Instagram")

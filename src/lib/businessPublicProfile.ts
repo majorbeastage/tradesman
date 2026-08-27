@@ -130,6 +130,7 @@ export const WEBSITE_SOCIAL_PLATFORM_OPTIONS = [
   { id: "instagram", label: "Instagram" },
   { id: "google", label: "Google Business" },
   { id: "yelp", label: "Yelp" },
+  { id: "nextdoor", label: "Nextdoor" },
   { id: "tiktok", label: "TikTok" },
   { id: "youtube", label: "YouTube" },
   { id: "x", label: "X" },
