@@ -26,6 +26,7 @@ import AdminTrafficSection from "./AdminTrafficSection"
 import AdminCampaignsSection from "./AdminCampaignsSection"
 import AdminGoogleReserveSection from "./AdminGoogleReserveSection"
 import AdminVoicePromptStudioSection from "./AdminVoicePromptStudioSection"
+import AdminConferenceSection from "./AdminConferenceSection"
 import type { PortalConfig, PortalCustomItem, PageControl, PortalSettingItem, CustomActionButton } from "../../types/portal-builder"
 import {
   TAB_ID_LABELS,
@@ -560,7 +561,7 @@ function AdminAppInner() {
   /** When false, control items with hideFromAdmin are omitted from this list (toggle to edit them). */
   const [showPortalItemsHiddenFromAdmin, setShowPortalItemsHiddenFromAdmin] = useState(false)
   const [adminPanel, setAdminPanel] = useState<
-    "ops" | "traffic" | "campaigns" | "google_reserve" | "voice_studio" | "signup" | "communications" | "users" | "billing" | "portal" | "tickets" | "about"
+    "ops" | "traffic" | "campaigns" | "google_reserve" | "voice_studio" | "conference" | "signup" | "communications" | "users" | "billing" | "portal" | "tickets" | "about"
   >("ops")
 
   useEffect(() => {
@@ -576,6 +577,7 @@ function AdminAppInner() {
         pending === "campaigns" ||
         pending === "google_reserve" ||
         pending === "voice_studio" ||
+        pending === "conference" ||
         pending === "signup" ||
         pending === "communications" ||
         pending === "users" ||
@@ -1225,6 +1227,23 @@ function AdminAppInner() {
           </button>
           <button
             type="button"
+            onClick={() => setAdminPanel("conference")}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 6,
+              border: `1px solid rgba(255,255,255,0.35)`,
+              background: adminPanel === "conference" ? "rgba(249,115,22,0.45)" : "rgba(0,0,0,0.2)",
+              color: "white",
+              fontSize: 13,
+              cursor: "pointer",
+              fontWeight: adminPanel === "conference" ? 600 : 400,
+              textAlign: "left",
+            }}
+          >
+            Conference line
+          </button>
+          <button
+            type="button"
             onClick={() => setAdminPanel("signup")}
             style={{
               padding: "8px 12px",
@@ -1535,6 +1554,8 @@ function AdminAppInner() {
           <AdminGoogleReserveSection />
         ) : adminPanel === "voice_studio" ? (
           <AdminVoicePromptStudioSection />
+        ) : adminPanel === "conference" ? (
+          <AdminConferenceSection />
         ) : adminPanel === "users" ? (
           <div>
             <AdminSettingBlock id="admin:users:page_intro">

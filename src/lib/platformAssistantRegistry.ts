@@ -17,6 +17,7 @@ export type AdminPanelId =
   | "campaigns"
   | "google_reserve"
   | "voice_studio"
+  | "conference"
   | "signup"
   | "communications"
   | "users"
@@ -58,6 +59,7 @@ export const ADMIN_PANEL_LABELS: Record<AdminPanelId, string> = {
   campaigns: "Ads & campaigns",
   google_reserve: "Google Reserve",
   voice_studio: "Voice Prompt Studio",
+  conference: "Conference line",
   signup: "Sign up requirements",
   communications: "Routing & Access",
   users: "Users & office managers",
@@ -363,6 +365,13 @@ export const PLATFORM_ADMIN_INTENTS: PlatformAdminIntent[] = [
       /\brecording\s+portal\b/i,
       /\bvoice\s+talent\b/i,
     ],
+  },
+  {
+    kind: "admin",
+    panel: "conference",
+    label: ADMIN_PANEL_LABELS.conference,
+    description: "Schedule a one-time dial-in conference on (863) 341-8778 and email or text the PIN",
+    patterns: [/\bconference\s+line\b/i, /\bconference\s+call\b/i, /\bdial[\s-]?in\s+pin\b/i, /\b863[\s-]?341[\s-]?8778\b/],
   },
   {
     kind: "admin",

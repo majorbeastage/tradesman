@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import crypto from "node:crypto"
 import { findConferenceSessionByPin } from "./_conferenceSession.js"
+import { findScheduledConferenceByPin } from "./_scheduledConference.js"
 import { firstEnv, pickFirstString } from "./_communications.js"
 
 /**
@@ -65,11 +66,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return twiml(
       res,
       `<Response>
-  <Gather numDigits="6" action="${xmlEscape(actionUrl)}" method="POST" timeout="12">
-    <Say voice="alice">Welcome to Tradesman. Please enter your six digit conference pin, followed by the pound key.</Say>
+  <Gather numDigits="8" finishOnKey="#" action="${xmlEscape(actionUrl)}" method="POST" timeout="12">
+    <Say voice="alice">Welcome to the conference line. Please enter your conference pin, then press pound.</Say>
   </Gather>
   <Say voice="alice">We did not receive a pin. Goodbye.</Say>
   <Hangup/>
+</Response>`,
+    )
+  }
+
+  const scheduled = await findScheduledConferenceByPin(digits)
+  if (scheduled) {
+    if (scheduled.joinStatus === "canceled") {
+      return twiml(res, `<Response><Say voice="alice">This conference was canceled. Goodbye.</Say><Hangup/></Response>`)
+    }
+    if (scheduled.joinStatus === "ended") {
+      return twiml(res, `<Response><Say voice="alice">This conference has ended. Goodbye.</Say><Hangup/></Response>`)
+    }
+    if (scheduled.joinStatus === "too_early") {
+      return twiml(
+        res,
+        `<Response>
+  <Say voice="alice">This conference has not started yet. Please call back around ${xmlEscape(scheduled.speakableStart)} Eastern time. Goodbye.</Say>
+  <Hangup/>
+</Response>`,
+      )
+    }
+    return twiml(
+      res,
+      `<Response>
+  <Say voice="alice">Joining ${xmlEscape(scheduled.conference.title)}. One moment please.</Say>
+  <Dial>
+    <Conference startConferenceOnEnter="true" endConferenceOnExit="false" beep="true">${xmlEscape(scheduled.conference.conferenceName)}</Conference>
+  </Dial>
 </Response>`,
     )
   }
@@ -80,8 +109,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       res,
       `<Response>
   <Say voice="alice">That pin is not valid or has expired. Please try again.</Say>
-  <Gather numDigits="6" action="${xmlEscape(actionUrl)}" method="POST" timeout="12">
-    <Say voice="alice">Enter your six digit conference pin.</Say>
+  <Gather numDigits="8" finishOnKey="#" action="${xmlEscape(actionUrl)}" method="POST" timeout="12">
+    <Say voice="alice">Enter your conference pin, then press pound.</Say>
   </Gather>
   <Hangup/>
 </Response>`,

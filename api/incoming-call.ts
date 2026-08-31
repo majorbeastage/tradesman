@@ -23,6 +23,7 @@ import { shouldSkipCallScreeningForCaller, isPromotionalHubCaller } from "./_cal
 import { activeScreeningSteps, loadVoiceAutoAttendantForUser } from "./_voiceAutoAttendant.js"
 import { loadCallHuntingForUser, loadHuntPhoneByUserId, resolveHuntPhones } from "./_callHunting.js"
 import { recordSmsConsentFromInboundCall, runMissedCallAutoTextBack } from "./_conversationAutoReply.js"
+import { isConferenceDialInNumber } from "./_conferenceSession.js"
 
 function xmlEscape(value: string): string {
   return value
@@ -56,6 +57,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const callSid = pickFirstString(req.body?.CallSid, req.query?.CallSid)
   /** Always log once per request so Vercel Runtime Logs are searchable (stderr deprecation noise is unrelated). */
   console.info("[incoming-call] twilio webhook", { callSid: callSid || null, to: to || null, from: from || null })
+  if (to && isConferenceDialInNumber(to)) {
+    const origin = requestPublicOrigin(req)
+    console.info("[incoming-call] conference_dial_in", { callSid, to })
+    return sendTwiml(
+      res,
+      `<Response><Redirect method="POST">${xmlEscape(`${origin.replace(/\/$/, "")}/api/conference-join`)}</Redirect></Response>`,
+    )
+  }
   const supabase = createServiceSupabase()
   let channel: CommunicationChannel | null = null
   if (to) {

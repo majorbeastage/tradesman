@@ -1,7 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
-import { createServiceSupabase, firstEnv, getPrimarySmsChannelForUser, normalizePhone, toTwilioE164 } from "./_communications.js"
+import { createServiceSupabase, firstEnv, getPrimarySmsChannelForUser, samePhoneDigits, toTwilioE164 } from "./_communications.js"
 
 export const CONFERENCE_SESSIONS_META_KEY = "conference_sessions_v1"
+
+/** Owned PSTN conference line (863-341-8778). Override with CONFERENCE_DIAL_IN_E164. */
+export const DEFAULT_CONFERENCE_DIAL_IN_E164 = "+18633418778"
 
 export type ConferenceSessionRecord = {
   sessionId: string
@@ -50,11 +53,23 @@ function writeMeta(metadata: unknown, sessions: ConferenceSessionsMeta): Record<
   return base
 }
 
-function formatUsPhone(e164: string): string {
+export function formatUsPhone(e164: string): string {
   const d = e164.replace(/\D/g, "")
   const ten = d.length === 11 && d.startsWith("1") ? d.slice(1) : d.length === 10 ? d : ""
   if (ten.length !== 10) return e164
   return `(${ten.slice(0, 3)}) ${ten.slice(3, 6)}-${ten.slice(6)}`
+}
+
+export function resolveConferenceDialInFixed(): { e164: string; display: string } {
+  const envDial = toTwilioE164(firstEnv("CONFERENCE_DIAL_IN_E164", "TWILIO_CONFERENCE_DIAL_IN"))
+  const e164 = envDial || DEFAULT_CONFERENCE_DIAL_IN_E164
+  return { e164, display: formatUsPhone(e164) }
+}
+
+export function isConferenceDialInNumber(to: string): boolean {
+  if (!to.trim()) return false
+  const candidates = [DEFAULT_CONFERENCE_DIAL_IN_E164, resolveConferenceDialInFixed().e164]
+  return candidates.some((n) => samePhoneDigits(n, to))
 }
 
 function randomPin(): string {
@@ -77,8 +92,8 @@ function pruneExpired(meta: ConferenceSessionsMeta, now = Date.now()): Conferenc
 }
 
 export async function resolveConferenceDialInE164(userId: string): Promise<{ e164: string | null; display: string | null }> {
-  const envDial = toTwilioE164(firstEnv("CONFERENCE_DIAL_IN_E164", "TWILIO_CONFERENCE_DIAL_IN"))
-  if (envDial) return { e164: envDial, display: formatUsPhone(envDial) }
+  const fixed = resolveConferenceDialInFixed()
+  if (fixed.e164) return fixed
 
   try {
     const admin = createServiceSupabase()

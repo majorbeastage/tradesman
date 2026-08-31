@@ -1282,6 +1282,7 @@ export const RESERVED_BUSINESS_WEB_PROFILE_SLUGS = new Set([
   "embed",
   "e",
   "voice-studio",
+  "conference",
   "api",
   "assets",
   "index.html",

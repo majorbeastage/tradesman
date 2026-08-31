@@ -39,6 +39,7 @@ import EmbedLeadPage from "./modules/public/EmbedLeadPage"
 import PublicBusinessWebProfilePage from "./modules/public/PublicBusinessWebProfilePage"
 import EstimateEsignPage from "./modules/public/EstimateEsignPage"
 import VoicePromptStudioPage from "./modules/public/VoicePromptStudioPage"
+import ConferencePortalPage from "./modules/public/ConferencePortalPage"
 import { isReservedBusinessWebProfileSlug } from "./lib/businessPublicProfile"
 import { recordMarketingPageView } from "./lib/siteTrafficBeacon"
 import { useAuth, type UserRole } from "./contexts/AuthContext"
@@ -866,6 +867,16 @@ function App() {
   // No auto-redirect when logged in: if the user navigates to home, they stay on home and can choose to open a portal or log in as someone else.
 
   const ctaMatch = /^\/(?:cta|embed\/lead)\/([^/]+)\/?$/i.exec(pathname)
+
+  // Platform conference portal — must run before custom-domain and /:slug business sites.
+  if (pathname === "/conference" || pathname === "/conference/") {
+    return <ConferencePortalPage />
+  }
+  const conferenceInviteMatch = /^\/conference\/([^/]+)\/?$/i.exec(rawPathname)
+  if (conferenceInviteMatch) {
+    const inviteToken = decodeURIComponent(conferenceInviteMatch[1] || "").replace(/[.…),;:!?>\]}'"]+$/g, "").trim()
+    if (inviteToken) return <ConferencePortalPage inviteToken={inviteToken} />
+  }
 
   // Client domains on this Vercel project → hosted business site (not Tradesman marketing).
   if (customDomainSlug) {
