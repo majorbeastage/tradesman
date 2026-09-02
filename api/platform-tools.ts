@@ -113,6 +113,17 @@ function handleHelcimJsReturn(req: VercelRequest, res: VercelResponse): void {
     date: pickHelcimField(fields, "date"),
     time: pickHelcimField(fields, "time"),
   }
+  console.info("[helcim-js-return]", {
+    response: payload.response,
+    responseMessage: payload.responseMessage || undefined,
+    noticeMessage: payload.noticeMessage || undefined,
+    transactionId: payload.transactionId || undefined,
+    amount: payload.amount || undefined,
+    currency: payload.currency || undefined,
+    type: payload.type || undefined,
+    orderNumber: payload.orderNumber || undefined,
+    customerCode: payload.customerCode || undefined,
+  })
   const json = JSON.stringify(payload).replace(/</g, "\\u003c")
   const html = `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="robots" content="noindex"/><title>Payment result</title></head>

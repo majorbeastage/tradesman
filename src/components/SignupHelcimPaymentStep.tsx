@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react"
+import { useHelcimJsScript } from "../hooks/useHelcimJsScript"
 import { theme } from "../styles/theme"
 import { isHelcimJsReturnMessage, type HelcimJsReturnMessage } from "../lib/helcimJsReturnMessage"
 
-const HELCIM_SCRIPT_SRC = "https://secure.myhelcim.com/js/version2.js"
 const HELCIM_RETURN_IFRAME_NAME = "tradesmanSignupHelcimReturn"
 const ENV_JS_TOKEN = (import.meta.env.VITE_HELCIM_JS_TOKEN as string | undefined)?.trim() ?? ""
 
@@ -25,8 +25,11 @@ export function SignupHelcimPaymentStep({
   onSkip,
   allowSkip,
 }: Props) {
-  const [scriptReady, setScriptReady] = useState(false)
   const [lastError, setLastError] = useState("")
+  const { ready: scriptReady, error: scriptError, retry: retryHelcimScript } = useHelcimJsScript(
+    Boolean(ENV_JS_TOKEN),
+    "data-tradesman-signup-helcim-js",
+  )
   const formAction = useMemo(() => {
     const base = typeof window !== "undefined" ? window.location.origin : ""
     return base ? `${base}/api/helcim-js-return` : ""
@@ -38,21 +41,6 @@ export function SignupHelcimPaymentStep({
       return ""
     }
   }, [formAction])
-
-  useEffect(() => {
-    if (!ENV_JS_TOKEN) return
-    const sel = "script[data-tradesman-signup-helcim-js]"
-    if (document.querySelector(sel)) {
-      setScriptReady(typeof window.helcimProcess === "function")
-      return
-    }
-    const s = document.createElement("script")
-    s.src = HELCIM_SCRIPT_SRC
-    s.async = true
-    s.dataset.tradesmanSignupHelcimJs = "1"
-    s.onload = () => setScriptReady(typeof window.helcimProcess === "function")
-    document.body.appendChild(s)
-  }, [])
 
   useEffect(() => {
     if (!ENV_JS_TOKEN || !helcimReturnOrigin) return
@@ -180,6 +168,27 @@ export function SignupHelcimPaymentStep({
             <input type="text" id="cvv" autoComplete="cc-csc" style={inputStyle} required />
           </label>
         </div>
+        {scriptError ? (
+          <p style={{ color: "#b91c1c", fontSize: 13 }}>
+            {scriptError}{" "}
+            <button
+              type="button"
+              onClick={retryHelcimScript}
+              style={{
+                marginLeft: 6,
+                padding: "4px 10px",
+                borderRadius: 6,
+                border: "1px solid #b91c1c",
+                background: "#fff",
+                color: "#b91c1c",
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              Retry
+            </button>
+          </p>
+        ) : null}
         {lastError ? <p style={{ color: "#b91c1c", fontSize: 13 }}>{lastError}</p> : null}
         <button
           type="submit"
@@ -195,15 +204,13 @@ export function SignupHelcimPaymentStep({
             cursor: scriptReady ? "pointer" : "wait",
           }}
         >
-          {scriptReady ? `Pay $${dueTodayUsd.toFixed(2)} and create account` : "Loading secure checkout…"}
+          {scriptReady
+            ? `Pay $${dueTodayUsd.toFixed(2)} and create account`
+            : scriptError
+              ? "Secure checkout unavailable"
+              : "Loading secure checkout…"}
         </button>
       </form>
     </div>
   )
-}
-
-declare global {
-  interface Window {
-    helcimProcess?: () => void
-  }
 }

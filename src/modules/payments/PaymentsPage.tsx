@@ -24,6 +24,7 @@ import {
   type AdCampaignRow,
 } from "../../lib/adCampaigns"
 import { isHelcimJsReturnMessage, type HelcimJsReturnMessage } from "../../lib/helcimJsReturnMessage"
+import { useHelcimJsScript } from "../../hooks/useHelcimJsScript"
 import { platformToolsFetchOrigins, platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
 import {
   customerPaymentEventTypeLabel,
@@ -36,16 +37,9 @@ import {
 } from "../../lib/customerPaymentCollections"
 import PaymentRequestsWorkspace from "./PaymentRequestsWorkspace"
 
-declare global {
-  interface Window {
-    helcimProcess?: () => void
-  }
-}
-
 /** Must use `import.meta.env.VITE_*` directly so Vite inlines values at build time (cast/indirect access is left empty in production). */
 const ENV_PORTAL = String(import.meta.env.VITE_HELCIM_PAYMENT_PORTAL_URL ?? "").trim()
 const ENV_JS_TOKEN = String(import.meta.env.VITE_HELCIM_JS_TOKEN ?? "").trim()
-const HELCIM_SCRIPT_SRC = "https://secure.myhelcim.com/js/version2.js"
 const HELCIM_RETURN_IFRAME_NAME = "tradesmanHelcimJsReturn"
 
 const inputStyle: CSSProperties = {
@@ -106,7 +100,6 @@ export default function PaymentsPage() {
   const [customerCode, setCustomerCode] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [origin, setOrigin] = useState("")
-  const [scriptReady, setScriptReady] = useState(false)
   const [lastResult, setLastResult] = useState<HelcimJsReturnMessage | null>(null)
   const [billingForPayments, setBillingForPayments] = useState<BillingProfileMetadata>({})
   const [adCampaigns, setAdCampaigns] = useState<AdCampaignRow[]>([])
@@ -127,6 +120,10 @@ export default function PaymentsPage() {
   const checkoutRef = useRef<HTMLFormElement | null>(null)
 
   const useHelcimJs = Boolean(ENV_JS_TOKEN)
+  const { ready: scriptReady, error: scriptError, retry: retryHelcimScript } = useHelcimJsScript(
+    useHelcimJs,
+    "data-tradesman-helcim-js",
+  )
 
   const adBalanceFromCampaignsCents = useMemo(
     () => adCampaigns.reduce((sum, c) => sum + adBalanceDueCents(c), 0),
@@ -403,24 +400,6 @@ export default function PaymentsPage() {
   }, [])
 
   useEffect(() => {
-    if (!useHelcimJs) return
-    const sel = "script[data-tradesman-helcim-js]"
-    const existing = document.querySelector(sel) as HTMLScriptElement | null
-    if (existing) {
-      setScriptReady(typeof window.helcimProcess === "function")
-      return
-    }
-    const s = document.createElement("script")
-    s.src = HELCIM_SCRIPT_SRC
-    s.async = true
-    s.dataset.tradesmanHelcimJs = "1"
-    s.onload = () => {
-      setScriptReady(typeof window.helcimProcess === "function")
-    }
-    document.body.appendChild(s)
-  }, [useHelcimJs])
-
-  useEffect(() => {
     if (!useHelcimJs || !helcimReturnOrigin) return
     const onHelcimMessage = (ev: MessageEvent) => {
       if (ev.origin !== helcimReturnOrigin) return
@@ -674,6 +653,53 @@ export default function PaymentsPage() {
               Card payments need a secure (https) connection. Use your normal production link in the browser when paying with a live card.
             </div>
           ) : null}
+          {scriptError ? (
+            <div
+              style={{
+                marginBottom: 16,
+                padding: 14,
+                borderRadius: 10,
+                border: "1px solid #92400e",
+                background: "#451a03",
+                color: "#fde68a",
+                fontSize: 14,
+                lineHeight: 1.5,
+              }}
+            >
+              <p style={{ margin: "0 0 10px" }}>{scriptError}</p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+                <button
+                  type="button"
+                  onClick={retryHelcimScript}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: 8,
+                    border: "none",
+                    background: "#f59e0b",
+                    color: "#111827",
+                    fontWeight: 800,
+                    cursor: "pointer",
+                  }}
+                >
+                  Retry Helcim checkout
+                </button>
+                {iframeUrl || openInTabUrl ? (
+                  <a
+                    href={iframeUrl || openInTabUrl || undefined}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: "#fde68a", fontWeight: 700 }}
+                  >
+                    Open hosted Helcim page instead
+                  </a>
+                ) : null}
+              </div>
+              <p style={{ margin: "10px 0 0", fontSize: 12, opacity: 0.9 }}>
+                The Pay button waits for Helcim&apos;s checkout script from secure.myhelcim.com. Try another browser or turn
+                off ad blockers if this keeps happening.
+              </p>
+            </div>
+          ) : null}
           {loading ? (
             <p style={{ color: "#9ca3af" }}>Loading…</p>
           ) : !formAction ? (
@@ -859,7 +885,7 @@ export default function PaymentsPage() {
                   <input
                     type="button"
                     id="buttonProcess"
-                    value={scriptReady ? "Pay with Helcim" : "Loading Helcim…"}
+                    value={scriptReady ? "Pay with Helcim" : scriptError ? "Helcim unavailable" : "Loading Helcim…"}
                     disabled={!scriptReady}
                     onClick={() => {
                       setLastResult(null)

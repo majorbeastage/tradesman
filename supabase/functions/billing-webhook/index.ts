@@ -231,6 +231,15 @@ Deno.serve(async (req) => {
     profileId = match?.id ?? null
   }
 
+  console.info("[billing-webhook]", {
+    type: type || (manualProfile ? "manual" : "unknown"),
+    txId: txId || undefined,
+    customerCode: customerCode || undefined,
+    profileId: profileId || undefined,
+    approved,
+    amountCents,
+  })
+
   try {
     await admin.from("billing_events").insert({
       profile_id: profileId,
