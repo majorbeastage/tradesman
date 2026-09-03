@@ -75,16 +75,26 @@ async function verifyProcessorWebhookSignature(rawBody: string, headers: Headers
   return computed === expectedB64
 }
 
-function advanceDueDate(dueDate: string | undefined): string | undefined {
+function daysInMonth(year: number, month1to12: number): number {
+  return new Date(Date.UTC(year, month1to12, 0)).getUTCDate()
+}
+
+function addCalendarMonthsYmd(dueDate: string | undefined, months: number, preferDay?: number): string | undefined {
   const t = (dueDate ?? "").trim()
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return dueDate
-  const d = new Date(`${t}T12:00:00`)
-  if (Number.isNaN(d.getTime())) return dueDate
-  d.setMonth(d.getMonth() + 1)
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, "0")
-  const day = String(d.getDate()).padStart(2, "0")
-  return `${y}-${m}-${day}`
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return undefined
+  const y0 = Number(t.slice(0, 4))
+  const m0 = Number(t.slice(5, 7))
+  const d0 = Number(t.slice(8, 10))
+  const day = typeof preferDay === "number" && preferDay >= 1 && preferDay <= 31 ? preferDay : d0
+  const idx = y0 * 12 + (m0 - 1) + months
+  const y = Math.floor(idx / 12)
+  const m = ((idx % 12) + 12) % 12 + 1
+  const d = Math.min(day, daysInMonth(y, m))
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`
+}
+
+function advanceDueDate(dueDate: string | undefined, preferDay?: number): string | undefined {
+  return addCalendarMonthsYmd(dueDate, 1, preferDay) ?? dueDate
 }
 
 type HistoryRow = Record<string, unknown>
@@ -121,9 +131,21 @@ function applyReceivedBillingPayment(
     return { next: prev, already: true }
   }
   const dueRaw = typeof prev.billing_payment_due_date === "string" ? prev.billing_payment_due_date.trim() : ""
-  const nextDue = advanceDueDate(dueRaw || undefined)
+  const paidYmd = /^(\d{4}-\d{2}-\d{2})/.exec(patch.at)?.[1] ?? ""
+  const storedDay = typeof prev.billing_payment_due_day === "number" ? prev.billing_payment_due_day : NaN
+  const preferDay =
+    Number.isInteger(storedDay) && storedDay >= 1 && storedDay <= 31
+      ? storedDay
+      : dueRaw
+        ? Number(dueRaw.slice(8, 10))
+        : paidYmd
+          ? Number(paidYmd.slice(8, 10))
+          : undefined
+  const base = dueRaw || paidYmd || undefined
+  const nextDue = advanceDueDate(base, preferDay)
   const next: Record<string, unknown> = { ...prev, billing_last_success_at: patch.at }
   if (nextDue) next.billing_payment_due_date = nextDue
+  if (typeof preferDay === "number" && Number.isInteger(preferDay)) next.billing_payment_due_day = preferDay
   const entry: HistoryRow = {
     at: patch.at,
     note: patch.note || "Helcim webhook",

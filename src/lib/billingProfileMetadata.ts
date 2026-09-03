@@ -12,6 +12,11 @@ export type BillingProfileMetadata = {
   /** Next (or current) payment due date as `YYYY-MM-DD` (local calendar); set in Admin → Billing. */
   billing_payment_due_date?: string
   /**
+   * Calendar day of month to keep when a received payment advances the due date (1–31).
+   * Shorter months clamp to the last day, then return to this day when the month allows it.
+   */
+  billing_payment_due_day?: number
+  /**
    * Optional per-user Helcim hosted pay / portal URL override.
    * When unset, the app uses `VITE_HELCIM_PAYMENT_PORTAL_URL` from the build (one URL for the whole org).
    */
@@ -108,6 +113,11 @@ export function parseBillingMetadata(metadata: unknown): BillingProfileMetadata 
   if (typeof m.billing_payment_due_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(m.billing_payment_due_date.trim())) {
     out.billing_payment_due_date = m.billing_payment_due_date.trim()
   }
+  if (typeof m.billing_payment_due_day === "number" && Number.isInteger(m.billing_payment_due_day) && m.billing_payment_due_day >= 1 && m.billing_payment_due_day <= 31) {
+    out.billing_payment_due_day = m.billing_payment_due_day
+  } else if (out.billing_payment_due_date) {
+    out.billing_payment_due_day = Number(out.billing_payment_due_date.slice(8, 10))
+  }
   if (typeof m.helcim_pay_portal_url === "string" && m.helcim_pay_portal_url.trim()) {
     out.helcim_pay_portal_url = m.helcim_pay_portal_url.trim()
   }
@@ -182,8 +192,27 @@ export function mergeBillingIntoProfileMetadata(
   }
   if (patch.billing_payment_due_date !== undefined) {
     const t = typeof patch.billing_payment_due_date === "string" ? patch.billing_payment_due_date.trim() : ""
-    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) next.billing_payment_due_date = t
-    else delete next.billing_payment_due_date
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) {
+      next.billing_payment_due_date = t
+      if (patch.billing_payment_due_day === undefined) {
+        next.billing_payment_due_day = Number(t.slice(8, 10))
+      }
+    } else {
+      delete next.billing_payment_due_date
+      if (patch.billing_payment_due_day === undefined) delete next.billing_payment_due_day
+    }
+  }
+  if (patch.billing_payment_due_day !== undefined) {
+    if (
+      typeof patch.billing_payment_due_day === "number" &&
+      Number.isInteger(patch.billing_payment_due_day) &&
+      patch.billing_payment_due_day >= 1 &&
+      patch.billing_payment_due_day <= 31
+    ) {
+      next.billing_payment_due_day = patch.billing_payment_due_day
+    } else {
+      delete next.billing_payment_due_day
+    }
   }
   if (patch.helcim_pay_portal_url != null) {
     const t = patch.helcim_pay_portal_url.trim()
@@ -238,29 +267,46 @@ export function mergeBillingIntoProfileMetadata(
   return next
 }
 
-/** Advance YYYY-MM-DD due date by one calendar month when payment clears. */
-export function advanceBillingDueDate(dueDate: string | undefined): string | undefined {
-  const t = (dueDate ?? "").trim()
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return dueDate
-  const d = new Date(`${t}T12:00:00`)
-  if (Number.isNaN(d.getTime())) return dueDate
-  d.setMonth(d.getMonth() + 1)
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, "0")
-  const day = String(d.getDate()).padStart(2, "0")
-  return `${y}-${m}-${day}`
+function ymdParts(dueDate: string): { y: number; m: number; d: number } | null {
+  const t = dueDate.trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return null
+  return { y: Number(t.slice(0, 4)), m: Number(t.slice(5, 7)), d: Number(t.slice(8, 10)) }
 }
 
-export function rollbackBillingDueDate(dueDate: string | undefined): string | undefined {
-  const t = (dueDate ?? "").trim()
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return dueDate
-  const d = new Date(`${t}T12:00:00`)
-  if (Number.isNaN(d.getTime())) return dueDate
-  d.setMonth(d.getMonth() - 1)
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, "0")
-  const day = String(d.getDate()).padStart(2, "0")
-  return `${y}-${m}-${day}`
+function daysInMonth(year: number, month1to12: number): number {
+  return new Date(Date.UTC(year, month1to12, 0)).getUTCDate()
+}
+
+function isoDatePrefix(iso: string | undefined): string | undefined {
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec((iso ?? "").trim())
+  return m?.[1]
+}
+
+/**
+ * Add whole calendar months, keeping `preferDay` (or the source day). If that day does not exist
+ * in the target month (Jan 31 → February), use the last day of that month.
+ */
+export function addCalendarMonthsYmd(dueDate: string | undefined, months: number, preferDay?: number): string | undefined {
+  const parts = ymdParts(dueDate ?? "")
+  if (!parts) return undefined
+  const day =
+    typeof preferDay === "number" && Number.isInteger(preferDay) && preferDay >= 1 && preferDay <= 31
+      ? preferDay
+      : parts.d
+  const idx = parts.y * 12 + (parts.m - 1) + months
+  const y = Math.floor(idx / 12)
+  const m = ((idx % 12) + 12) % 12 + 1
+  const d = Math.min(day, daysInMonth(y, m))
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`
+}
+
+/** Advance YYYY-MM-DD due date by one calendar month when payment clears (same day next month). */
+export function advanceBillingDueDate(dueDate: string | undefined, preferDay?: number): string | undefined {
+  return addCalendarMonthsYmd(dueDate, 1, preferDay) ?? dueDate
+}
+
+export function rollbackBillingDueDate(dueDate: string | undefined, preferDay?: number): string | undefined {
+  return addCalendarMonthsYmd(dueDate, -1, preferDay) ?? dueDate
 }
 
 function historyHasOpenTxn(hist: BillingPaymentHistoryEntry[], transactionId: string): boolean {
@@ -294,7 +340,7 @@ export function appendBillingPaymentHistory(
   return mergeBillingIntoProfileMetadata(prev, { billing_payment_history_v1: hist })
 }
 
-/** Mark a Tradesman bill paid: last paid, advance due date, append history. No-op if this Helcim txn is already on file. */
+/** Mark a Tradesman bill paid: last paid, advance due date one calendar month, append history. No-op if this Helcim txn is already on file. */
 export function applyReceivedBillingPayment(
   prev: Record<string, unknown>,
   entry: Omit<BillingPaymentHistoryEntry, "dueDateBefore"> & { at: string },
@@ -304,10 +350,17 @@ export function applyReceivedBillingPayment(
     return prev
   }
   const dueBefore = billing.billing_payment_due_date
-  const nextDue = advanceBillingDueDate(dueBefore)
+  const paidYmd = isoDatePrefix(entry.at)
+  const preferDay =
+    billing.billing_payment_due_day ??
+    ymdParts(dueBefore ?? "")?.d ??
+    ymdParts(paidYmd ?? "")?.d
+  const base = dueBefore || paidYmd
+  const nextDue = advanceBillingDueDate(base, preferDay)
   const next = mergeBillingIntoProfileMetadata(prev, {
     billing_last_success_at: entry.at,
     ...(nextDue ? { billing_payment_due_date: nextDue } : {}),
+    ...(typeof preferDay === "number" ? { billing_payment_due_day: preferDay } : {}),
   })
   return appendBillingPaymentHistory(next, {
     ...entry,

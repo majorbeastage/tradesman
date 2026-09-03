@@ -775,8 +775,10 @@ export default function AdminPaymentsSection() {
                             style={{ padding: 8, borderRadius: 6, border: `1px solid ${theme.border}`, maxWidth: 280 }}
                           />
                           <span style={{ fontWeight: 400, fontSize: 11, color: theme.charcoal, opacity: 0.85 }}>
-                            User dashboard shows an alert on this date (or after) until a successful webhook updates last paid and you
-                            advance this date for the next cycle.
+                            After a payment is marked received (card checkout, Helcim webhook, or Record payment), this becomes the
+                            same calendar day next month — for example the 15th becomes the 15th next month. If that month is shorter
+                            (the 31st in February), we use the last day of that month, then return to the 31st when the month allows
+                            it. You do not need to move this date by hand after a received card payment.
                           </span>
                         </label>
 
@@ -828,10 +830,10 @@ export default function AdminPaymentsSection() {
                           ) : null}
                         </div>
                         <p style={{ margin: "6px 0 8px", fontSize: 12, color: theme.charcoal, opacity: 0.88, lineHeight: 1.45, maxWidth: 720 }}>
-                          Card payments mark <strong>received</strong> automatically (Helcim.js checkout and Helcim webhooks): last paid and
-                          the due date advance without this button. Use the button only for checks, wire, or in-person charges that
-                          won&apos;t hit Helcim. If Helcim later declines, voids, or refunds a charge we already recorded, a notice appears
-                          at the top of this page and you can revert that row.
+                          Card payments mark <strong>received</strong> automatically (Helcim.js checkout and Helcim webhooks): last paid
+                          and the due date move to the same calendar day next month without this button. Use the button only for
+                          checks, wire, or in-person charges that won&apos;t hit Helcim. If Helcim later declines, voids, or refunds a
+                          charge we already recorded, a notice appears at the top of this page and you can revert that row.
                         </p>
                         <button
                           type="button"

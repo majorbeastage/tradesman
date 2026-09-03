@@ -22,7 +22,7 @@ function isoDatePrefixFromTimestamp(iso: string | undefined): string | null {
 /**
  * In-app dashboard alert: payment **due today** or **past due** (not future “due in N days”).
  * Uses `billing_payment_due_date` (YYYY-MM-DD) vs local calendar day and `billing_last_success_at` date
- * ≥ due date to mean “paid for this due” (admin should advance due after each cycle).
+ * ≥ due date to mean “paid for this due” (received payments advance due to the same calendar day next month).
  */
 export function computeBillingDueDashboardNotice(b: BillingProfileMetadata): BillingDueDashboardNotice | null {
   if (b.billing_automation_paused === true) return null
