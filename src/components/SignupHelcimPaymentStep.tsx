@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { useHelcimJsScript } from "../hooks/useHelcimJsScript"
+import { nextHelcimJsOrderNumber } from "../lib/helcimJsOrderNumber"
 import { theme } from "../styles/theme"
 import { isHelcimJsReturnMessage, type HelcimJsReturnMessage } from "../lib/helcimJsReturnMessage"
 
@@ -30,6 +31,7 @@ export function SignupHelcimPaymentStep({
     Boolean(ENV_JS_TOKEN),
     "data-tradesman-signup-helcim-js",
   )
+  const initialOrderNumber = useMemo(() => nextHelcimJsOrderNumber("SU", orderEmail), [orderEmail])
   const formAction = useMemo(() => {
     const base = typeof window !== "undefined" ? window.location.origin : ""
     return base ? `${base}/api/helcim-js-return` : ""
@@ -139,13 +141,16 @@ export function SignupHelcimPaymentStep({
         style={{ padding: 16, borderRadius: 10, border: `1px solid ${theme.border}`, background: "#fff" }}
         onSubmit={() => {
           setLastError("")
+          const next = nextHelcimJsOrderNumber("SU", orderEmail)
+          const orderInput = document.getElementById("orderNumber") as HTMLInputElement | null
+          if (orderInput) orderInput.value = next
           if (typeof window.helcimProcess === "function") {
             window.helcimProcess()
           }
         }}
       >
         <input type="hidden" id="token" value={ENV_JS_TOKEN} />
-        <input type="hidden" id="orderNumber" value={`signup-${orderEmail.replace(/[^a-z0-9]/gi, "").slice(0, 40)}`} />
+        <input type="hidden" id="orderNumber" defaultValue={initialOrderNumber} />
         <label style={{ ...labelStyle, marginBottom: 12 }}>
           Amount due today
           <input type="text" id="amount" readOnly defaultValue={dueTodayUsd.toFixed(2)} style={inputStyle} />

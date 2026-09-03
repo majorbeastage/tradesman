@@ -24,6 +24,7 @@ import {
   type AdCampaignRow,
 } from "../../lib/adCampaigns"
 import { isHelcimJsReturnMessage, type HelcimJsReturnMessage } from "../../lib/helcimJsReturnMessage"
+import { nextHelcimJsOrderNumber } from "../../lib/helcimJsOrderNumber"
 import { useHelcimJsScript } from "../../hooks/useHelcimJsScript"
 import { platformToolsFetchOrigins, platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
 import {
@@ -117,6 +118,7 @@ export default function PaymentsPage() {
   const [paymentCampaignIds, setPaymentCampaignIds] = useState<string[]>([])
   const [adPaymentHistory, setAdPaymentHistory] = useState<AdCampaignPaymentRow[]>([])
   const [adPaymentReconcileMessage, setAdPaymentReconcileMessage] = useState("")
+  const [helcimOrderNumber, setHelcimOrderNumber] = useState("")
   const checkoutRef = useRef<HTMLFormElement | null>(null)
 
   const useHelcimJs = Boolean(ENV_JS_TOKEN)
@@ -124,6 +126,7 @@ export default function PaymentsPage() {
     useHelcimJs,
     "data-tradesman-helcim-js",
   )
+  const helcimOrderKind = paymentMode === "advertising" ? "TMAD" : "TM"
 
   const adBalanceFromCampaignsCents = useMemo(
     () => adCampaigns.reduce((sum, c) => sum + adBalanceDueCents(c), 0),
@@ -161,6 +164,10 @@ export default function PaymentsPage() {
     adBalanceDueCentsTotal > 0 ||
     Boolean(billingForPayments.billing_helcim_customer_code?.trim()) ||
     Boolean(billingForPayments.billing_payment_due_date?.trim())
+
+  useEffect(() => {
+    setHelcimOrderNumber(nextHelcimJsOrderNumber(helcimOrderKind, profileUserId))
+  }, [helcimOrderKind, profileUserId])
 
   useEffect(() => {
     if (paymentMode === "suggested") setPaymentAmount(suggestedPaymentAmount)
@@ -875,11 +882,7 @@ export default function PaymentsPage() {
                   </div>
 
                   <input type="hidden" id="customerCode" value={customerCode ?? ""} />
-                  <input
-                    type="hidden"
-                    id="orderNumber"
-                    value={profileUserId ? `${paymentMode === "advertising" ? "TMAD" : "TM"}-${profileUserId}` : ""}
-                  />
+                  <input type="hidden" id="orderNumber" value={helcimOrderNumber} />
                   <input type="hidden" id="tradesmanCampaignIds" value={paymentCampaignIds.join(",")} />
 
                   <input
@@ -889,6 +892,10 @@ export default function PaymentsPage() {
                     disabled={!scriptReady}
                     onClick={() => {
                       setLastResult(null)
+                      const next = nextHelcimJsOrderNumber(helcimOrderKind, profileUserId)
+                      setHelcimOrderNumber(next)
+                      const orderInput = document.getElementById("orderNumber") as HTMLInputElement | null
+                      if (orderInput) orderInput.value = next
                       window.helcimProcess?.()
                     }}
                     style={{
