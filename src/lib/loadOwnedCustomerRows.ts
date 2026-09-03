@@ -10,6 +10,7 @@ const MAX_ROWS = 20_000
 export const CUSTOMER_HUB_SELECT_FULL = `
         id,
         display_name,
+        created_at,
         updated_at,
         service_address,
         service_lat,
@@ -30,6 +31,7 @@ export const CUSTOMER_HUB_SELECT_FULL = `
 export const CUSTOMER_HUB_SELECT_NO_FIT = `
         id,
         display_name,
+        created_at,
         updated_at,
         service_address,
         service_lat,
@@ -44,6 +46,7 @@ export const CUSTOMER_HUB_SELECT_NO_FIT = `
 export const CUSTOMER_HUB_SELECT_NO_URGENCY = `
         id,
         display_name,
+        created_at,
         updated_at,
         service_address,
         service_lat,

@@ -14,6 +14,7 @@ export type CustomerOrgGroupable = {
   customer_identifiers?: { type: string; value: string; is_primary?: boolean }[] | null
   metadata?: unknown
   last_activity_at?: string | null
+  created_at?: string | null
   updated_at?: string | null
 }
 
@@ -49,8 +50,8 @@ export function customerOrgGroupSignature(customer: CustomerOrgGroupable): strin
 function mergeOrgGroupCustomerRows<T extends CustomerOrgGroupable>(group: T[]): T {
   const sorted = [...group].sort(
     (a, b) =>
-      (Date.parse(b.last_activity_at || b.updated_at || "") || 0) -
-      (Date.parse(a.last_activity_at || a.updated_at || "") || 0),
+      (Date.parse(b.last_activity_at || b.created_at || b.updated_at || "") || 0) -
+      (Date.parse(a.last_activity_at || a.created_at || a.updated_at || "") || 0),
   )
   const base = { ...sorted[0] }
   const emailSeen = new Set<string>()

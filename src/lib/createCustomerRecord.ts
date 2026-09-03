@@ -200,6 +200,7 @@ export async function createCustomerRecord(
     }
   }
 
+  const nowIso = new Date().toISOString()
   const { data: customer, error: customerErr } = await supabase
     .from("customers")
     .insert({
@@ -209,6 +210,7 @@ export async function createCustomerRecord(
       service_address: serviceAddress || null,
       service_lat: lat,
       service_lng: lng,
+      last_activity_at: nowIso,
       ...(customerMetadata ? { metadata: customerMetadata } : {}),
     })
     .select("id")

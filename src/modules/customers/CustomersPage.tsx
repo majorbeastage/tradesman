@@ -214,6 +214,7 @@ type CustomerRow = {
   job_pipeline_status?: string | null
   communication_urgency?: string | null
   last_activity_at?: string | null
+  created_at?: string | null
   updated_at?: string | null
   fit_classification?: string | null
   fit_confidence?: number | null
@@ -248,8 +249,12 @@ function formatWhen(iso: string | null | undefined): string {
   return new Date(t).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })
 }
 
+function customerLastUpdateIso(c: Pick<CustomerRow, "last_activity_at" | "created_at" | "updated_at">): string | null {
+  return c.last_activity_at || c.created_at || c.updated_at || null
+}
+
 function lastUpdateDisplay(c: CustomerRow): string {
-  return formatWhen(c.last_activity_at ?? null)
+  return formatWhen(customerLastUpdateIso(c))
 }
 
 /** Prefer latest communication_events timestamp when newer than customers.last_activity_at. */
@@ -917,7 +922,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       for (let i = 0; i < next.length; i++) {
         const c = next[i]
         const cur = normalizeCommunicationUrgency(c.communication_urgency)
-        const lastMs = Date.parse(c.last_activity_at || c.updated_at || "") || 0
+        const lastMs = Date.parse(c.last_activity_at || c.created_at || c.updated_at || "") || 0
         const bumped = nextUrgencyAfterSilence(cur, prefs, lastMs, now)
         if (bumped) {
           const { error: upErr } = await supabase.from("customers").update({ communication_urgency: bumped }).eq("id", c.id)
@@ -1346,8 +1351,8 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       aVal = (a.job_pipeline_status || inferDefaultBestContact(a)).toLowerCase()
       bVal = (b.job_pipeline_status || inferDefaultBestContact(b)).toLowerCase()
     } else if (sortField === "last_update") {
-      aVal = String(Date.parse(a.last_activity_at || "") || 0)
-      bVal = String(Date.parse(b.last_activity_at || "") || 0)
+      aVal = String(Date.parse(customerLastUpdateIso(a) || "") || 0)
+      bVal = String(Date.parse(customerLastUpdateIso(b) || "") || 0)
     } else if (sortField === "urgency") {
       aVal = String(urgencyRank(normalizeCommunicationUrgency(a.communication_urgency))).padStart(3, "0")
       bVal = String(urgencyRank(normalizeCommunicationUrgency(b.communication_urgency))).padStart(3, "0")
@@ -1512,6 +1517,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       const fullSelectOne = `
         id,
         display_name,
+        created_at,
         updated_at,
         service_address,
         service_lat,
@@ -1528,7 +1534,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
       if (tried.error) {
         const fb = await supabase
           .from("customers")
-          .select(`id, display_name, updated_at, service_address, service_lat, service_lng, customer_identifiers ( type, value )`)
+          .select(`id, display_name, created_at, updated_at, service_address, service_lat, service_lng, customer_identifiers ( type, value )`)
           .eq("id", cid)
           .maybeSingle()
         if (!fb.error && fb.data) nextSel = fb.data as CustomerRow
@@ -1833,7 +1839,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
         const refreshed = await supabase
           .from("customers")
           .select(
-            `id, display_name, updated_at, service_address, service_lat, service_lng, best_contact_method, job_pipeline_status, communication_urgency, last_activity_at, metadata, fit_classification, fit_confidence, fit_reason, fit_source, fit_manually_overridden, fit_evaluated_at, customer_identifiers ( type, value )`,
+            `id, display_name, created_at, updated_at, service_address, service_lat, service_lng, best_contact_method, job_pipeline_status, communication_urgency, last_activity_at, metadata, fit_classification, fit_confidence, fit_reason, fit_source, fit_manually_overridden, fit_evaluated_at, customer_identifiers ( type, value )`,
           )
           .eq("id", selectedCustomer.id)
           .maybeSingle()
@@ -1866,6 +1872,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     const fullSelectOne = `
       id,
       display_name,
+      created_at,
       updated_at,
       service_address,
       service_lat,
@@ -1883,7 +1890,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
     if (!row) {
       const fb = await supabase
         .from("customers")
-        .select(`id, display_name, updated_at, service_address, service_lat, service_lng, customer_identifiers ( type, value )`)
+        .select(`id, display_name, created_at, updated_at, service_address, service_lat, service_lng, customer_identifiers ( type, value )`)
         .eq("id", customerId)
         .maybeSingle()
       if (!fb.error && fb.data) row = fb.data as CustomerRow
@@ -2909,10 +2916,10 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                   <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                                     <span>
                                       {(() => {
-                                        const dbMs = Date.parse(c.last_activity_at || "") || 0
+                                        const dbMs = Date.parse(customerLastUpdateIso(c) || "") || 0
                                         const bestMs = Math.max(dbMs, selectedCustomer?.id === c.id ? activityMaxSortMs : 0)
                                         const iso =
-                                          bestMs > 0 && bestMs >= dbMs ? new Date(bestMs).toISOString() : c.last_activity_at ?? null
+                                          bestMs > 0 ? new Date(bestMs).toISOString() : customerLastUpdateIso(c)
                                         return formatWhen(iso)
                                       })()}
                                     </span>

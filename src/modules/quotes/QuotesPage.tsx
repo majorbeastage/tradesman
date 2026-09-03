@@ -2512,7 +2512,12 @@ export default function QuotesPage(_props: QuotesPageProps) {
       }
       const { data: newCustomer, error: custErr } = await supabase
         .from("customers")
-        .insert({ user_id: userId, display_name: addNewName.trim() || null, notes: null })
+        .insert({
+          user_id: userId,
+          display_name: addNewName.trim() || null,
+          notes: null,
+          last_activity_at: new Date().toISOString(),
+        })
         .select("id")
         .single()
       if (custErr) throw custErr

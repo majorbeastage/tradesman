@@ -1233,7 +1233,12 @@ export async function getOrCreateCustomerByPhone(
 
   const { data: customer, error: customerErr } = await supabase
     .from("customers")
-    .insert({ user_id: userId, display_name: `Unknown (${normalizedPhone})`, notes: null })
+    .insert({
+      user_id: userId,
+      display_name: `Unknown (${normalizedPhone})`,
+      notes: null,
+      last_activity_at: new Date().toISOString(),
+    })
     .select("id")
     .single()
   if (customerErr) throw customerErr
@@ -1431,6 +1436,7 @@ export async function getOrCreateCustomerByEmail(
       display_name: classification.displayName,
       notes: null,
       metadata,
+      last_activity_at: new Date().toISOString(),
     })
     .select("id")
     .single()

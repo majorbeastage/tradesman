@@ -1446,6 +1446,7 @@ export default function LeadsPage({ setPage }: LeadsPageProps) {
             user_id: userId,
             display_name: displayName,
             notes: null,
+            last_activity_at: new Date().toISOString(),
           })
           .select("id")
           .single()

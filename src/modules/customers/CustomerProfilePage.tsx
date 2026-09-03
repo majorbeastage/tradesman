@@ -1243,7 +1243,12 @@ export default function CustomerProfilePage({ setPage }: Props) {
                     </span>
                   ) : null}
                   <span style={{ fontSize: 12, color: "#94a3b8" }}>
-                    Last update: {formatWhen(typeof c.last_activity_at === "string" ? c.last_activity_at : null)}
+                    Last update: {formatWhen(
+                      (typeof c.last_activity_at === "string" && c.last_activity_at) ||
+                        (typeof c.created_at === "string" && c.created_at) ||
+                        (typeof c.updated_at === "string" && c.updated_at) ||
+                        null,
+                    )}
                   </span>
                 </div>
               </div>

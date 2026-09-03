@@ -231,6 +231,7 @@ async function getOrCreateCustomerByEmail(
       display_name: classification.displayName,
       notes: null,
       metadata,
+      last_activity_at: new Date().toISOString(),
     })
     .select("id")
     .single()

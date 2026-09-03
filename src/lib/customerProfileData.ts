@@ -41,6 +41,7 @@ export type CustomerProfileRecord = {
   job_pipeline_status?: string | null
   communication_urgency?: string | null
   last_activity_at?: string | null
+  created_at?: string | null
   updated_at?: string | null
   fit_classification?: string | null
   fit_confidence?: number | null
@@ -111,6 +112,7 @@ const CUSTOMER_SELECT_FULL = `
   job_pipeline_status,
   communication_urgency,
   last_activity_at,
+  created_at,
   updated_at,
   fit_classification,
   fit_confidence,
@@ -135,6 +137,7 @@ const CUSTOMER_SELECT_NO_FIT = `
   job_pipeline_status,
   communication_urgency,
   last_activity_at,
+  created_at,
   updated_at,
   metadata,
   notes,

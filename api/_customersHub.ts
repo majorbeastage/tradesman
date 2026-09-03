@@ -13,6 +13,7 @@ const MAX_ROWS = 20_000
 const CUSTOMER_SELECT = `
   id,
   display_name,
+  created_at,
   updated_at,
   service_address,
   service_lat,
