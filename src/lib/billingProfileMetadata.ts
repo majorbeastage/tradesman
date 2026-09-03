@@ -40,6 +40,11 @@ export type BillingPaymentHistoryEntry = {
   transactionId?: string
   orderNumber?: string
   note?: string
+  /** Due date on file before this payment advanced it — used to revert without guessing month-end. */
+  dueDateBefore?: string
+  revertedAt?: string
+  problemAt?: string
+  problemNote?: string
 }
 
 /**
@@ -143,6 +148,12 @@ export function parseBillingMetadata(metadata: unknown): BillingProfileMetadata 
         if (typeof e.transactionId === "string" && e.transactionId.trim()) entry.transactionId = e.transactionId.trim()
         if (typeof e.orderNumber === "string" && e.orderNumber.trim()) entry.orderNumber = e.orderNumber.trim()
         if (typeof e.note === "string" && e.note.trim()) entry.note = e.note.trim()
+        if (typeof e.dueDateBefore === "string" && /^\d{4}-\d{2}-\d{2}$/.test(e.dueDateBefore.trim())) {
+          entry.dueDateBefore = e.dueDateBefore.trim()
+        }
+        if (typeof e.revertedAt === "string" && e.revertedAt.trim()) entry.revertedAt = e.revertedAt.trim()
+        if (typeof e.problemAt === "string" && e.problemAt.trim()) entry.problemAt = e.problemAt.trim()
+        if (typeof e.problemNote === "string" && e.problemNote.trim()) entry.problemNote = e.problemNote.trim()
         return entry
       })
       .filter((x): x is BillingPaymentHistoryEntry => x != null)
@@ -240,16 +251,127 @@ export function advanceBillingDueDate(dueDate: string | undefined): string | und
   return `${y}-${m}-${day}`
 }
 
+export function rollbackBillingDueDate(dueDate: string | undefined): string | undefined {
+  const t = (dueDate ?? "").trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return dueDate
+  const d = new Date(`${t}T12:00:00`)
+  if (Number.isNaN(d.getTime())) return dueDate
+  d.setMonth(d.getMonth() - 1)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  return `${y}-${m}-${day}`
+}
+
+function historyHasOpenTxn(hist: BillingPaymentHistoryEntry[], transactionId: string): boolean {
+  const tx = transactionId.trim()
+  if (!tx) return false
+  return hist.some((e) => e.transactionId?.trim() === tx && !e.revertedAt)
+}
+
+function historyHasOpenOrder(hist: BillingPaymentHistoryEntry[], orderNumber: string): boolean {
+  const order = orderNumber.trim()
+  if (!order) return false
+  return hist.some((e) => e.orderNumber?.trim() === order && !e.revertedAt)
+}
+
+function alreadyRecordedOpenPayment(hist: BillingPaymentHistoryEntry[], entry: Pick<BillingPaymentHistoryEntry, "transactionId" | "orderNumber">): boolean {
+  const tx = entry.transactionId?.trim() ?? ""
+  const order = entry.orderNumber?.trim() ?? ""
+  return (tx !== "" && historyHasOpenTxn(hist, tx)) || (order !== "" && historyHasOpenOrder(hist, order))
+}
+
 export function appendBillingPaymentHistory(
   prev: Record<string, unknown>,
   entry: BillingPaymentHistoryEntry,
 ): Record<string, unknown> {
   const billing = parseBillingMetadata(prev)
   const existing = billing.billing_payment_history_v1 ?? []
-  const tx = entry.transactionId?.trim() ?? ""
-  if (tx && existing.some((e) => e.transactionId?.trim() === tx)) {
+  if (alreadyRecordedOpenPayment(existing, entry)) {
     return prev
   }
   const hist = [entry, ...existing].slice(0, 100)
   return mergeBillingIntoProfileMetadata(prev, { billing_payment_history_v1: hist })
+}
+
+/** Mark a Tradesman bill paid: last paid, advance due date, append history. No-op if this Helcim txn is already on file. */
+export function applyReceivedBillingPayment(
+  prev: Record<string, unknown>,
+  entry: Omit<BillingPaymentHistoryEntry, "dueDateBefore"> & { at: string },
+): Record<string, unknown> {
+  const billing = parseBillingMetadata(prev)
+  if (alreadyRecordedOpenPayment(billing.billing_payment_history_v1 ?? [], entry)) {
+    return prev
+  }
+  const dueBefore = billing.billing_payment_due_date
+  const nextDue = advanceBillingDueDate(dueBefore)
+  const next = mergeBillingIntoProfileMetadata(prev, {
+    billing_last_success_at: entry.at,
+    ...(nextDue ? { billing_payment_due_date: nextDue } : {}),
+  })
+  return appendBillingPaymentHistory(next, {
+    ...entry,
+    ...(dueBefore ? { dueDateBefore: dueBefore } : {}),
+  })
+}
+
+export function revertReceivedBillingPayment(
+  prev: Record<string, unknown>,
+  opts?: { transactionId?: string; at?: string },
+): { next: Record<string, unknown>; reverted: BillingPaymentHistoryEntry | null } {
+  const billing = parseBillingMetadata(prev)
+  const hist = [...(billing.billing_payment_history_v1 ?? [])]
+  const wantTx = opts?.transactionId?.trim() ?? ""
+  const wantAt = opts?.at?.trim() ?? ""
+  const idx = hist.findIndex((e) => {
+    if (e.revertedAt) return false
+    if (wantTx) return e.transactionId?.trim() === wantTx
+    if (wantAt) return e.at === wantAt
+    return true
+  })
+  if (idx < 0) return { next: prev, reverted: null }
+  const nowIso = new Date().toISOString()
+  hist[idx] = { ...hist[idx]!, revertedAt: nowIso }
+  const remaining = hist.filter((e) => !e.revertedAt)
+  const restoredDue = hist[idx]!.dueDateBefore || rollbackBillingDueDate(billing.billing_payment_due_date)
+  const next = mergeBillingIntoProfileMetadata(prev, {
+    billing_payment_history_v1: hist,
+    billing_last_success_at: remaining[0]?.at ?? "",
+    ...(restoredDue ? { billing_payment_due_date: restoredDue } : {}),
+  })
+  return { next, reverted: hist[idx]! }
+}
+
+export function markBillingPaymentProblem(
+  prev: Record<string, unknown>,
+  opts: { transactionId?: string; originalTransactionId?: string; orderNumber?: string; note: string; at?: string },
+): { next: Record<string, unknown>; matched: boolean } {
+  const billing = parseBillingMetadata(prev)
+  const hist = [...(billing.billing_payment_history_v1 ?? [])]
+  const wantTx = opts.transactionId?.trim() ?? ""
+  const wantOrig = opts.originalTransactionId?.trim() ?? ""
+  const wantOrder = opts.orderNumber?.trim() ?? ""
+  const idx = hist.findIndex((e) => {
+    if (e.revertedAt) return false
+    const rowTx = e.transactionId?.trim() ?? ""
+    const rowOrder = e.orderNumber?.trim() ?? ""
+    if (wantTx && rowTx === wantTx) return true
+    if (wantOrig && rowTx === wantOrig) return true
+    if (wantOrder && rowOrder === wantOrder) return true
+    return false
+  })
+  if (idx < 0) return { next: prev, matched: false }
+  hist[idx] = {
+    ...hist[idx]!,
+    problemAt: opts.at || new Date().toISOString(),
+    problemNote: opts.note,
+  }
+  return {
+    next: mergeBillingIntoProfileMetadata(prev, { billing_payment_history_v1: hist }),
+    matched: true,
+  }
+}
+
+export function billingClientHasOpenPaymentProblem(billing: BillingProfileMetadata): boolean {
+  return (billing.billing_payment_history_v1 ?? []).some((e) => Boolean(e.problemAt) && !e.revertedAt)
 }

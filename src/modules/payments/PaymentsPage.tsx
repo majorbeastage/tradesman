@@ -5,7 +5,7 @@ import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
 import {
   appendHelcimCustomerQueryToPayPortalUrl,
-  appendBillingPaymentHistory,
+  applyReceivedBillingPayment,
   helcimPayPortalUrlAllowsIframe,
   normalizeHelcimPayPortalUrl,
   parseBillingMetadata,
@@ -435,17 +435,13 @@ export default function PaymentsPage() {
           : {}
       const amountUsd = Number.parseFloat(result.amount)
       const nowIso = new Date().toISOString()
-      let nextMeta = appendBillingPaymentHistory(prev, {
+      const nextMeta = applyReceivedBillingPayment(prev, {
         at: nowIso,
         amountUsd: Number.isFinite(amountUsd) ? amountUsd : undefined,
         transactionId: result.transactionId || undefined,
         orderNumber: result.orderNumber || undefined,
         note: "Helcim.js checkout",
       })
-      nextMeta = {
-        ...nextMeta,
-        billing_last_success_at: nowIso,
-      }
       const { error } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", profileUserId)
       if (error) console.warn("[helcim-js] could not save payment history", error.message)
     } catch (e) {
@@ -1096,12 +1092,15 @@ export default function PaymentsPage() {
               full statement.
             </p>
             <ul style={{ margin: 0, paddingLeft: 20, fontSize: 14, color: theme.text, lineHeight: 1.65 }}>
-              {(billingForPayments.billing_payment_history_v1 ?? []).length > 0 ? (
-                (billingForPayments.billing_payment_history_v1 ?? []).map((entry, i) => (
+              {(billingForPayments.billing_payment_history_v1 ?? []).filter((entry) => !entry.revertedAt).length > 0 ? (
+                (billingForPayments.billing_payment_history_v1 ?? [])
+                  .filter((entry) => !entry.revertedAt)
+                  .map((entry, i) => (
                   <li key={`${entry.at}-${i}`}>
                     <strong>{formatProfilePaymentIso(entry.at)}</strong>
                     {typeof entry.amountUsd === "number" ? ` · $${entry.amountUsd.toFixed(2)}` : ""}
                     {entry.transactionId ? ` · Ref ${entry.transactionId}` : ""}
+                    {entry.orderNumber ? ` · Invoice ${entry.orderNumber}` : ""}
                     {entry.note ? ` · ${entry.note}` : ""}
                   </li>
                 ))

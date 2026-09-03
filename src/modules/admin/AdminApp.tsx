@@ -43,6 +43,7 @@ import {
 } from "../../types/portal-builder"
 import { ASSISTANT_ADMIN_PANEL_STORAGE_KEY } from "../../lib/platformAssistantRegistry"
 import type { AdminPanelId } from "../../lib/platformAssistantRegistry"
+import { billingClientHasOpenPaymentProblem, parseBillingMetadata } from "../../lib/billingProfileMetadata"
 import {
   ALL_PROFILES_ID,
   ALL_USERS_ID,
@@ -563,6 +564,7 @@ function AdminAppInner() {
   const [adminPanel, setAdminPanel] = useState<
     "ops" | "traffic" | "campaigns" | "google_reserve" | "voice_studio" | "conference" | "signup" | "communications" | "users" | "billing" | "portal" | "tickets" | "about"
   >("ops")
+  const [billingProblemCount, setBillingProblemCount] = useState(0)
 
   useEffect(() => {
     if (isMobile) setAdminNavOpen(false)
@@ -593,6 +595,24 @@ function AdminAppInner() {
       /* ignore */
     }
   }, [])
+
+  useEffect(() => {
+    if (!supabase) return
+    let cancelled = false
+    void supabase
+      .from("profiles")
+      .select("metadata")
+      .then(({ data }) => {
+        if (cancelled) return
+        const n = (data ?? []).filter((row) =>
+          billingClientHasOpenPaymentProblem(parseBillingMetadata((row as { metadata?: unknown }).metadata)),
+        ).length
+        setBillingProblemCount(n)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [adminPanel])
 
   const loadProfiles = useCallback(async () => {
     if (!supabase) return
@@ -1333,7 +1353,7 @@ function AdminAppInner() {
             style={{
               padding: "8px 12px",
               borderRadius: 6,
-              border: `1px solid rgba(255,255,255,0.35)`,
+              border: billingProblemCount > 0 ? "1px solid #f59e0b" : `1px solid rgba(255,255,255,0.35)`,
               background: adminPanel === "billing" ? "rgba(249,115,22,0.45)" : "rgba(0,0,0,0.2)",
               color: "white",
               fontSize: 13,
@@ -1343,6 +1363,7 @@ function AdminAppInner() {
             }}
           >
             Billing &amp; Helcim
+            {billingProblemCount > 0 ? ` (${billingProblemCount})` : ""}
           </button>
           <button
             type="button"
@@ -1544,6 +1565,39 @@ function AdminAppInner() {
       </aside>
 
       <main style={{ flex: 1, padding: isMobile ? "48px 16px 24px" : 24, background: theme.background, color: theme.text, overflow: "auto", display: "flex", flexDirection: "column", gap: 24 }}>
+        {billingProblemCount > 0 && adminPanel !== "billing" ? (
+          <div
+            style={{
+              padding: "12px 14px",
+              borderRadius: 8,
+              border: "1px solid #f59e0b",
+              background: "#fffbeb",
+              color: "#92400e",
+              fontSize: 13,
+              lineHeight: 1.5,
+            }}
+          >
+            <strong>Helcim payment problem</strong> on {billingProblemCount} client{billingProblemCount === 1 ? "" : "s"}. The client is
+            not locked out.{" "}
+            <button
+              type="button"
+              onClick={() => setAdminPanel("billing")}
+              style={{
+                marginLeft: 8,
+                padding: "4px 10px",
+                borderRadius: 6,
+                border: "1px solid #f59e0b",
+                background: "#fff",
+                color: "#92400e",
+                fontWeight: 800,
+                cursor: "pointer",
+                fontSize: 12,
+              }}
+            >
+              Open Billing &amp; Helcim
+            </button>
+          </div>
+        ) : null}
         {adminPanel === "ops" ? (
           <AdminOpsInboxSection onOpenTickets={() => setAdminPanel("tickets")} onOpenUsers={() => setAdminPanel("users")} />
         ) : adminPanel === "traffic" ? (

@@ -1,4 +1,7 @@
 // Supabase Edge: card-processor webhooks (e.g. Helcim) → billing_events + profiles.account_disabled
+// Approved purchase/capture: mark received (last paid + due date +1 month). Duplicate txn/order is a no-op.
+// Refund/void/chargeback (or a later decline) of a txn already marked received: flag a problem, notify admins,
+// do NOT auto-lock. Unmatched first-time declines still disable non-exempt user roles.
 // Profiles with role admin, office_manager, or demo_user are exempt from account_disabled automation only.
 // billing_last_success_at is updated on approved charges for all roles (dashboard / Payments).
 // IMPORTANT: Deliver URL must NOT contain the substring "Helcim" (processor rule). This function is named billing-webhook.
@@ -84,36 +87,121 @@ function advanceDueDate(dueDate: string | undefined): string | undefined {
   return `${y}-${m}-${day}`
 }
 
-function mergeBillingMeta(
+type HistoryRow = Record<string, unknown>
+
+function historyRows(prev: Record<string, unknown>): HistoryRow[] {
+  if (!Array.isArray(prev.billing_payment_history_v1)) return []
+  return prev.billing_payment_history_v1.filter((row): row is HistoryRow => Boolean(row) && typeof row === "object" && !Array.isArray(row))
+}
+
+function rowReverted(row: HistoryRow): boolean {
+  return typeof row.revertedAt === "string" && Boolean(row.revertedAt.trim())
+}
+
+function alreadyRecordedOpenPayment(hist: HistoryRow[], transactionId: string, orderNumber: string): boolean {
+  const tx = transactionId.trim()
+  const order = orderNumber.trim()
+  return hist.some((row) => {
+    if (rowReverted(row)) return false
+    if (tx && String(row.transactionId ?? "").trim() === tx) return true
+    if (order && String(row.orderNumber ?? "").trim() === order) return true
+    return false
+  })
+}
+
+/** Same as Admin "received": last paid + next month due date. No-op if this Helcim txn/order is already on file. */
+function applyReceivedBillingPayment(
   prev: Record<string, unknown>,
-  patch: { billing_last_success_at?: string; amountUsd?: number; transactionId?: string; orderNumber?: string },
-): Record<string, unknown> {
-  const next = { ...prev }
-  if (patch.billing_last_success_at) {
-    next.billing_last_success_at = patch.billing_last_success_at
-    const dueRaw = typeof prev.billing_payment_due_date === "string" ? prev.billing_payment_due_date.trim() : ""
-    const nextDue = advanceDueDate(dueRaw || undefined)
-    if (nextDue) next.billing_payment_due_date = nextDue
-    const hist = Array.isArray(prev.billing_payment_history_v1) ? [...prev.billing_payment_history_v1] : []
-    const tx = typeof patch.transactionId === "string" ? patch.transactionId.trim() : ""
-    const already = tx
-      ? hist.some((row) => {
-          if (!row || typeof row !== "object" || Array.isArray(row)) return false
-          return String((row as Record<string, unknown>).transactionId ?? "").trim() === tx
-        })
-      : false
-    if (!already) {
-      hist.unshift({
-        at: patch.billing_last_success_at,
-        ...(typeof patch.amountUsd === "number" ? { amountUsd: patch.amountUsd } : {}),
-        ...(tx ? { transactionId: tx } : {}),
-        ...(patch.orderNumber?.trim() ? { orderNumber: patch.orderNumber.trim() } : {}),
-        note: "Helcim webhook",
-      })
-    }
-    next.billing_payment_history_v1 = hist.slice(0, 100)
+  patch: { at: string; amountUsd?: number; transactionId?: string; orderNumber?: string; note?: string },
+): { next: Record<string, unknown>; already: boolean } {
+  const hist = historyRows(prev)
+  const tx = (patch.transactionId ?? "").trim()
+  const order = (patch.orderNumber ?? "").trim()
+  if (alreadyRecordedOpenPayment(hist, tx, order)) {
+    return { next: prev, already: true }
   }
-  return next
+  const dueRaw = typeof prev.billing_payment_due_date === "string" ? prev.billing_payment_due_date.trim() : ""
+  const nextDue = advanceDueDate(dueRaw || undefined)
+  const next: Record<string, unknown> = { ...prev, billing_last_success_at: patch.at }
+  if (nextDue) next.billing_payment_due_date = nextDue
+  const entry: HistoryRow = {
+    at: patch.at,
+    note: patch.note || "Helcim webhook",
+  }
+  if (typeof patch.amountUsd === "number" && Number.isFinite(patch.amountUsd)) entry.amountUsd = patch.amountUsd
+  if (tx) entry.transactionId = tx
+  if (order) entry.orderNumber = order
+  if (dueRaw) entry.dueDateBefore = dueRaw
+  next.billing_payment_history_v1 = [entry, ...hist].slice(0, 100)
+  return { next, already: false }
+}
+
+function markBillingPaymentProblem(
+  prev: Record<string, unknown>,
+  opts: { transactionId?: string; originalTransactionId?: string; orderNumber?: string; note: string; at: string },
+): { next: Record<string, unknown>; matched: boolean } {
+  const hist = [...historyRows(prev)]
+  const wantTx = (opts.transactionId ?? "").trim()
+  const wantOrig = (opts.originalTransactionId ?? "").trim()
+  const wantOrder = (opts.orderNumber ?? "").trim()
+  const idx = hist.findIndex((row) => {
+    if (rowReverted(row)) return false
+    const rowTx = String(row.transactionId ?? "").trim()
+    const rowOrder = String(row.orderNumber ?? "").trim()
+    if (wantTx && rowTx === wantTx) return true
+    if (wantOrig && rowTx === wantOrig) return true
+    if (wantOrder && rowOrder === wantOrder) return true
+    return false
+  })
+  if (idx < 0) return { next: prev, matched: false }
+  hist[idx] = { ...hist[idx]!, problemAt: opts.at, problemNote: opts.note }
+  return { next: { ...prev, billing_payment_history_v1: hist }, matched: true }
+}
+
+function isHelcimReversalType(txType: string): boolean {
+  return /^(refund|reverse|void|chargeback)$/i.test(txType.trim())
+}
+
+function isHelcimMoneyInType(txType: string): boolean {
+  const t = txType.trim().toLowerCase()
+  if (!t) return true
+  return t === "purchase" || t === "capture" || t === "sale"
+}
+
+function pickOriginalTransactionId(source: Record<string, unknown>): string {
+  for (const key of ["originalTransactionId", "originalCardTransactionId"]) {
+    const raw = source[key]
+    if (raw === undefined || raw === null) continue
+    const s = String(raw).trim()
+    if (s) return s
+  }
+  return ""
+}
+
+async function notifyAdminsOfBillingProblem(
+  admin: ReturnType<typeof createClient>,
+  opts: { profileId: string; note: string },
+): Promise<void> {
+  try {
+    const { data: profile } = await admin.from("profiles").select("display_name").eq("id", opts.profileId).maybeSingle()
+    const label =
+      (typeof profile?.display_name === "string" && profile.display_name.trim()) ||
+      opts.profileId.slice(0, 8)
+    const { data: admins } = await admin.from("profiles").select("id").eq("role", "admin")
+    const rows = (admins ?? [])
+      .map((row: { id?: unknown }) => (typeof row.id === "string" ? row.id : ""))
+      .filter(Boolean)
+      .map((userId: string) => ({
+        user_id: userId,
+        kind: "billing_payment_problem",
+        title: "Helcim payment problem",
+        body: `${label}: ${opts.note}. Open Admin → Billing & Helcim to revert the received payment if needed. The client was not locked out.`,
+        metadata: { page: "admin", adminPanel: "billing", profileId: opts.profileId },
+      }))
+    if (rows.length) await admin.from("user_notifications").insert(rows)
+  } catch {
+    /* notifications are best-effort */
+  }
 }
 
 Deno.serve(async (req) => {
@@ -180,6 +268,8 @@ Deno.serve(async (req) => {
   let approved: boolean | null = null
   let amountCents: number | null = null
   let orderNumber = ""
+  let helcimType = ""
+  let originalTxnId = ""
 
   if (manualProfile && (manualStatus === "approved" || manualStatus === "declined")) {
     customerCode = typeof body.helcimCustomerCode === "string" ? body.helcimCustomerCode : ""
@@ -215,7 +305,9 @@ Deno.serve(async (req) => {
     customerCode = typeof txJson.customerCode === "string" ? txJson.customerCode.trim() : ""
     const st = typeof txJson.status === "string" ? txJson.status.toUpperCase() : ""
     approved = st === "APPROVED" || st === "APPROVED (TEST)"
-    const amt = txJson.transactionAmount
+    helcimType = typeof txJson.type === "string" ? txJson.type.trim() : ""
+    originalTxnId = pickOriginalTransactionId(txJson) || pickOriginalTransactionId(body)
+    const amt = txJson.transactionAmount ?? txJson.amount
     if (typeof amt === "number" && Number.isFinite(amt)) amountCents = Math.round(amt * 100)
     else if (typeof amt === "string") {
       const n = Number.parseFloat(amt)
@@ -255,6 +347,7 @@ Deno.serve(async (req) => {
     profileId: profileId || undefined,
     approved,
     amountCents,
+    helcimType: helcimType || undefined,
   })
 
   try {
@@ -294,29 +387,51 @@ Deno.serve(async (req) => {
 
   const nowIso = new Date().toISOString()
   let accountAutomationApplied = false
-  /** Last successful payment date is useful for every role (dashboard, Payments context). Account lock/unlock stays exempt for staff. */
-  if (approved === true) {
-    const nextMeta = mergeBillingMeta(meta, {
-      billing_last_success_at: nowIso,
+  let paymentProblemFlagged = false
+  const reversal = isHelcimReversalType(helcimType)
+  const moneyIn = !reversal && isHelcimMoneyInType(helcimType)
+  const problemNote = reversal
+    ? `Helcim ${helcimType.toLowerCase() || "reversal"} after a received payment`
+    : "Helcim later declined a charge already marked received"
+
+  /** Last successful payment date is useful for every role (dashboard, Payments). Account lock/unlock stays exempt for staff. */
+  if (approved === true && moneyIn) {
+    const { next } = applyReceivedBillingPayment(meta, {
+      at: nowIso,
       amountUsd: amountCents != null ? amountCents / 100 : undefined,
       transactionId: txId || undefined,
       orderNumber: orderNumber || undefined,
+      note: "Helcim webhook",
     })
-    const patch: Record<string, unknown> = { metadata: nextMeta, updated_at: nowIso }
+    const patch: Record<string, unknown> = { metadata: next, updated_at: nowIso }
     if (!exemptFromHelcimProfileUpdates) {
       patch.account_disabled = false
     }
     await admin.from("profiles").update(patch).eq("id", profileId)
     accountAutomationApplied = true
-  } else if (approved === false && !paused && !exemptFromHelcimProfileUpdates) {
-    await admin
-      .from("profiles")
-      .update({
-        account_disabled: true,
-        updated_at: nowIso,
-      })
-      .eq("id", profileId)
-    accountAutomationApplied = true
+  } else if (reversal || (approved === false && moneyIn)) {
+    const { next, matched } = markBillingPaymentProblem(meta, {
+      transactionId: txId || undefined,
+      originalTransactionId: originalTxnId || undefined,
+      orderNumber: orderNumber || undefined,
+      note: problemNote,
+      at: nowIso,
+    })
+    if (matched) {
+      paymentProblemFlagged = true
+      await admin.from("profiles").update({ metadata: next, updated_at: nowIso }).eq("id", profileId)
+      await notifyAdminsOfBillingProblem(admin, { profileId, note: problemNote })
+      /** Do not auto-lock: ops reverts the received payment if they need the due date rolled back. */
+    } else if (approved === false && !paused && !exemptFromHelcimProfileUpdates && !reversal) {
+      await admin
+        .from("profiles")
+        .update({
+          account_disabled: true,
+          updated_at: nowIso,
+        })
+        .eq("id", profileId)
+      accountAutomationApplied = true
+    }
   }
 
   return new Response(
@@ -326,6 +441,7 @@ Deno.serve(async (req) => {
       applied: approved,
       exemptFromHelcimAutomation: exemptFromHelcimProfileUpdates,
       accountAutomationApplied,
+      paymentProblemFlagged,
     }),
     {
       status: 200,

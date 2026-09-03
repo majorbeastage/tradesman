@@ -4,10 +4,11 @@ import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
 import { AdminSettingBlock } from "../../components/admin/AdminSettingChrome"
 import {
-  advanceBillingDueDate,
-  appendBillingPaymentHistory,
+  applyReceivedBillingPayment,
+  billingClientHasOpenPaymentProblem,
   mergeBillingIntoProfileMetadata,
   parseBillingMetadata,
+  revertReceivedBillingPayment,
   type BillingProfileMetadata,
 } from "../../lib/billingProfileMetadata"
 import {
@@ -259,6 +260,11 @@ export default function AdminPaymentsSection() {
     })
   }, [rows, drafts, searchQuery])
 
+  const problemClients = useMemo(
+    () => rows.filter((r) => billingClientHasOpenPaymentProblem(r.billing)),
+    [rows],
+  )
+
   async function recordManualPaymentReceived(userId: string) {
     if (!supabase) return
     setSavingId(userId)
@@ -270,18 +276,39 @@ export default function AdminPaymentsSection() {
         row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
           ? (row.metadata as Record<string, unknown>)
           : {}
-      const billing = parseBillingMetadata(prev)
       const nowIso = new Date().toISOString()
-      const nextDue = advanceBillingDueDate(billing.billing_payment_due_date)
-      let nextMeta = mergeBillingIntoProfileMetadata(prev, {
-        billing_last_success_at: nowIso,
-        ...(nextDue ? { billing_payment_due_date: nextDue } : {}),
-      })
-      nextMeta = appendBillingPaymentHistory(nextMeta, {
+      const nextMeta = applyReceivedBillingPayment(prev, {
         at: nowIso,
         note: "Recorded manually in Admin",
       })
       const { error: upErr } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", userId)
+      if (upErr) throw upErr
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSavingId(null)
+    }
+  }
+
+  async function revertReceivedPayment(userId: string, transactionId?: string, at?: string) {
+    if (!supabase) return
+    const ok = window.confirm(
+      "Revert this received payment? Last paid and the due date go back to the previous cycle. The client is not locked out — use Pause billing or Access if you need that.",
+    )
+    if (!ok) return
+    setSavingId(userId)
+    setError("")
+    try {
+      const { data: row, error: fetchErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+      if (fetchErr) throw fetchErr
+      const prev =
+        row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+          ? (row.metadata as Record<string, unknown>)
+          : {}
+      const { next, reverted } = revertReceivedBillingPayment(prev, { transactionId, at })
+      if (!reverted) throw new Error("No received payment to revert.")
+      const { error: upErr } = await supabase.from("profiles").update({ metadata: next }).eq("id", userId)
       if (upErr) throw upErr
       await load()
     } catch (e) {
@@ -415,6 +442,29 @@ export default function AdminPaymentsSection() {
           and <code>HELCIM_API_TOKEN</code> on the Edge function. If the verifier won&apos;t copy from their UI, select-all in the dialog, paste into
           Notes, then copy from there.
         </p>
+        {problemClients.length > 0 ? (
+          <div
+            style={{
+              marginTop: 14,
+              padding: "12px 14px",
+              borderRadius: 8,
+              border: "1px solid #f59e0b",
+              background: "#fffbeb",
+              color: "#92400e",
+              fontSize: 13,
+              lineHeight: 1.5,
+            }}
+          >
+            <strong>Helcim payment problem</strong> on {problemClients.length} client
+            {problemClients.length === 1 ? "" : "s"}:{" "}
+            {problemClients
+              .slice(0, 6)
+              .map((c) => c.display_name?.trim() || c.email || c.id.slice(0, 8))
+              .join(", ")}
+            {problemClients.length > 6 ? "…" : ""}. Expand the row to revert the received payment if needed. The client is not locked
+            out until you revert or pause billing.
+          </div>
+        ) : null}
       </AdminSettingBlock>
 
       <AdminPromoCodesSection />
@@ -525,11 +575,12 @@ export default function AdminPaymentsSection() {
               }
               const seats = resolveEffectiveEntitlements(seatMeta)
               const isOpen = expanded[r.id] === true
+              const hasPaymentProblem = billingClientHasOpenPaymentProblem(r.billing)
               return (
                 <div
                   key={r.id}
                   style={{
-                    border: `1px solid ${theme.border}`,
+                    border: `1px solid ${hasPaymentProblem ? "#f59e0b" : theme.border}`,
                     borderRadius: 10,
                     background: "#fff",
                     overflow: "hidden",
@@ -562,6 +613,11 @@ export default function AdminPaymentsSection() {
                       </div>
                       <div style={{ fontSize: 11, color: theme.charcoal, opacity: 0.78, fontWeight: 600, textTransform: "capitalize" }}>
                         {r.role}
+                        {hasPaymentProblem ? (
+                          <span style={{ marginLeft: 8, color: "#b45309", textTransform: "none", fontWeight: 800 }}>
+                            · Helcim payment problem
+                          </span>
+                        ) : null}
                       </div>
                     </div>
                     <div style={{ textAlign: "right", flexShrink: 0 }}>
@@ -772,9 +828,10 @@ export default function AdminPaymentsSection() {
                           ) : null}
                         </div>
                         <p style={{ margin: "6px 0 8px", fontSize: 12, color: theme.charcoal, opacity: 0.88, lineHeight: 1.45, maxWidth: 720 }}>
-                          Helcim webhooks update <strong>Last paid</strong> automatically when a card charge matches this user&apos;s{" "}
-                          <strong>Helcim customer code</strong>. Use the button below for checks, wire, or in-person card runs that
-                          won&apos;t hit the webhook.
+                          Card payments mark <strong>received</strong> automatically (Helcim.js checkout and Helcim webhooks): last paid and
+                          the due date advance without this button. Use the button only for checks, wire, or in-person charges that
+                          won&apos;t hit Helcim. If Helcim later declines, voids, or refunds a charge we already recorded, a notice appears
+                          at the top of this page and you can revert that row.
                         </p>
                         <button
                           type="button"
@@ -792,7 +849,7 @@ export default function AdminPaymentsSection() {
                             width: "fit-content",
                           }}
                         >
-                          {savingId === r.id ? "Saving…" : "Record payment received (now)"}
+                          {savingId === r.id ? "Saving…" : "Record payment received (check / wire)"}
                         </button>
 
                         {(() => {
@@ -830,21 +887,70 @@ export default function AdminPaymentsSection() {
                                           <th style={cell}>Amount</th>
                                           <th style={cell}>Helcim txn</th>
                                           <th style={cell}>Invoice / order</th>
+                                          <th style={cell}>Status</th>
                                           <th style={cell}>Note</th>
+                                          <th style={cell}></th>
                                         </tr>
                                       </thead>
                                       <tbody>
-                                        {hist.map((entry, i) => (
-                                          <tr key={`${entry.at}-${entry.transactionId ?? i}`} style={{ borderBottom: `1px solid ${theme.border}` }}>
+                                        {hist.map((entry, i) => {
+                                          const reverted = Boolean(entry.revertedAt)
+                                          const problem = Boolean(entry.problemAt) && !reverted
+                                          return (
+                                          <tr
+                                            key={`${entry.at}-${entry.transactionId ?? i}`}
+                                            style={{
+                                              borderBottom: `1px solid ${theme.border}`,
+                                              background: problem ? "#fffbeb" : reverted ? "#f8fafc" : undefined,
+                                            }}
+                                          >
                                             <td style={cell}>{formatAdminPaymentWhen(entry.at)}</td>
                                             <td style={{ ...cell, fontWeight: 800 }}>
                                               {typeof entry.amountUsd === "number" ? `$${entry.amountUsd.toFixed(2)}` : "—"}
                                             </td>
                                             <td style={{ ...cell, fontFamily: "ui-monospace, monospace" }}>{entry.transactionId || "—"}</td>
                                             <td style={{ ...cell, fontFamily: "ui-monospace, monospace" }}>{entry.orderNumber || "—"}</td>
+                                            <td style={cell}>
+                                              {reverted ? (
+                                                <span style={{ color: "#64748b", fontWeight: 700 }}>Reverted</span>
+                                              ) : problem ? (
+                                                <span style={{ color: "#b45309", fontWeight: 800 }}>Problem</span>
+                                              ) : (
+                                                <span style={{ color: "#047857", fontWeight: 700 }}>Received</span>
+                                              )}
+                                              {problem && entry.problemNote ? (
+                                                <div style={{ color: "#92400e", marginTop: 2, maxWidth: 220 }}>{entry.problemNote}</div>
+                                              ) : null}
+                                              {reverted ? (
+                                                <div style={{ color: "#64748b", marginTop: 2 }}>{formatAdminPaymentWhen(entry.revertedAt)}</div>
+                                              ) : null}
+                                            </td>
                                             <td style={cell}>{entry.note || "—"}</td>
+                                            <td style={cell}>
+                                              {!reverted ? (
+                                                <button
+                                                  type="button"
+                                                  disabled={savingId === r.id}
+                                                  onClick={() => void revertReceivedPayment(r.id, entry.transactionId, entry.at)}
+                                                  style={{
+                                                    padding: "4px 8px",
+                                                    borderRadius: 6,
+                                                    border: `1px solid ${theme.border}`,
+                                                    background: "#fff",
+                                                    color: theme.charcoal,
+                                                    cursor: savingId === r.id ? "wait" : "pointer",
+                                                    fontWeight: 700,
+                                                    fontSize: 11,
+                                                    whiteSpace: "nowrap",
+                                                  }}
+                                                >
+                                                  Revert
+                                                </button>
+                                              ) : null}
+                                            </td>
                                           </tr>
-                                        ))}
+                                          )
+                                        })}
                                       </tbody>
                                     </table>
                                   </div>
