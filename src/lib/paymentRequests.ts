@@ -184,6 +184,34 @@ export async function updatePaymentRequest(
   if (error) throw error
 }
 
+export async function fetchAdminClientCollections(
+  profileId: string,
+  accessToken: string | null,
+): Promise<AdminClientCollectionRow[]> {
+  const data = await paymentApiFetch<{ collections?: AdminClientCollectionRow[] }>(
+    "admin-client-payments",
+    { profileId, userId: profileId },
+    accessToken,
+  )
+  return Array.isArray(data.collections) ? data.collections : []
+}
+
+export type AdminClientCollectionRow = {
+  id: string
+  created_at: string
+  paid_at: string | null
+  amount: number
+  currency: string
+  status: string
+  provider: string
+  description: string
+  customer_id: string | null
+  customer_name: string | null
+  provider_reference_id: string | null
+  payment_url: string | null
+  sent_via: string | null
+}
+
 export async function loadPaymentRequests(userId: string, limit = 40): Promise<PaymentRequestRow[]> {
   if (!supabase) return []
   const { data, error } = await supabase

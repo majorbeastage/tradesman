@@ -5,6 +5,7 @@ import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
 import {
   appendHelcimCustomerQueryToPayPortalUrl,
+  appendBillingPaymentHistory,
   helcimPayPortalUrlAllowsIframe,
   normalizeHelcimPayPortalUrl,
   parseBillingMetadata,
@@ -416,13 +417,41 @@ export default function PaymentsPage() {
         if (paymentCampaignIds.length > 0 || adBalanceDueCentsTotal > 0) {
           void reconcileAdvertisingPayment(ev.data)
         } else {
-          setBillingRefreshNonce((n) => n + 1)
+          void persistHelcimJsSubscriptionPayment(ev.data).then(() => setBillingRefreshNonce((n) => n + 1))
         }
       }
     }
     window.addEventListener("message", onHelcimMessage)
     return () => window.removeEventListener("message", onHelcimMessage)
   }, [useHelcimJs, helcimReturnOrigin, paymentCampaignIds, adBalanceDueCentsTotal])
+
+  async function persistHelcimJsSubscriptionPayment(result: HelcimJsReturnMessage) {
+    if (!supabase || !profileUserId || result.response !== 1) return
+    try {
+      const { data: row } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
+      const prev =
+        row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+          ? (row.metadata as Record<string, unknown>)
+          : {}
+      const amountUsd = Number.parseFloat(result.amount)
+      const nowIso = new Date().toISOString()
+      let nextMeta = appendBillingPaymentHistory(prev, {
+        at: nowIso,
+        amountUsd: Number.isFinite(amountUsd) ? amountUsd : undefined,
+        transactionId: result.transactionId || undefined,
+        orderNumber: result.orderNumber || undefined,
+        note: "Helcim.js checkout",
+      })
+      nextMeta = {
+        ...nextMeta,
+        billing_last_success_at: nowIso,
+      }
+      const { error } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", profileUserId)
+      if (error) console.warn("[helcim-js] could not save payment history", error.message)
+    } catch (e) {
+      console.warn("[helcim-js] could not save payment history", e instanceof Error ? e.message : e)
+    }
+  }
 
   async function reconcileAdvertisingPayment(result: HelcimJsReturnMessage) {
     if (!supabase || !profileUserId) return

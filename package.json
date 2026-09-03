@@ -45,7 +45,8 @@
     "supabase:sql:fix-profiles-rls-login": "npx --yes supabase@2.92.1 db query -f supabase/RUN-NOW-fix-profiles-rls-login.sql --linked",
     "supabase:sql:payment-requests-add-clover": "npx --yes supabase@2.92.1 db query -f supabase/payment-requests-add-clover.sql --linked",
     "supabase:sql:payment-requests-add-stripe": "npx --yes supabase@2.92.1 db query -f supabase/payment-requests-add-stripe.sql --linked",
-    "supabase:sql:website-admin-handoff": "npx --yes supabase@2.92.1 db query -f supabase/website-admin-handoff-codes.sql --linked"
+    "supabase:sql:website-admin-handoff": "npx --yes supabase@2.92.1 db query -f supabase/website-admin-handoff-codes.sql --linked",
+    "supabase:sql:admin-billing-client-payments": "npx --yes supabase@2.92.1 db query -f supabase/admin-billing-client-payments-rls.sql --linked"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.0",

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react"
 import { useAuth } from "../../contexts/AuthContext"
 import { supabase } from "../../lib/supabase"
 import { theme } from "../../styles/theme"
@@ -22,6 +22,15 @@ import AdminPromoCodesSection from "./AdminPromoCodesSection"
 import { resolveEffectiveEntitlements } from "../../lib/effectiveEntitlements"
 import { PRODUCT_PACKAGE_TO_BILLING } from "../../lib/subscriptionEntitlements"
 import type { ProductPackageId } from "../../lib/productPackages"
+import {
+  fetchAdminClientCollections,
+  PAYMENT_PROVIDER_IDS,
+  paymentProviderLabel,
+  paymentStatusLabel,
+  type AdminClientCollectionRow,
+  type PaymentProviderId,
+} from "../../lib/paymentRequests"
+import { formatUsdFromCents, type AdCampaignPaymentRow } from "../../lib/adCampaigns"
 
 type BillingRow = {
   id: string
@@ -45,6 +54,20 @@ type BillingDraft = {
   /** Override amount (USD) for next bill — blank uses catalog sum */
   billing_custom_charge_usd: string
 }
+
+function formatAdminPaymentWhen(iso: string | null | undefined): string {
+  const s = typeof iso === "string" ? iso.trim() : ""
+  if (!s) return "—"
+  const t = Date.parse(s)
+  if (!Number.isFinite(t)) return s
+  return new Date(t).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+}
+
+type CollectionsState = { loading: boolean; error: string | null; rows: AdminClientCollectionRow[] }
+type AdsState = { loading: boolean; error: string | null; rows: AdCampaignPaymentRow[] }
+
+const emptyCollections: CollectionsState = { loading: false, error: null, rows: [] }
+const emptyAds: AdsState = { loading: false, error: null, rows: [] }
 
 function emptyDraft(): BillingDraft {
   return {
@@ -91,6 +114,8 @@ export default function AdminPaymentsSection() {
   const [helcimMatchBusy, setHelcimMatchBusy] = useState(false)
   const [helcimMatchMsg, setHelcimMatchMsg] = useState<string | null>(null)
   const [helcimOverwriteCodes, setHelcimOverwriteCodes] = useState(false)
+  const [collectionsByUser, setCollectionsByUser] = useState<Record<string, CollectionsState>>({})
+  const [adsByUser, setAdsByUser] = useState<Record<string, AdsState>>({})
 
   const webhookUrl = supabaseUrl ? `${supabaseUrl.replace(/\/$/, "")}/functions/v1/billing-webhook` : ""
 
@@ -150,6 +175,69 @@ export default function AdminPaymentsSection() {
   useEffect(() => {
     void load()
   }, [load, session?.access_token])
+
+  useEffect(() => {
+    const openIds = Object.entries(expanded)
+      .filter(([, open]) => open)
+      .map(([id]) => id)
+    if (openIds.length === 0 || !supabase) return
+    let cancelled = false
+    const token = session?.access_token ?? null
+    void (async () => {
+      for (const userId of openIds) {
+        const alreadyCollections = collectionsByUser[userId]
+        if (!alreadyCollections || alreadyCollections.loading) {
+          if (!alreadyCollections?.loading) {
+            setCollectionsByUser((prev) => ({ ...prev, [userId]: { loading: true, error: null, rows: prev[userId]?.rows ?? [] } }))
+          }
+          try {
+            const rows = await fetchAdminClientCollections(userId, token)
+            if (!cancelled) setCollectionsByUser((prev) => ({ ...prev, [userId]: { loading: false, error: null, rows } }))
+          } catch (e) {
+            if (!cancelled) {
+              setCollectionsByUser((prev) => ({
+                ...prev,
+                [userId]: { loading: false, error: e instanceof Error ? e.message : String(e), rows: [] },
+              }))
+            }
+          }
+        }
+        const alreadyAds = adsByUser[userId]
+        if (!alreadyAds || alreadyAds.loading) {
+          if (!alreadyAds?.loading) {
+            setAdsByUser((prev) => ({ ...prev, [userId]: { loading: true, error: null, rows: prev[userId]?.rows ?? [] } }))
+          }
+          const { data, error } = await supabase
+            .from("ad_campaign_payments")
+            .select("*")
+            .eq("profile_id", userId)
+            .order("created_at", { ascending: false })
+            .limit(50)
+          if (cancelled) return
+          if (error) {
+            setAdsByUser((prev) => ({
+              ...prev,
+              [userId]: {
+                loading: false,
+                error: /ad_campaign_payments|does not exist|relation/i.test(error.message) ? null : error.message,
+                rows: [],
+              },
+            }))
+          } else {
+            setAdsByUser((prev) => ({
+              ...prev,
+              [userId]: { loading: false, error: null, rows: (data ?? []) as AdCampaignPaymentRow[] },
+            }))
+          }
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // Load once per newly expanded user; skip if we already fetched.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded, session?.access_token])
 
   const filteredRows = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
@@ -706,6 +794,165 @@ export default function AdminPaymentsSection() {
                         >
                           {savingId === r.id ? "Saving…" : "Record payment received (now)"}
                         </button>
+
+                        {(() => {
+                          const hist = r.billing.billing_payment_history_v1 ?? []
+                          const collections = collectionsByUser[r.id] ?? emptyCollections
+                          const ads = adsByUser[r.id] ?? emptyAds
+                          const cell: CSSProperties = { padding: "7px 8px", textAlign: "left", verticalAlign: "top" }
+                          return (
+                            <div
+                              style={{
+                                display: "grid",
+                                gap: 14,
+                                padding: "12px 12px 14px",
+                                borderRadius: 8,
+                                border: `1px solid ${theme.border}`,
+                                background: "#f8fafc",
+                              }}
+                            >
+                              <div>
+                                <div style={{ fontSize: 13, fontWeight: 800, color: theme.charcoal, marginBottom: 4 }}>
+                                  Helcim / Tradesman charges
+                                </div>
+                                <p style={{ margin: "0 0 8px", fontSize: 12, color: theme.charcoal, opacity: 0.85, lineHeight: 1.45 }}>
+                                  Each time this client pays Tradesman (Helcim.js, webhook, or Record payment). Helcim invoice / order
+                                  number and transaction id are listed when we have them.
+                                </p>
+                                {hist.length === 0 ? (
+                                  <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>No recorded Tradesman payments yet.</p>
+                                ) : (
+                                  <div style={{ overflowX: "auto" }}>
+                                    <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 480, fontSize: 12 }}>
+                                      <thead>
+                                        <tr style={{ borderBottom: `2px solid ${theme.border}`, color: "#64748b" }}>
+                                          <th style={cell}>When</th>
+                                          <th style={cell}>Amount</th>
+                                          <th style={cell}>Helcim txn</th>
+                                          <th style={cell}>Invoice / order</th>
+                                          <th style={cell}>Note</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {hist.map((entry, i) => (
+                                          <tr key={`${entry.at}-${entry.transactionId ?? i}`} style={{ borderBottom: `1px solid ${theme.border}` }}>
+                                            <td style={cell}>{formatAdminPaymentWhen(entry.at)}</td>
+                                            <td style={{ ...cell, fontWeight: 800 }}>
+                                              {typeof entry.amountUsd === "number" ? `$${entry.amountUsd.toFixed(2)}` : "—"}
+                                            </td>
+                                            <td style={{ ...cell, fontFamily: "ui-monospace, monospace" }}>{entry.transactionId || "—"}</td>
+                                            <td style={{ ...cell, fontFamily: "ui-monospace, monospace" }}>{entry.orderNumber || "—"}</td>
+                                            <td style={cell}>{entry.note || "—"}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div>
+                                <div style={{ fontSize: 13, fontWeight: 800, color: theme.charcoal, marginBottom: 4 }}>
+                                  Customer collections (this client&apos;s pay links)
+                                </div>
+                                <p style={{ margin: "0 0 8px", fontSize: 12, color: theme.charcoal, opacity: 0.85, lineHeight: 1.45 }}>
+                                  Payment requests this client sent to homeowners / GCs (Helcim, Stripe, Clover, Square, or manual). Paid
+                                  rows include the processor reference.
+                                </p>
+                                {collections.loading ? (
+                                  <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>Loading collections…</p>
+                                ) : collections.error ? (
+                                  <p style={{ margin: 0, fontSize: 13, color: "#b91c1c" }}>{collections.error}</p>
+                                ) : collections.rows.length === 0 ? (
+                                  <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>No customer payment requests yet.</p>
+                                ) : (
+                                  <div style={{ overflowX: "auto" }}>
+                                    <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 560, fontSize: 12 }}>
+                                      <thead>
+                                        <tr style={{ borderBottom: `2px solid ${theme.border}`, color: "#64748b" }}>
+                                          <th style={cell}>Created</th>
+                                          <th style={cell}>Customer</th>
+                                          <th style={cell}>Amount</th>
+                                          <th style={cell}>Provider</th>
+                                          <th style={cell}>Status</th>
+                                          <th style={cell}>Reference</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {collections.rows.map((row) => (
+                                          <tr key={row.id} style={{ borderBottom: `1px solid ${theme.border}` }}>
+                                            <td style={cell}>{formatAdminPaymentWhen(row.paid_at || row.created_at)}</td>
+                                            <td style={cell}>
+                                              <div style={{ fontWeight: 700 }}>{row.customer_name || "—"}</div>
+                                              {row.description ? (
+                                                <div style={{ color: "#64748b", marginTop: 2 }}>{row.description}</div>
+                                              ) : null}
+                                            </td>
+                                            <td style={{ ...cell, fontWeight: 800 }}>
+                                              {Number.isFinite(row.amount) ? `$${row.amount.toFixed(2)}` : "—"}
+                                            </td>
+                                            <td style={cell}>
+                                              {PAYMENT_PROVIDER_IDS.includes(row.provider as PaymentProviderId)
+                                                ? paymentProviderLabel(row.provider as PaymentProviderId)
+                                                : row.provider || "—"}
+                                            </td>
+                                            <td style={cell}>
+                                              {paymentStatusLabel(row.status as "draft" | "sent" | "paid" | "failed" | "canceled")}
+                                              {row.paid_at ? (
+                                                <div style={{ color: "#64748b", marginTop: 2 }}>{formatAdminPaymentWhen(row.paid_at)}</div>
+                                              ) : null}
+                                            </td>
+                                            <td style={{ ...cell, fontFamily: "ui-monospace, monospace", wordBreak: "break-all" }}>
+                                              {row.provider_reference_id || "—"}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div>
+                                <div style={{ fontSize: 13, fontWeight: 800, color: theme.charcoal, marginBottom: 4 }}>
+                                  Advertising payments
+                                </div>
+                                {ads.loading ? (
+                                  <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>Loading advertising payments…</p>
+                                ) : ads.error ? (
+                                  <p style={{ margin: 0, fontSize: 13, color: "#b91c1c" }}>{ads.error}</p>
+                                ) : ads.rows.length === 0 ? (
+                                  <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>No verified advertising payments.</p>
+                                ) : (
+                                  <div style={{ overflowX: "auto" }}>
+                                    <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 440, fontSize: 12 }}>
+                                      <thead>
+                                        <tr style={{ borderBottom: `2px solid ${theme.border}`, color: "#64748b" }}>
+                                          <th style={cell}>Paid</th>
+                                          <th style={cell}>Amount</th>
+                                          <th style={cell}>Provider</th>
+                                          <th style={cell}>Reference</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {ads.rows.map((payment) => (
+                                          <tr key={payment.id} style={{ borderBottom: `1px solid ${theme.border}` }}>
+                                            <td style={cell}>{formatAdminPaymentWhen(payment.created_at)}</td>
+                                            <td style={{ ...cell, fontWeight: 800 }}>{formatUsdFromCents(payment.amount_cents)}</td>
+                                            <td style={cell}>{payment.provider}</td>
+                                            <td style={{ ...cell, fontFamily: "ui-monospace, monospace" }}>
+                                              {payment.provider_transaction_id}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })()}
                         <div style={{ fontSize: 14, color: theme.charcoal, fontWeight: 500 }}>
                           <strong style={{ fontWeight: 800 }}>Access:</strong>{" "}
                           {r.account_disabled ? (

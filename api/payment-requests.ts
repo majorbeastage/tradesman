@@ -9,6 +9,7 @@ import {
   pickSupabaseAnonKeyForServer,
   pickSupabaseUrlForServer,
   toTwilioE164,
+  verifyAdminJwtAnonOrServiceSupabase,
 } from "./_communications.js"
 import {
   buildSecretPayloadForSave,
@@ -575,6 +576,75 @@ async function handleWebhook(req: VercelRequest, res: VercelResponse) {
   res.status(200).json({ ok: true, paid: true })
 }
 
+async function handleAdminClientPayments(req: VercelRequest, res: VercelResponse) {
+  const authHeader = typeof req.headers?.authorization === "string" ? req.headers.authorization.trim() : ""
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : ""
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized" })
+    return
+  }
+  const authz = await verifyAdminJwtAnonOrServiceSupabase(token)
+  if (!authz.ok) {
+    res.status(authz.status).json(authz.body)
+    return
+  }
+  const body = (req.body ?? {}) as Json
+  const profileId = String(body.profileId ?? body.userId ?? "").trim()
+  if (!profileId) {
+    res.status(400).json({ error: "profileId required." })
+    return
+  }
+  const sb = createServiceSupabase()
+  const { data: requests, error } = await sb
+    .from("payment_requests")
+    .select(
+      "id, created_at, paid_at, amount, currency, status, provider, description, customer_id, provider_reference_id, payment_url, sent_via",
+    )
+    .eq("user_id", profileId)
+    .order("created_at", { ascending: false })
+    .limit(80)
+  if (error) {
+    if (/payment_requests|does not exist|relation/i.test(error.message ?? "")) {
+      res.status(200).json({ ok: true, collections: [] })
+      return
+    }
+    res.status(500).json({ error: error.message })
+    return
+  }
+  const rows = (requests ?? []) as Array<Record<string, unknown>>
+  const customerIds = [
+    ...new Set(rows.map((r) => (typeof r.customer_id === "string" ? r.customer_id : "")).filter(Boolean)),
+  ]
+  const nameById = new Map<string, string>()
+  if (customerIds.length > 0) {
+    const { data: customers } = await sb.from("customers").select("id, display_name").in("id", customerIds)
+    for (const c of customers ?? []) {
+      const id = String((c as { id?: string }).id ?? "")
+      const name = typeof (c as { display_name?: string }).display_name === "string" ? (c as { display_name: string }).display_name.trim() : ""
+      if (id && name) nameById.set(id, name)
+    }
+  }
+  const collections = rows.map((r) => {
+    const customerId = typeof r.customer_id === "string" ? r.customer_id : ""
+    return {
+      id: String(r.id),
+      created_at: String(r.created_at ?? ""),
+      paid_at: typeof r.paid_at === "string" ? r.paid_at : null,
+      amount: typeof r.amount === "number" ? r.amount : Number(r.amount ?? 0),
+      currency: typeof r.currency === "string" ? r.currency : "USD",
+      status: String(r.status ?? ""),
+      provider: String(r.provider ?? ""),
+      description: typeof r.description === "string" ? r.description : "",
+      customer_id: customerId || null,
+      customer_name: customerId ? nameById.get(customerId) ?? null : null,
+      provider_reference_id: typeof r.provider_reference_id === "string" ? r.provider_reference_id : null,
+      payment_url: typeof r.payment_url === "string" ? r.payment_url : null,
+      sent_via: typeof r.sent_via === "string" ? r.sent_via : null,
+    }
+  })
+  res.status(200).json({ ok: true, collections })
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   cors(res)
   if (req.method === "OPTIONS") {
@@ -605,6 +675,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     if (action === "webhook") {
       await handleWebhook(req, res)
+      return
+    }
+    if (action === "admin-client-payments") {
+      await handleAdminClientPayments(req, res)
       return
     }
     res.status(400).json({ error: `Unknown action: ${action}` })

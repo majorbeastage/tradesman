@@ -38,6 +38,7 @@ export type BillingPaymentHistoryEntry = {
   at: string
   amountUsd?: number
   transactionId?: string
+  orderNumber?: string
   note?: string
 }
 
@@ -140,6 +141,7 @@ export function parseBillingMetadata(metadata: unknown): BillingProfileMetadata 
         const entry: BillingPaymentHistoryEntry = { at }
         if (typeof e.amountUsd === "number" && Number.isFinite(e.amountUsd)) entry.amountUsd = e.amountUsd
         if (typeof e.transactionId === "string" && e.transactionId.trim()) entry.transactionId = e.transactionId.trim()
+        if (typeof e.orderNumber === "string" && e.orderNumber.trim()) entry.orderNumber = e.orderNumber.trim()
         if (typeof e.note === "string" && e.note.trim()) entry.note = e.note.trim()
         return entry
       })
@@ -243,6 +245,11 @@ export function appendBillingPaymentHistory(
   entry: BillingPaymentHistoryEntry,
 ): Record<string, unknown> {
   const billing = parseBillingMetadata(prev)
-  const hist = [entry, ...(billing.billing_payment_history_v1 ?? [])].slice(0, 100)
+  const existing = billing.billing_payment_history_v1 ?? []
+  const tx = entry.transactionId?.trim() ?? ""
+  if (tx && existing.some((e) => e.transactionId?.trim() === tx)) {
+    return prev
+  }
+  const hist = [entry, ...existing].slice(0, 100)
   return mergeBillingIntoProfileMetadata(prev, { billing_payment_history_v1: hist })
 }

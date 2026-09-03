@@ -86,7 +86,7 @@ function advanceDueDate(dueDate: string | undefined): string | undefined {
 
 function mergeBillingMeta(
   prev: Record<string, unknown>,
-  patch: { billing_last_success_at?: string; amountUsd?: number; transactionId?: string },
+  patch: { billing_last_success_at?: string; amountUsd?: number; transactionId?: string; orderNumber?: string },
 ): Record<string, unknown> {
   const next = { ...prev }
   if (patch.billing_last_success_at) {
@@ -95,12 +95,22 @@ function mergeBillingMeta(
     const nextDue = advanceDueDate(dueRaw || undefined)
     if (nextDue) next.billing_payment_due_date = nextDue
     const hist = Array.isArray(prev.billing_payment_history_v1) ? [...prev.billing_payment_history_v1] : []
-    hist.unshift({
-      at: patch.billing_last_success_at,
-      ...(typeof patch.amountUsd === "number" ? { amountUsd: patch.amountUsd } : {}),
-      ...(patch.transactionId ? { transactionId: patch.transactionId } : {}),
-      note: "Helcim webhook",
-    })
+    const tx = typeof patch.transactionId === "string" ? patch.transactionId.trim() : ""
+    const already = tx
+      ? hist.some((row) => {
+          if (!row || typeof row !== "object" || Array.isArray(row)) return false
+          return String((row as Record<string, unknown>).transactionId ?? "").trim() === tx
+        })
+      : false
+    if (!already) {
+      hist.unshift({
+        at: patch.billing_last_success_at,
+        ...(typeof patch.amountUsd === "number" ? { amountUsd: patch.amountUsd } : {}),
+        ...(tx ? { transactionId: tx } : {}),
+        ...(patch.orderNumber?.trim() ? { orderNumber: patch.orderNumber.trim() } : {}),
+        note: "Helcim webhook",
+      })
+    }
     next.billing_payment_history_v1 = hist.slice(0, 100)
   }
   return next
@@ -169,6 +179,7 @@ Deno.serve(async (req) => {
   let customerCode = ""
   let approved: boolean | null = null
   let amountCents: number | null = null
+  let orderNumber = ""
 
   if (manualProfile && (manualStatus === "approved" || manualStatus === "declined")) {
     customerCode = typeof body.helcimCustomerCode === "string" ? body.helcimCustomerCode : ""
@@ -210,6 +221,12 @@ Deno.serve(async (req) => {
       const n = Number.parseFloat(amt)
       if (Number.isFinite(n)) amountCents = Math.round(n * 100)
     }
+    orderNumber =
+      typeof txJson.invoiceNumber === "string" && txJson.invoiceNumber.trim()
+        ? txJson.invoiceNumber.trim()
+        : typeof txJson.orderNumber === "string"
+          ? txJson.orderNumber.trim()
+          : ""
   } else if (type === "terminalCancel") {
     const data = body.data as Record<string, unknown> | undefined
     customerCode = typeof data?.customerCode === "string" ? data.customerCode.trim() : ""
@@ -283,6 +300,7 @@ Deno.serve(async (req) => {
       billing_last_success_at: nowIso,
       amountUsd: amountCents != null ? amountCents / 100 : undefined,
       transactionId: txId || undefined,
+      orderNumber: orderNumber || undefined,
     })
     const patch: Record<string, unknown> = { metadata: nextMeta, updated_at: nowIso }
     if (!exemptFromHelcimProfileUpdates) {
