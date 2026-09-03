@@ -27,6 +27,8 @@
     "supabase:deploy:notify-late-punch": "npx --yes supabase@2.92.1 functions deploy notify-late-punch --project-ref othemzceycphhuwojxge --use-api",
     "supabase:deploy:provision-sandbox": "npx --yes supabase@2.92.1 functions deploy provision-sandbox --project-ref othemzceycphhuwojxge --use-api",
     "supabase:deploy:complete-signup": "npx --yes supabase@2.92.1 functions deploy complete-signup --project-ref othemzceycphhuwojxge --use-api",
+    "supabase:deploy:billing-autopay": "npx --yes supabase@2.92.1 functions deploy billing-autopay --project-ref othemzceycphhuwojxge --use-api --no-verify-jwt",
+    "supabase:deploy:billing-webhook": "npx --yes supabase@2.92.1 functions deploy billing-webhook --project-ref othemzceycphhuwojxge --use-api --no-verify-jwt",
     "supabase:deploy:admin-users": "npx --yes supabase@2.92.1 functions deploy admin-users --project-ref othemzceycphhuwojxge --use-api",
     "supabase:deploy:send-team-invite": "npx --yes supabase@2.92.1 functions deploy send-team-invite --project-ref othemzceycphhuwojxge --use-api",
     "supabase:deploy:accept-team-invite": "npx --yes supabase@2.92.1 functions deploy accept-team-invite --project-ref othemzceycphhuwojxge --use-api",

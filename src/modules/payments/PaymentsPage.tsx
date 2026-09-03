@@ -5,11 +5,16 @@ import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
 import {
   appendHelcimCustomerQueryToPayPortalUrl,
+  applyHelcimAutopayCard,
   applyReceivedBillingPayment,
+  billingAutopayCardLabel,
   helcimPayPortalUrlAllowsIframe,
+  last4FromMaskedCard,
+  mergeBillingIntoProfileMetadata,
   normalizeHelcimPayPortalUrl,
   parseBillingMetadata,
   resolveHelcimPayPortalBaseUrl,
+  subscriptionBillAmountUsd,
   type BillingProfileMetadata,
 } from "../../lib/billingProfileMetadata"
 import { formatUsdMonthly, sumMonthlyBillingUsd } from "../../lib/billingProductTypes"
@@ -120,6 +125,9 @@ export default function PaymentsPage() {
   const [adPaymentHistory, setAdPaymentHistory] = useState<AdCampaignPaymentRow[]>([])
   const [adPaymentReconcileMessage, setAdPaymentReconcileMessage] = useState("")
   const [helcimOrderNumber, setHelcimOrderNumber] = useState("")
+  const [enrollAutopay, setEnrollAutopay] = useState(false)
+  const [autopayBusy, setAutopayBusy] = useState(false)
+  const enrollAutopayRef = useRef(false)
   const checkoutRef = useRef<HTMLFormElement | null>(null)
 
   const useHelcimJs = Boolean(ENV_JS_TOKEN)
@@ -128,6 +136,38 @@ export default function PaymentsPage() {
     "data-tradesman-helcim-js",
   )
   const helcimOrderKind = paymentMode === "advertising" ? "TMAD" : "TM"
+
+  useEffect(() => {
+    enrollAutopayRef.current = enrollAutopay
+  }, [enrollAutopay])
+
+  async function saveAutopayPreference(enabled: boolean) {
+    if (!supabase || !profileUserId) return
+    setAutopayBusy(true)
+    try {
+      const { data: row, error: fetchErr } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
+      if (fetchErr) throw fetchErr
+      const prev =
+        row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+          ? (row.metadata as Record<string, unknown>)
+          : {}
+      const nextMeta = mergeBillingIntoProfileMetadata(prev, {
+        billing_autopay_enabled: enabled,
+        ...(enabled && !parseBillingMetadata(prev).billing_autopay_enrolled_at
+          ? { billing_autopay_enrolled_at: new Date().toISOString() }
+          : {}),
+        ...(enabled ? { billing_autopay_last_error: "" } : {}),
+      })
+      const { error: upErr } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", profileUserId)
+      if (upErr) throw upErr
+      setEnrollAutopay(enabled)
+      setBillingRefreshNonce((n) => n + 1)
+    } catch (e) {
+      console.warn("[autopay] could not save preference", e instanceof Error ? e.message : e)
+    } finally {
+      setAutopayBusy(false)
+    }
+  }
 
   const adBalanceFromCampaignsCents = useMemo(
     () => adCampaigns.reduce((sum, c) => sum + adBalanceDueCents(c), 0),
@@ -342,6 +382,7 @@ export default function PaymentsPage() {
           : {}
       const billing = parseBillingMetadata(meta)
       setBillingForPayments(billing)
+      setEnrollAutopay(billing.billing_autopay_enabled === true)
       const adMeta = parseAdBillingMetadata(meta)
       setAdBalanceFromMetaCents(adMeta?.balance_due_cents ?? 0)
       const envOrEdge = (ENV_PORTAL.trim() || portalFromEdge || "").trim() || null
@@ -435,12 +476,20 @@ export default function PaymentsPage() {
           : {}
       const amountUsd = Number.parseFloat(result.amount)
       const nowIso = new Date().toISOString()
-      const nextMeta = applyReceivedBillingPayment(prev, {
+      let nextMeta = applyReceivedBillingPayment(prev, {
         at: nowIso,
         amountUsd: Number.isFinite(amountUsd) ? amountUsd : undefined,
         transactionId: result.transactionId || undefined,
         orderNumber: result.orderNumber || undefined,
         note: "Helcim.js checkout",
+      })
+      nextMeta = applyHelcimAutopayCard(nextMeta, {
+        cardToken: result.cardToken,
+        cardLast4: last4FromMaskedCard(result.cardNumberMasked),
+        cardBrand: result.cardType,
+        cardExpiry: result.cardExpiry,
+        enable: enrollAutopayRef.current,
+        at: nowIso,
       })
       const { error } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", profileUserId)
       if (error) console.warn("[helcim-js] could not save payment history", error.message)
@@ -584,6 +633,57 @@ export default function PaymentsPage() {
             </>
           ) : null}
         </p>
+      ) : null}
+
+      {useHelcimJs ? (
+        <div
+          style={{
+            margin: "0 0 16px",
+            padding: "14px 16px",
+            borderRadius: 12,
+            border: billingForPayments.billing_autopay_enabled ? "1px solid #047857" : `1px solid ${theme.border}`,
+            background: billingForPayments.billing_autopay_enabled ? "#ecfdf5" : "#f8fafc",
+          }}
+        >
+          <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: autopayBusy ? "wait" : "pointer" }}>
+            <input
+              type="checkbox"
+              checked={enrollAutopay}
+              disabled={autopayBusy}
+              onChange={(e) => {
+                const next = e.target.checked
+                setEnrollAutopay(next)
+                void saveAutopayPreference(next)
+              }}
+              style={{ marginTop: 3 }}
+            />
+            <span>
+              <strong style={{ display: "block", fontSize: 14, color: theme.text }}>Autopay each month</strong>
+              <span style={{ display: "block", marginTop: 4, fontSize: 13, color: "#475569", lineHeight: 1.45 }}>
+                Charge the card saved with Helcim on your due date for the monthly Tradesman bill
+                {subscriptionBillAmountUsd(billingForPayments) > 0
+                  ? ` (${formatUsdMonthly(subscriptionBillAmountUsd(billingForPayments))})`
+                  : ""}
+                . Advertising balances are not included — pay those separately below.
+              </span>
+              {billingAutopayCardLabel(billingForPayments) ? (
+                <span style={{ display: "block", marginTop: 6, fontSize: 13, fontWeight: 700, color: theme.text }}>
+                  {billingAutopayCardLabel(billingForPayments)}
+                  {billingForPayments.billing_autopay_enabled ? " · on" : " · saved, Autopay off"}
+                </span>
+              ) : enrollAutopay ? (
+                <span style={{ display: "block", marginTop: 6, fontSize: 13, color: "#92400e" }}>
+                  Pay once with the Helcim form below to save your card. Autopay starts on the next due date after that.
+                </span>
+              ) : null}
+              {billingForPayments.billing_autopay_last_error ? (
+                <span style={{ display: "block", marginTop: 6, fontSize: 13, color: "#b91c1c" }}>
+                  Last Autopay attempt: {billingForPayments.billing_autopay_last_error}
+                </span>
+              ) : null}
+            </span>
+          </label>
+        </div>
       ) : null}
 
       {openAdCampaigns.length > 0 || adBalanceDueCentsTotal > 0 ? (
@@ -909,6 +1009,22 @@ export default function PaymentsPage() {
                   <input type="hidden" id="customerCode" value={customerCode ?? ""} />
                   <input type="hidden" id="orderNumber" value={helcimOrderNumber} />
                   <input type="hidden" id="tradesmanCampaignIds" value={paymentCampaignIds.join(",")} />
+
+                  <label style={{ display: "flex", alignItems: "flex-start", gap: 8, color: "#e5e7eb", fontSize: 13, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={enrollAutopay}
+                      onChange={(e) => {
+                        const next = e.target.checked
+                        setEnrollAutopay(next)
+                        void saveAutopayPreference(next)
+                      }}
+                      style={{ marginTop: 2 }}
+                    />
+                    <span>
+                      Save this card for Autopay — charge my monthly Tradesman bill on the due date. You can turn this off anytime.
+                    </span>
+                  </label>
 
                   <input
                     type="button"

@@ -1,4 +1,4 @@
-import { isBillingProductTypeId, type BillingProductTypeId } from "./billingProductTypes"
+import { isBillingProductTypeId, sumMonthlyBillingUsd, type BillingProductTypeId } from "./billingProductTypes"
 
 /** Billing / Helcim fields stored on `profiles.metadata` (JSON). */
 
@@ -35,6 +35,18 @@ export type BillingProfileMetadata = {
   billing_promo_applied_at?: string
   /** Admin-set one-time or override charge (USD) for the next payment — takes precedence over catalog sum. */
   billing_custom_charge_usd?: number
+  /** Client opted in to monthly Autopay on the Payments Helcim form. */
+  billing_autopay_enabled?: boolean
+  /** Helcim card token from Helcim.js (not the PAN). Used by billing-autopay. */
+  billing_autopay_card_token?: string
+  billing_autopay_card_last4?: string
+  billing_autopay_card_brand?: string
+  billing_autopay_card_expiry?: string
+  billing_autopay_enrolled_at?: string
+  billing_autopay_last_attempt_at?: string
+  billing_autopay_last_error?: string
+  /** Due date (YYYY-MM-DD) Autopay last successfully charged for — blocks a second charge that cycle. */
+  billing_autopay_last_charged_due?: string
   /** Verified subscription payments recorded by Tradesman (newest first). */
   billing_payment_history_v1?: BillingPaymentHistoryEntry[]
 }
@@ -146,6 +158,31 @@ export function parseBillingMetadata(metadata: unknown): BillingProfileMetadata 
   if (typeof m.billing_custom_charge_usd === "number" && Number.isFinite(m.billing_custom_charge_usd) && m.billing_custom_charge_usd >= 0) {
     out.billing_custom_charge_usd = Math.round(m.billing_custom_charge_usd * 100) / 100
   }
+  if (m.billing_autopay_enabled === true) out.billing_autopay_enabled = true
+  if (typeof m.billing_autopay_card_token === "string" && m.billing_autopay_card_token.trim()) {
+    out.billing_autopay_card_token = m.billing_autopay_card_token.trim()
+  }
+  if (typeof m.billing_autopay_card_last4 === "string" && m.billing_autopay_card_last4.trim()) {
+    out.billing_autopay_card_last4 = m.billing_autopay_card_last4.trim()
+  }
+  if (typeof m.billing_autopay_card_brand === "string" && m.billing_autopay_card_brand.trim()) {
+    out.billing_autopay_card_brand = m.billing_autopay_card_brand.trim()
+  }
+  if (typeof m.billing_autopay_card_expiry === "string" && m.billing_autopay_card_expiry.trim()) {
+    out.billing_autopay_card_expiry = m.billing_autopay_card_expiry.trim()
+  }
+  if (typeof m.billing_autopay_enrolled_at === "string" && m.billing_autopay_enrolled_at.trim()) {
+    out.billing_autopay_enrolled_at = m.billing_autopay_enrolled_at.trim()
+  }
+  if (typeof m.billing_autopay_last_attempt_at === "string" && m.billing_autopay_last_attempt_at.trim()) {
+    out.billing_autopay_last_attempt_at = m.billing_autopay_last_attempt_at.trim()
+  }
+  if (typeof m.billing_autopay_last_error === "string" && m.billing_autopay_last_error.trim()) {
+    out.billing_autopay_last_error = m.billing_autopay_last_error.trim()
+  }
+  if (typeof m.billing_autopay_last_charged_due === "string" && /^\d{4}-\d{2}-\d{2}$/.test(m.billing_autopay_last_charged_due.trim())) {
+    out.billing_autopay_last_charged_due = m.billing_autopay_last_charged_due.trim()
+  }
   if (Array.isArray(m.billing_payment_history_v1)) {
     const hist = m.billing_payment_history_v1
       .map((row) => {
@@ -256,6 +293,53 @@ export function mergeBillingIntoProfileMetadata(
     } else {
       delete next.billing_custom_charge_usd
     }
+  }
+  if (patch.billing_autopay_enabled === true) next.billing_autopay_enabled = true
+  else if (patch.billing_autopay_enabled === false) delete next.billing_autopay_enabled
+  if (patch.billing_autopay_card_token !== undefined) {
+    const t = patch.billing_autopay_card_token.trim()
+    if (t) next.billing_autopay_card_token = t
+    else {
+      delete next.billing_autopay_card_token
+      delete next.billing_autopay_card_last4
+      delete next.billing_autopay_card_brand
+      delete next.billing_autopay_card_expiry
+    }
+  }
+  if (patch.billing_autopay_card_last4 !== undefined) {
+    const t = patch.billing_autopay_card_last4.trim()
+    if (t) next.billing_autopay_card_last4 = t
+    else delete next.billing_autopay_card_last4
+  }
+  if (patch.billing_autopay_card_brand !== undefined) {
+    const t = patch.billing_autopay_card_brand.trim()
+    if (t) next.billing_autopay_card_brand = t
+    else delete next.billing_autopay_card_brand
+  }
+  if (patch.billing_autopay_card_expiry !== undefined) {
+    const t = patch.billing_autopay_card_expiry.trim()
+    if (t) next.billing_autopay_card_expiry = t
+    else delete next.billing_autopay_card_expiry
+  }
+  if (patch.billing_autopay_enrolled_at !== undefined) {
+    const t = patch.billing_autopay_enrolled_at.trim()
+    if (t) next.billing_autopay_enrolled_at = t
+    else delete next.billing_autopay_enrolled_at
+  }
+  if (patch.billing_autopay_last_attempt_at !== undefined) {
+    const t = patch.billing_autopay_last_attempt_at.trim()
+    if (t) next.billing_autopay_last_attempt_at = t
+    else delete next.billing_autopay_last_attempt_at
+  }
+  if (patch.billing_autopay_last_error !== undefined) {
+    const t = patch.billing_autopay_last_error.trim()
+    if (t) next.billing_autopay_last_error = t
+    else delete next.billing_autopay_last_error
+  }
+  if (patch.billing_autopay_last_charged_due !== undefined) {
+    const t = patch.billing_autopay_last_charged_due.trim()
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) next.billing_autopay_last_charged_due = t
+    else delete next.billing_autopay_last_charged_due
   }
   if (patch.billing_payment_history_v1 !== undefined) {
     if (Array.isArray(patch.billing_payment_history_v1) && patch.billing_payment_history_v1.length) {
@@ -427,4 +511,47 @@ export function markBillingPaymentProblem(
 
 export function billingClientHasOpenPaymentProblem(billing: BillingProfileMetadata): boolean {
   return (billing.billing_payment_history_v1 ?? []).some((e) => Boolean(e.problemAt) && !e.revertedAt)
+}
+
+/** Monthly Tradesman subscription amount Autopay charges (custom override or catalog). Advertising is not included. */
+export function subscriptionBillAmountUsd(billing: BillingProfileMetadata): number {
+  if (typeof billing.billing_custom_charge_usd === "number" && Number.isFinite(billing.billing_custom_charge_usd) && billing.billing_custom_charge_usd > 0) {
+    return Math.round(billing.billing_custom_charge_usd * 100) / 100
+  }
+  return sumMonthlyBillingUsd(billing.billing_product_type, billing.billing_additional_products)
+}
+
+export function last4FromMaskedCard(masked: string | null | undefined): string {
+  const digits = (masked ?? "").replace(/\D/g, "")
+  return digits.slice(-4)
+}
+
+export function applyHelcimAutopayCard(
+  prev: Record<string, unknown>,
+  card: { cardToken?: string; cardLast4?: string; cardBrand?: string; cardExpiry?: string; enable?: boolean; at?: string },
+): Record<string, unknown> {
+  const token = card.cardToken?.trim() ?? ""
+  const patch: Partial<BillingProfileMetadata> = {}
+  if (token) {
+    patch.billing_autopay_card_token = token
+    if (card.cardLast4?.trim()) patch.billing_autopay_card_last4 = card.cardLast4.trim()
+    if (card.cardBrand?.trim()) patch.billing_autopay_card_brand = card.cardBrand.trim()
+    if (card.cardExpiry?.trim()) patch.billing_autopay_card_expiry = card.cardExpiry.trim()
+  }
+  if (card.enable === true) {
+    patch.billing_autopay_enabled = true
+    const existing = parseBillingMetadata(prev)
+    if (!existing.billing_autopay_enrolled_at) patch.billing_autopay_enrolled_at = card.at || new Date().toISOString()
+    patch.billing_autopay_last_error = ""
+  }
+  return mergeBillingIntoProfileMetadata(prev, patch)
+}
+
+export function billingAutopayCardLabel(billing: BillingProfileMetadata): string {
+  const brand = billing.billing_autopay_card_brand?.trim()
+  const last4 = billing.billing_autopay_card_last4?.trim()
+  if (brand && last4) return `${brand} •••• ${last4}`
+  if (last4) return `Card •••• ${last4}`
+  if (billing.billing_autopay_card_token) return "Card on file"
+  return ""
 }

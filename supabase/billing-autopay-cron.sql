@@ -1,0 +1,26 @@
+-- Optional: call billing-autopay daily so enrolled clients are charged on their due date.
+-- Enable pg_net (and pg_cron) in the Supabase Dashboard first. Do not run CREATE EXTENSION here.
+-- Replace PROJECT_REF and set the same secret as BILLING_AUTOPAY_CRON_SECRET (or NOTIFY_CRON_SECRET).
+--
+-- Example (uncomment after secrets exist):
+--
+-- select
+--   net.http_post(
+--     url := 'https://PROJECT_REF.supabase.co/functions/v1/billing-autopay',
+--     headers := jsonb_build_object(
+--       'Content-Type', 'application/json',
+--       'x-cron-secret', 'YOUR_CRON_SECRET'
+--     ),
+--     body := '{}'::jsonb
+--   );
+--
+-- Schedule (after pg_cron is enabled in the Dashboard):
+-- SELECT cron.schedule(
+--   'billing-autopay-daily',
+--   '15 12 * * *',  -- 12:15 UTC daily (~8:15am Eastern in standard time)
+--   $$select net.http_post(
+--     url := 'https://PROJECT_REF.supabase.co/functions/v1/billing-autopay',
+--     headers := jsonb_build_object('Content-Type', 'application/json', 'x-cron-secret', 'YOUR_CRON_SECRET'),
+--     body := '{}'::jsonb
+--   );$$
+-- );

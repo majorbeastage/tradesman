@@ -5,6 +5,7 @@ import { theme } from "../../styles/theme"
 import { AdminSettingBlock } from "../../components/admin/AdminSettingChrome"
 import {
   applyReceivedBillingPayment,
+  billingAutopayCardLabel,
   billingClientHasOpenPaymentProblem,
   mergeBillingIntoProfileMetadata,
   parseBillingMetadata,
@@ -281,6 +282,28 @@ export default function AdminPaymentsSection() {
         at: nowIso,
         note: "Recorded manually in Admin",
       })
+      const { error: upErr } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", userId)
+      if (upErr) throw upErr
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSavingId(null)
+    }
+  }
+
+  async function turnOffAutopay(userId: string) {
+    if (!supabase) return
+    setSavingId(userId)
+    setError("")
+    try {
+      const { data: row, error: fetchErr } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
+      if (fetchErr) throw fetchErr
+      const prev =
+        row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+          ? (row.metadata as Record<string, unknown>)
+          : {}
+      const nextMeta = mergeBillingIntoProfileMetadata(prev, { billing_autopay_enabled: false })
       const { error: upErr } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", userId)
       if (upErr) throw upErr
       await load()
@@ -613,6 +636,11 @@ export default function AdminPaymentsSection() {
                       </div>
                       <div style={{ fontSize: 11, color: theme.charcoal, opacity: 0.78, fontWeight: 600, textTransform: "capitalize" }}>
                         {r.role}
+                        {r.billing.billing_autopay_enabled ? (
+                          <span style={{ marginLeft: 8, color: "#047857", textTransform: "none", fontWeight: 800 }}>
+                            · Autopay{billingAutopayCardLabel(r.billing) ? ` ${billingAutopayCardLabel(r.billing)}` : ""}
+                          </span>
+                        ) : null}
                         {hasPaymentProblem ? (
                           <span style={{ marginLeft: 8, color: "#b45309", textTransform: "none", fontWeight: 800 }}>
                             · Helcim payment problem
@@ -820,6 +848,38 @@ export default function AdminPaymentsSection() {
                           />
                           Pause billing automation
                         </label>
+                        <div style={{ fontSize: 13, color: theme.charcoal, lineHeight: 1.45 }}>
+                          <strong>Autopay:</strong>{" "}
+                          {r.billing.billing_autopay_enabled
+                            ? `On${billingAutopayCardLabel(r.billing) ? ` · ${billingAutopayCardLabel(r.billing)}` : ""}`
+                            : r.billing.billing_autopay_card_token
+                              ? `Off (card on file${billingAutopayCardLabel(r.billing) ? ` · ${billingAutopayCardLabel(r.billing)}` : ""})`
+                              : "Off"}
+                          {r.billing.billing_autopay_last_error ? (
+                            <div style={{ color: "#b91c1c", marginTop: 4 }}>Last Autopay error: {r.billing.billing_autopay_last_error}</div>
+                          ) : null}
+                          {r.billing.billing_autopay_enabled ? (
+                            <div style={{ marginTop: 8 }}>
+                              <button
+                                type="button"
+                                disabled={savingId === r.id}
+                                onClick={() => void turnOffAutopay(r.id)}
+                                style={{
+                                  padding: "6px 10px",
+                                  borderRadius: 6,
+                                  border: `1px solid ${theme.border}`,
+                                  background: "#fff",
+                                  color: theme.charcoal,
+                                  cursor: savingId === r.id ? "wait" : "pointer",
+                                  fontWeight: 700,
+                                  fontSize: 12,
+                                }}
+                              >
+                                Turn off Autopay
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
                         <div style={{ fontSize: 14, color: theme.charcoal, fontWeight: 500 }}>
                           <strong style={{ fontWeight: 800 }}>Last paid:</strong> {r.billing.billing_last_success_at?.trim() || "—"}
                           {r.billing.billing_payment_due_date ? (
