@@ -43,6 +43,7 @@ import {
   type CustomerPaymentCollectionsRow,
 } from "../../lib/customerPaymentCollections"
 import PaymentRequestsWorkspace from "./PaymentRequestsWorkspace"
+import { isIosNativeApp, openInSystemBrowser, publicSiteUrl } from "../../lib/publicSite"
 
 /** Must use `import.meta.env.VITE_*` directly so Vite inlines values at build time (cast/indirect access is left empty in production). */
 const ENV_PORTAL = String(import.meta.env.VITE_HELCIM_PAYMENT_PORTAL_URL ?? "").trim()
@@ -130,7 +131,8 @@ export default function PaymentsPage() {
   const enrollAutopayRef = useRef(false)
   const checkoutRef = useRef<HTMLFormElement | null>(null)
 
-  const useHelcimJs = Boolean(ENV_JS_TOKEN)
+  const iosWebBilling = isIosNativeApp()
+  const useHelcimJs = Boolean(ENV_JS_TOKEN) && !iosWebBilling
   const { ready: scriptReady, error: scriptError, retry: retryHelcimScript } = useHelcimJsScript(
     useHelcimJs,
     "data-tradesman-helcim-js",
@@ -635,6 +637,40 @@ export default function PaymentsPage() {
         </p>
       ) : null}
 
+      {iosWebBilling ? (
+        <div
+          style={{
+            margin: "0 0 16px",
+            padding: "14px 16px",
+            borderRadius: 12,
+            border: `1px solid ${theme.border}`,
+            background: "#f8fafc",
+          }}
+        >
+          <strong style={{ display: "block", fontSize: 14, color: theme.text }}>Pay your Tradesman bill on the website</strong>
+          <p style={{ margin: "8px 0 12px", fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
+            Tradesman subscriptions are billed to contracting businesses on our website. On iPhone and iPad, payment opens
+            in Safari — it is not collected inside this App Store app.
+          </p>
+          <button
+            type="button"
+            onClick={() => void openInSystemBrowser(publicSiteUrl("/pricing"))}
+            style={{
+              padding: "10px 16px",
+              borderRadius: 8,
+              border: "none",
+              background: theme.primary,
+              color: "#fff",
+              fontWeight: 800,
+              fontSize: 14,
+              cursor: "pointer",
+            }}
+          >
+            Open billing in Safari
+          </button>
+        </div>
+      ) : null}
+
       {useHelcimJs ? (
         <div
           style={{
@@ -1058,7 +1094,7 @@ export default function PaymentsPage() {
             </>
           )}
         </>
-      ) : (
+      ) : iosWebBilling ? null : (
         <>
           <p style={{ color: theme.text, marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
             Your secure payment window loads below when your organization has turned on online payments.

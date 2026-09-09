@@ -57,6 +57,7 @@ import {
   audioExtensionForMime,
   createAudioMediaRecorder,
 } from "../../lib/mediaRecorderMime"
+import { pickImageFile, shouldUseNativeImagePick } from "../../lib/nativeImagePick"
 
 type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun"
 
@@ -335,8 +336,10 @@ export function AccountProfilePanel({
   const [recordingGreeting, setRecordingGreeting] = useState(false)
   const [recordingSupported, setRecordingSupported] = useState(false)
   const [recordingPreviewUrl, setRecordingPreviewUrl] = useState("")
+  const profilePhotoInputRef = useRef<HTMLInputElement | null>(null)
+  const companyLogoInputRef = useRef<HTMLInputElement | null>(null)
   const [foldOpen, setFoldOpen] = useState({
-    profile: false,
+    profile: true,
     tradesman_email: false,
     business_web_profile: false,
     business_address: false,
@@ -350,7 +353,7 @@ export function AccountProfilePanel({
     voicemail_bundle: false,
     ai_automations: false,
     password_reset: false,
-    delete_account: false,
+    delete_account: true,
   })
   const toggleFold = (key: keyof typeof foldOpen) => () => setFoldOpen((prev) => ({ ...prev, [key]: !prev[key] }))
 
@@ -531,12 +534,9 @@ export function AccountProfilePanel({
     })()
   }, [profileUserId])
 
-  /** Language is saved immediately so My T works even when Contact & profile is hidden in portal. */
-  async function handleProfilePhotoChange(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    e.target.value = ""
-    if (!file || !supabase || !profileUserId || profileUserId !== user?.id) return
-    if (!file.type.startsWith("image/")) {
+  async function uploadProfilePhotoFile(file: File) {
+    if (!supabase || !profileUserId || profileUserId !== user?.id) return
+    if (!file.type.startsWith("image/") && file.type !== "") {
       setError("Please choose an image file (PNG or JPEG).")
       return
     }
@@ -584,11 +584,31 @@ export function AccountProfilePanel({
     }
   }
 
-  async function handleCompanyLogoChange(e: ChangeEvent<HTMLInputElement>) {
+  /** Language is saved immediately so My T works even when Contact & profile is hidden in portal. */
+  async function handleProfilePhotoChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     e.target.value = ""
-    if (!file || !supabase || !profileUserId || profileUserId !== user?.id) return
-    if (!file.type.startsWith("image/")) {
+    if (!file) return
+    await uploadProfilePhotoFile(file)
+  }
+
+  async function handleProfilePhotoButton() {
+    if (uploadingProfilePhoto) return
+    if (shouldUseNativeImagePick()) {
+      const picked = await pickImageFile("prompt")
+      if (!picked.ok) {
+        if (!picked.cancelled) setError(picked.message)
+        return
+      }
+      await uploadProfilePhotoFile(picked.file)
+      return
+    }
+    profilePhotoInputRef.current?.click()
+  }
+
+  async function uploadCompanyLogoFile(file: File) {
+    if (!supabase || !profileUserId || profileUserId !== user?.id) return
+    if (!file.type.startsWith("image/") && file.type !== "") {
       setError("Please choose an image file (PNG, JPEG, or WebP).")
       return
     }
@@ -633,6 +653,27 @@ export function AccountProfilePanel({
     } finally {
       setUploadingCompanyLogo(false)
     }
+  }
+
+  async function handleCompanyLogoChange(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ""
+    if (!file) return
+    await uploadCompanyLogoFile(file)
+  }
+
+  async function handleCompanyLogoButton() {
+    if (uploadingCompanyLogo) return
+    if (shouldUseNativeImagePick()) {
+      const picked = await pickImageFile("prompt")
+      if (!picked.ok) {
+        if (!picked.cancelled) setError(picked.message)
+        return
+      }
+      await uploadCompanyLogoFile(picked.file)
+      return
+    }
+    companyLogoInputRef.current?.click()
   }
 
   async function persistUiLanguage(next: "en" | "es") {
@@ -990,45 +1031,79 @@ export function AccountProfilePanel({
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
                       <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Profile photo</span>
-                      <label style={{ display: "inline-flex" }}>
-                        <span
-                          style={{
-                            padding: "8px 14px",
-                            borderRadius: 8,
-                            border: `1px solid ${theme.border}`,
-                            background: uploadingProfilePhoto ? "#f1f5f9" : "#fff",
-                            color: theme.text,
-                            fontWeight: 600,
-                            fontSize: 13,
-                            cursor: uploadingProfilePhoto ? "wait" : "pointer",
-                          }}
-                        >
-                          {uploadingProfilePhoto ? "Uploading…" : "Upload profile photo"}
-                        </span>
-                        <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(ev) => void handleProfilePhotoChange(ev)} disabled={uploadingProfilePhoto} style={{ display: "none" }} />
-                      </label>
+                      <button
+                        type="button"
+                        onClick={() => void handleProfilePhotoButton()}
+                        disabled={uploadingProfilePhoto}
+                        style={{
+                          width: "fit-content",
+                          padding: "8px 14px",
+                          borderRadius: 8,
+                          border: `1px solid ${theme.border}`,
+                          background: uploadingProfilePhoto ? "#f1f5f9" : "#fff",
+                          color: theme.text,
+                          fontWeight: 600,
+                          fontSize: 13,
+                          cursor: uploadingProfilePhoto ? "wait" : "pointer",
+                        }}
+                      >
+                        {uploadingProfilePhoto ? "Uploading…" : "Upload profile photo"}
+                      </button>
+                      <input
+                        ref={profilePhotoInputRef}
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        onChange={(ev) => void handleProfilePhotoChange(ev)}
+                        disabled={uploadingProfilePhoto}
+                        style={{ display: "none" }}
+                      />
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
                       <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Company logo</span>
-                      <label style={{ display: "inline-flex" }}>
-                        <span
-                          style={{
-                            padding: "8px 14px",
-                            borderRadius: 8,
-                            border: `1px solid ${theme.border}`,
-                            background: uploadingCompanyLogo ? "#f1f5f9" : "#fff",
-                            color: theme.text,
-                            fontWeight: 600,
-                            fontSize: 13,
-                            cursor: uploadingCompanyLogo ? "wait" : "pointer",
-                          }}
-                        >
-                          {uploadingCompanyLogo ? "Uploading…" : "Upload company logo"}
-                        </span>
-                        <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(ev) => void handleCompanyLogoChange(ev)} disabled={uploadingCompanyLogo} style={{ display: "none" }} />
-                      </label>
+                      <button
+                        type="button"
+                        onClick={() => void handleCompanyLogoButton()}
+                        disabled={uploadingCompanyLogo}
+                        style={{
+                          width: "fit-content",
+                          padding: "8px 14px",
+                          borderRadius: 8,
+                          border: `1px solid ${theme.border}`,
+                          background: uploadingCompanyLogo ? "#f1f5f9" : "#fff",
+                          color: theme.text,
+                          fontWeight: 600,
+                          fontSize: 13,
+                          cursor: uploadingCompanyLogo ? "wait" : "pointer",
+                        }}
+                      >
+                        {uploadingCompanyLogo ? "Uploading…" : "Upload company logo"}
+                      </button>
+                      <input
+                        ref={companyLogoInputRef}
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        onChange={(ev) => void handleCompanyLogoChange(ev)}
+                        disabled={uploadingCompanyLogo}
+                        style={{ display: "none" }}
+                      />
                     </div>
                   </div>
+                  {showAccountSection("delete_account") ? (
+                    <div
+                      style={{
+                        marginTop: 4,
+                        padding: 12,
+                        borderRadius: 10,
+                        border: "1px solid #fecaca",
+                        background: "#fff7f7",
+                      }}
+                    >
+                      <div style={{ fontSize: 13, fontWeight: 800, color: "#991b1b", marginBottom: 8 }}>
+                        {t("account.delete.title")}
+                      </div>
+                      <DeleteAccountCard />
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
@@ -1818,6 +1893,7 @@ export function AccountProfilePanel({
                       open={foldOpen.delete_account}
                       onToggle={toggleFold("delete_account")}
                       category={systemCat}
+                      sectionId="delete_account"
                     >
                       <DeleteAccountCard />
                     </AccountFold>
@@ -1859,6 +1935,25 @@ export function AccountProfilePanel({
                 <span style={{ fontSize: 12, color: "#64748b", fontWeight: 600 }}>
                   View only — turn on Edit mode in the Viewing as bar to save changes for this user.
                 </span>
+              ) : null}
+              {showAccountSection("delete_account") ? (
+                <button
+                  type="button"
+                  onClick={() => applyAccountSectionPrefill("delete_account")}
+                  style={{
+                    marginLeft: "auto",
+                    padding: "8px 12px",
+                    background: "transparent",
+                    color: "#b91c1c",
+                    border: "1px solid #fecaca",
+                    borderRadius: 8,
+                    fontWeight: 700,
+                    fontSize: 13,
+                    cursor: "pointer",
+                  }}
+                >
+                  {t("account.delete.title")}
+                </button>
               ) : null}
             </div>
           </div>

@@ -61,7 +61,8 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Tradesman uses your location for dispatch radius, en-route customer updates, and team maps when you enable GPS in Account.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Tradesman uses the camera to take job photos, attach images to messages and estimates, and join video calls with your team.</string>
+	<string>Tradesman uses the camera when you choose Take Photo to upload a picture to a conversation, estimate, calendar item, or your business profile.</string>
+	<!-- Required in the archived binary. Missing this key TCC-kills the app (App Review 2.3.14 build 13). -->
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Tradesman uses the microphone for voice greetings, in-app calls, and optional voice commands.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
@@ -69,7 +70,7 @@
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Tradesman uses your photo library so you can attach existing photos to jobs, messages, and your business profile.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>Tradesman may save images you capture in the app, such as job photos, to your photo library when you choose to save them.</string>
+	<string>Tradesman may save a picture to your photo library when you choose to save an upload from the app.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<!-- Push only. Do not add "location" — GPS is when-in-use while the app is open (guideline 2.5.4). -->
@@ -78,5 +79,7 @@
 	</array>
 	<key>NSUserNotificationsUsageDescription</key>
 	<string>Tradesman sends job updates and messages when you allow notifications.</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>

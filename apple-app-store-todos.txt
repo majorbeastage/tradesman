@@ -1,34 +1,243 @@
-Tradesman — Apple App Store (iOS) release checklist
-====================================================
+Tradesman — Apple App Store checklist (current)
+================================================
+Last updated: 2026-09-09
+Rule: do NOT push web/main or set MIN_IOS_APP_VERSION until TestFlight is healthy.
 
-PREREQUISITE
-- Xcode on a Mac is required to archive, sign, and upload. The `ios/` folder in this repo can be synced from Windows/Linux, but builds and TestFlight/App Store Connect steps need macOS.
+Latest rejection (review date Sept 8, 2026)
+-------------------------------------------
+Submission ID: bfc9a7fb-95be-473b-a1d4-5009b425ae82
+App Store Connect version: 1.0 (13)
+Shipped binary: CFBundleShortVersionString 2.3.14 / CFBundleVersion 13
+Device: iPad Air 11-inch (M3) / iPadOS 26.6
+This was MAIN app com.tradesmanus.com — not Messaging.
 
-CODEBASE (this repo)
-- Run `npm run mobile:sync` after each web release so `dist` copies into `ios/`.
-- Open Xcode: `npm run mobile:open:ios` (on Mac) or open `ios/App/App.xcworkspace` / project as Capacitor documents for your version.
-- Set Bundle Identifier to match App Store Connect (default from Capacitor: `com.tradesman.app` — change in Xcode if needed).
-- Signing & capabilities: Team, automatic signing, any entitlements (Push, Associated Domains, etc.) only if you use them.
-- Icons and launch screen: replace Capacitor defaults in the Xcode asset catalog.
-- If the app uses camera/mic/photos/tracking: add usage strings to `Info.plist` (Privacy — Camera Usage Description, etc.).
-- App Transport Security: production should use HTTPS; avoid broad ATS exceptions unless justified.
+Crash logs (both the same TCC kill):
+  crashlog-2EB73BE2-268A-466B-A0EB-6C0AE1F00AD8
+  crashlog-E728A7F2-46B5-4BD8-AE55-72769FDAAE50
+  termination: "This app has crashed because it attempted to access
+  privacy-sensitive data without a usage description. The app's Info.plist
+  must contain an NSCameraUsageDescription key..."
+  Stack: UIImagePickerController / CAMCaptureEngine (Take Photo).
+  The 2.3.14 (13) archive did NOT include NSCameraUsageDescription.
 
-APP STORE CONNECT
-- Create app record; bundle ID must match Xcode.
-- Store listing: name, subtitle, keywords, description, screenshots for required device sizes, privacy policy URL, support URL.
-- App Privacy (nutrition labels): align with actual data collection (auth, analytics, crash logs, etc.).
-- Age rating; content rights; encryption export compliance (usually “standard encryption” exemption if only HTTPS).
-- TestFlight: internal then external testers; collect feedback before submission.
-- Submit for review; respond to rejection notes in Resolution Center.
+Account deletion screenshot Apple took (~11:27) is the old public page
+that only said “email admin@…”. That is why 5.1.1(v) failed.
 
-WEB + AUTH
-- Universal Links / Sign in with Apple: only if you implement them; otherwise use in-app WebView or native shell loading your deployed URL per your architecture.
-- If users sign in via Supabase: ensure redirect URLs and deep links work from the iOS app if you use custom URL schemes.
+Next archive MUST be marketing 2.3.18 / build 14 (or higher).
 
-QUICK COMMANDS (on Mac)
-- `npm run mobile:sync` — build web + copy to iOS.
-- `npm run mobile:open:ios` — open in Xcode.
+TWO APPS (same process twice)
+-----------------------------
+1) MAIN (do first):   com.tradesmanus.com       → repo ios/   (this checklist)
+2) MESSENGER (later): com.tradesmanus.messaging → messaging-app/ios/
 
-OPTIONAL HARDENING
-- Bitcode / dSYM for crash symbolication if using crash tools.
-- Validate with Xcode “Archive” → “Validate App” before “Distribute App”.
+================================================
+REJECTION FIXES — do these before the next upload
+================================================
+
+[x] 2.5.4 Background location
+    Info.plist UIBackgroundModes is push only (remote-notification).
+    Do NOT add "location". GPS is when-in-use while the app is open.
+
+[x] 5.1.1(v) Account deletion (in-app)
+    Path: sign in → My T (Account) → System and Mobile Settings → Delete account
+    (section is open by default; red "Delete account" button also sits next to Save).
+    Type DELETE → Delete my account → confirm. Public fallback: /account-deletion
+    STILL NEED ON MAC: screen recording of this flow on a physical device.
+    Put the recording in App Store Connect → App Review Information → Notes.
+
+[x] 2.1(a) Camera crash / mic unresponsive (code)
+    Build 12 likely lacked NSCameraUsageDescription / NSMicrophoneUsageDescription
+    (iOS kills the app when camera opens without those strings).
+    Current Info.plist has camera, mic, photos, speech strings.
+    Mic taps now request OS permission and show an error instead of doing nothing.
+    Camera getUserMedia has iPad fallbacks + native permission prompt.
+    STILL NEED ON MAC: test on iPad simulator or device — attach photo, record greeting,
+    tap assistant mic. Must see a permission dialog or a clear message. Must not crash.
+
+[ ] 2.3.10 Screenshots — YOU on Mac / App Store Connect
+    Reviewer said screenshots show non-iOS status bars (Android or mockups).
+    Take NEW shots from the iOS Simulator or a real iPhone/iPad:
+      - iPhone 6.7" (required)
+      - iPad 12.9" / 13" if the app stays iPhone+iPad
+    Status bar must be iOS (not Android clock/battery/icons).
+    Show the app itself: login, dashboard, conversations, estimate, calendar.
+    In App Store Connect: Previews and Screenshots → View All Sizes in Media Manager.
+
+[ ] 2.1(b) Business model — paste the reply below into App Review
+[ ] 5.1.1(v) + 2.5.4 — paste the reply below (same Resolution Center thread)
+[x] Demo account in App Review Information (email + password Apple can use)
+    Do NOT delete this demo account in the screen recording. Record deletion on a
+    throwaway signup (or a second test user) so Apple can still sign in.
+[ ] Mac: Archive build 2.3.18 (14) and upload to TestFlight
+[ ] After TestFlight is healthy: resubmit for App Review
+
+================================================
+PASTE INTO APP STORE CONNECT — Resolution Center
+================================================
+
+Hello App Review team,
+
+Thank you for the detailed feedback on submission bfc9a7fb-95be-473b-a1d4-5009b425ae82
+(version 1.0, build 13) and for the crash logs. We have addressed each item in a new
+binary (2.3.18, build 14).
+
+--- Guideline 2.3.10 (screenshots) ---
+We replaced the screenshots. The previous set incorrectly included non-iOS status bars.
+The new screenshots were captured from iOS / iPadOS and show the Tradesman app in use
+(dashboard, conversations, estimates, and calendar).
+
+--- Guideline 2.1(a) microphone ---
+Build 12 did not reliably request microphone permission, so the control appeared
+unresponsive on iPad. The new build includes NSMicrophoneUsageDescription, requests
+microphone access when the user taps a mic control, and shows an on-screen message
+if access is denied or unavailable. Please test: My T → voicemail greeting → Record,
+or the on-screen assistant microphone after allowing the system prompt.
+
+--- Guideline 2.1(a) camera crash ---
+The crash logs show a TCC abort: build 13 (2.3.14) opened UIImagePickerController
+without NSCameraUsageDescription in the shipped Info.plist. The new binary includes
+that key (and microphone / photo library strings). Profile photo on iPad now uses a
+native picker (Take Photo / Photo Library) with permission handling instead of the
+WKWebView file input that killed the previous build.
+Please test: My T → Contact & profile → Upload profile photo → Take Photo.
+
+--- Guideline 5.1.1(v) account deletion ---
+Account deletion is completed inside the app. No email, extra account, or support
+ticket is required:
+
+1. Sign in with the demo account (credentials are in App Review Information).
+2. Open My T (Account / Profile).
+3. Under Contact & profile, use the Delete account box (also under System and
+   Mobile Settings, and a red button next to Save).
+4. Type DELETE, tap Delete my account, and confirm.
+
+This permanently deletes the login. Please do not delete the demo account; we can
+provide a throwaway user if you need to run the button. Public instructions (same
+in-app steps, no email requirement): https://www.tradesman-us.com/account-deletion
+
+--- Guideline 3.1.1 / 3.1.3(c) In-App Purchase ---
+Tradesman is a B2B field-service workspace sold to contracting businesses (including
+sole proprietors operating as a business), not to consumers or families. Seats are
+for that company’s workers.
+
+On the iOS app we do not collect subscription payment. Plan checkout and Autopay
+open in Safari on https://www.tradesman-us.com (United States storefront link-out).
+The app is a client for work the business already purchased on the web. Customer
+“Collect from customers” is the contractor billing their job customers for trade
+work — it is not a sale of Tradesman digital subscriptions.
+
+--- Guideline 2.5.4 background location ---
+The new binary does not declare location in UIBackgroundModes. Location is
+when-in-use only (dispatch radius / maps while the app is open). We do not
+need persistent background location.
+
+--- Guideline 2.1(b) business model ---
+
+1. Who uses the paid subscriptions and features?
+   Licensed trade contractors and their employees (roofing, remodeling, and similar
+   field-service businesses). These are business users, not consumers or families.
+
+2. Where do users purchase subscriptions and features?
+   On our website during signup and billing: https://www.tradesman-us.com
+   Payment is collected by Helcim as our merchant processor. Users do not purchase
+   subscriptions through the App Store or In-App Purchase.
+
+3. What previously purchased subscriptions can a user access in the app?
+   A monthly business SaaS plan purchased on the website (for example Base,
+   Office Manager tiers, Corporate, or a single-tool plan). After they sign in,
+   the iOS app opens the same workspace they already paid for on the web.
+
+4. What paid content is unlocked in the app without In-App Purchase?
+   The business workspace: customers, estimates, calendar, conversations (SMS/email),
+   and related field-service tools. Access is unlocked by the website subscription
+   already associated with that login. No digital goods are sold inside the iOS app.
+
+5. Are the enterprise services sold to single users, consumers, or for family use?
+   Sold to businesses (the contracting company). Seats are for that company’s
+   employees. Not sold to consumers and not a family plan.
+
+This is a multi-platform / enterprise business tool. The iOS app is a client for
+work the company already purchased on the web. We are not offering consumer
+subscriptions or unlocking paid digital content through the iOS app.
+
+Please use the demo account in App Review Information to sign in. Thank you.
+
+================================================
+CURRENT STATE (repo) — MAIN APP
+================================================
+[x] Capacitor ios/ shell exists
+[x] Bundle ID: com.tradesmanus.com
+[x] Display name: Tradesman
+[x] URL scheme: tradesman://
+[x] Location + notification + camera/mic/photos/speech privacy strings
+[x] Push background mode only (no location background)
+[x] App icon (1024) + splash
+[x] ITSAppUsesNonExemptEncryption = false
+[x] Marketing version 2.3.18 / build 14
+[x] In-app account deletion on Contact & profile (and System settings)
+[ ] DEVELOPMENT_TEAM / signing (Xcode on MacinCloud)
+[ ] GoogleService-Info.plist (iOS Firebase / FCM — not required to resubmit review)
+[ ] New iOS/iPad screenshots uploaded
+[ ] App Review reply sent
+[ ] TestFlight build uploaded (must be > 12)
+[ ] Real App Store URL for IOS_APP_STORE_URL (later)
+
+================================================
+SAME REVIEW — swap the build, keep your notes
+================================================
+Do NOT click “Add iOS Version” and do NOT create a new app.
+Demo login, reviewer notes, screenshots, and description live on the
+VERSION page (1.0), not on the binary. Replacing the build keeps them.
+
+1) Mac: Archive and upload a NEW build number (14 or higher). Wait until
+   App Store Connect shows the build as Ready to Submit (not Processing).
+2) App Store Connect → My Apps → Tradesman → the rejected 1.0 version
+   (Unresolved Issues / Rejected). Do not open a new version.
+3) Build section: hover the old build (12) → click the minus (−) → Save.
+   That only detaches the binary. Notes stay.
+4) Build section: + → choose the new build → Save.
+5) Scroll to App Review Information and confirm demo name/login/notes
+   are still there. Add the delete-account recording here if needed.
+6) Same rejection thread: Reply to App Review (paste the letter below).
+7) Resubmit / Submit for Review on that same 1.0 version.
+
+Resolution Center messages also stay in that thread.
+
+================================================
+PHASE 1 — MacinCloud (next hands-on)
+================================================
+[ ] Open this repo on the Mac
+[ ] npm ci && npm run mobile:sync
+[ ] npm run mobile:open:ios
+[ ] Signing: Team = your Apple Developer team, Automatic, bundle com.tradesmanus.com
+[ ] Confirm Version 2.3.18 / Build 14 (or higher if 14 already exists)
+[ ] Simulator: iPad Air (or latest iPad) → Run
+[ ] Smoke: login (demo/staff), dashboard, conversations attach photo, mic, My T delete account
+[ ] iPhone simulator: capture 6.7" screenshots (iOS status bar visible)
+[ ] iPad simulator: capture required iPad screenshots
+[ ] Archive → Upload → TestFlight
+[ ] Record account-deletion flow on a real iPhone/iPad
+[ ] Reply in Resolution Center (paste above) + attach recording
+[ ] Resubmit for review
+
+================================================
+PHASE 5 — After App Store URL exists (later — do not do yet)
+================================================
+[ ] Set Vercel IOS_APP_STORE_URL=https://apps.apple.com/app/idXXXXXXXXX
+[ ] Only then consider MIN_IOS_APP_VERSION
+
+================================================
+COMMANDS (Mac)
+================================================
+npm ci
+npm run mobile:sync
+npm run mobile:open:ios
+
+================================================
+DO NOT
+================================================
+- Do not git push unless you asked
+- Do not set MIN_IOS_APP_VERSION on Vercel yet
+- Do not reuse Android screenshots
+- Do not add location to UIBackgroundModes
+- Prefer the demo / staff account for App Review, not a live client
