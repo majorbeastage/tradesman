@@ -11,6 +11,10 @@ import {
   validateManualSmsConsentSourceInput,
   type ManualSmsConsentSourceInput,
 } from "./customerSmsConsent"
+import {
+  isPlaceholderCustomerDisplayName,
+  resolveManualCustomerDisplayName,
+} from "./customerDisplayName"
 import { geocodeAddressToLatLng } from "./jobSiteLocation"
 import { requiresManualSmsOptInRecord, type CommEventLite } from "./smsFirstOutboundCompliance"
 
@@ -168,17 +172,28 @@ export async function createCustomerRecord(
       .select("display_name, metadata")
       .eq("id", customerId)
       .maybeSingle()
+    let resolvedName = (row?.display_name as string | null)?.trim() || ""
+    if (name && isPlaceholderCustomerDisplayName(resolvedName)) {
+      const { error: nameErr } = await supabase.from("customers").update({ display_name: name }).eq("id", customerId)
+      if (nameErr) throw nameErr
+      resolvedName = name
+    }
     await maybeRecordSmsConsent(customerId, row?.metadata, manualSmsOptInRequired)
     return {
       customerId,
       reusedExisting: true,
-      displayName: (row?.display_name as string | null)?.trim() || name || phone || email,
+      displayName: resolvedName || name || phone || email,
     }
   }
 
-  const displayName = name || (phone ? `Unknown (${phone})` : email ? `Unknown (${email})` : "New customer")
   const emailNorm = email ? normalizeCustomerEmail(email) : ""
   const emailClassification = emailNorm ? classifyInboundEmailContact(emailNorm) : null
+  const displayName = resolveManualCustomerDisplayName({
+    name,
+    phone,
+    email,
+    classifiedDisplayName: emailClassification?.displayName,
+  })
   const customerMetadata = emailClassification
     ? mergeCustomerHubMetadata(null, {
         hubKind: emailClassification.hubKind,
@@ -205,7 +220,7 @@ export async function createCustomerRecord(
     .from("customers")
     .insert({
       user_id: userId,
-      display_name: emailClassification?.displayName?.trim() ? emailClassification.displayName : displayName,
+      display_name: displayName,
       notes: null,
       service_address: serviceAddress || null,
       service_lat: lat,
