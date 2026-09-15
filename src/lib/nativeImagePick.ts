@@ -24,13 +24,13 @@ export function shouldUseNativeImagePick(): boolean {
  * iOS: native camera / photo library (iPad-safe presentation + permission).
  * Other platforms: caller should fall back to a file input.
  */
-export async function pickImageFile(source: "prompt" | "camera" | "photos" = "prompt"): Promise<NativeImagePickResult> {
+export async function pickImageFile(_source: "prompt" | "camera" | "photos" = "photos"): Promise<NativeImagePickResult> {
   if (!Capacitor.isNativePlatform()) {
     return { ok: false, cancelled: false, message: "Use the file picker on this device." }
   }
   try {
     const { TradesmanNative } = await import("../plugins/tradesman-native")
-    const result = await TradesmanNative.pickImage({ source })
+    const result = await TradesmanNative.pickImage({ source: "photos" })
     if (result.cancelled) return { ok: false, cancelled: true }
     if (!result.dataUrl) {
       return { ok: false, cancelled: false, message: result.error || "Could not read that photo." }

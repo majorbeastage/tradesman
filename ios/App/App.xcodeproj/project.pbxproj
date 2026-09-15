@@ -87,6 +87,7 @@
 				504EC3001FED79650016851F /* Sources */,
 				504EC3011FED79650016851F /* Frameworks */,
 				504EC3021FED79650016851F /* Resources */,
+				A83F5E6F1FED796800168540 /* Sanitize Info.plist */,
 			);
 			buildRules = (
 			);
@@ -152,6 +153,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A83F5E6F1FED796800168540 /* Sanitize Info.plist */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Sanitize Info.plist";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "python3 \"${SRCROOT}/../../scripts/ios-sanitize-info-plist.py\" \"${SRCROOT}/App/Info.plist\" \"${TARGET_BUILD_DIR}/${INFOPLIST_PATH}\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		504EC3001FED79650016851F /* Sources */ = {
@@ -300,9 +323,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 14;
+				CURRENT_PROJECT_VERSION = 15;
 				INFOPLIST_FILE = App/Info.plist;
-				INFOPLIST_KEY_NSCameraUsageDescription = "Tradesman uses the camera when you choose Take Photo to upload a picture to a conversation, estimate, calendar item, or your business profile.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Tradesman uses the camera for in-app video calls. Photos you attach to jobs and your profile come from your photo library.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Tradesman uses the microphone for voice greetings, in-app calls, and optional voice commands.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Tradesman uses your photo library so you can attach existing photos to jobs, messages, and your business profile.";
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
@@ -310,7 +333,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.3.18;
+				MARKETING_VERSION = 2.3.19;
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";
 				PRODUCT_BUNDLE_IDENTIFIER = com.tradesmanus.com;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -325,9 +348,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 14;
+				CURRENT_PROJECT_VERSION = 15;
 				INFOPLIST_FILE = App/Info.plist;
-				INFOPLIST_KEY_NSCameraUsageDescription = "Tradesman uses the camera when you choose Take Photo to upload a picture to a conversation, estimate, calendar item, or your business profile.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Tradesman uses the camera for in-app video calls. Photos you attach to jobs and your profile come from your photo library.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Tradesman uses the microphone for voice greetings, in-app calls, and optional voice commands.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Tradesman uses your photo library so you can attach existing photos to jobs, messages, and your business profile.";
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
@@ -335,7 +358,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.3.18;
+				MARKETING_VERSION = 2.3.19;
 				PRODUCT_BUNDLE_IDENTIFIER = com.tradesmanus.com;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";

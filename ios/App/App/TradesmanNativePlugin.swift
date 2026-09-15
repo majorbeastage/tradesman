@@ -65,6 +65,11 @@ public class TradesmanNativePlugin: CAPPlugin, CAPBridgedPlugin, UIImagePickerCo
     }
 
     @objc func requestCameraAccess(_ call: CAPPluginCall) {
+        // TCC aborts the process if this key is missing — never call requestAccess without it.
+        guard Bundle.main.object(forInfoDictionaryKey: "NSCameraUsageDescription") != nil else {
+            call.resolve(["granted": false])
+            return
+        }
         let status = AVCaptureDevice.authorizationStatus(for: .video)
         if status == .authorized {
             call.resolve(["granted": true])
@@ -98,7 +103,7 @@ public class TradesmanNativePlugin: CAPPlugin, CAPBridgedPlugin, UIImagePickerCo
     }
 
     @objc func pickImage(_ call: CAPPluginCall) {
-        let source = (call.getString("source") ?? "prompt").lowercased()
+        let source = (call.getString("source") ?? "photos").lowercased()
         DispatchQueue.main.async {
             self.beginPickImage(call, source: source)
         }
@@ -116,32 +121,21 @@ public class TradesmanNativePlugin: CAPPlugin, CAPBridgedPlugin, UIImagePickerCo
         imageCall = call
         call.keepAlive = true
 
-        if source == "camera" {
-            presentCamera(from: vc)
-            return
-        }
-        if source == "photos" {
-            presentPhotoLibrary(from: vc)
-            return
-        }
+        // Never offer Take Photo here. App Review taps it on iPad and the process
+        // is killed if camera TCC is missing. Photo library (PHPicker) only.
+        _ = source
+        presentPhotoLibrary(from: vc)
+    }
 
-        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
-        if UIImagePickerController.isSourceTypeAvailable(.camera) {
-            sheet.addAction(UIAlertAction(title: "Take Photo", style: .default) { _ in
-                self.presentCamera(from: vc)
-            })
-        }
-        sheet.addAction(UIAlertAction(title: "Photo Library", style: .default) { _ in
-            self.presentPhotoLibrary(from: vc)
-        })
-        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in
-            self.finishImagePick(["cancelled": true])
-        })
-        configurePopover(sheet, from: vc)
-        vc.present(sheet, animated: true)
+    private func hasCameraUsageDescription() -> Bool {
+        Bundle.main.object(forInfoDictionaryKey: "NSCameraUsageDescription") != nil
     }
 
     private func presentCamera(from vc: UIViewController) {
+        guard hasCameraUsageDescription() else {
+            presentPhotoLibrary(from: vc)
+            return
+        }
         guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
             finishImagePick(["cancelled": false, "error": "This device does not have a camera. Choose Photo Library instead."])
             return

@@ -595,7 +595,7 @@ export function AccountProfilePanel({
   async function handleProfilePhotoButton() {
     if (uploadingProfilePhoto) return
     if (shouldUseNativeImagePick()) {
-      const picked = await pickImageFile("prompt")
+      const picked = await pickImageFile("photos")
       if (!picked.ok) {
         if (!picked.cancelled) setError(picked.message)
         return
@@ -665,7 +665,7 @@ export function AccountProfilePanel({
   async function handleCompanyLogoButton() {
     if (uploadingCompanyLogo) return
     if (shouldUseNativeImagePick()) {
-      const picked = await pickImageFile("prompt")
+      const picked = await pickImageFile("photos")
       if (!picked.ok) {
         if (!picked.cancelled) setError(picked.message)
         return
@@ -1047,7 +1047,7 @@ export function AccountProfilePanel({
                           cursor: uploadingProfilePhoto ? "wait" : "pointer",
                         }}
                       >
-                        {uploadingProfilePhoto ? "Uploading…" : "Upload profile photo"}
+                        {uploadingProfilePhoto ? "Uploading…" : "Choose profile photo"}
                       </button>
                       <input
                         ref={profilePhotoInputRef}
@@ -1076,7 +1076,7 @@ export function AccountProfilePanel({
                           cursor: uploadingCompanyLogo ? "wait" : "pointer",
                         }}
                       >
-                        {uploadingCompanyLogo ? "Uploading…" : "Upload company logo"}
+                        {uploadingCompanyLogo ? "Uploading…" : "Choose company logo"}
                       </button>
                       <input
                         ref={companyLogoInputRef}

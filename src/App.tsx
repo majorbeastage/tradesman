@@ -105,6 +105,7 @@ import {
   stripLoginRouteHash,
   stripAppNavHashFromLocation,
 } from "./lib/loginRouting"
+import { isIosNativeApp, openInSystemBrowser, publicSiteUrl } from "./lib/publicSite"
 
 type View = "home" | "login" | "admin-login" | "demo" | "training" | "signup" | "about" | "pricing" | "app" | "office" | "admin"
 
@@ -198,6 +199,60 @@ function SignupRoutePage() {
       }}
       initialProductPackage={packagePreset}
     />
+  )
+}
+
+function IosBusinessSignInOnly({ onLogin }: { onLogin: () => void }) {
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+        background: "#f8fafc",
+        fontFamily: "system-ui, sans-serif",
+      }}
+    >
+      <div style={{ maxWidth: 440, display: "grid", gap: 14 }}>
+        <h1 style={{ margin: 0, fontSize: 28, color: "#0f172a" }}>Tradesman</h1>
+        <p style={{ margin: 0, fontSize: 15, lineHeight: 1.55, color: "#475569" }}>
+          This App Store app is sign-in only for people at contracting businesses that already have a Tradesman
+          workspace. New business accounts are created on the website, not in this app.
+        </p>
+        <button
+          type="button"
+          onClick={onLogin}
+          style={{
+            padding: "12px 16px",
+            borderRadius: 10,
+            border: "none",
+            background: "#ea580c",
+            color: "#fff",
+            fontWeight: 800,
+            cursor: "pointer",
+          }}
+        >
+          Sign in
+        </button>
+        <button
+          type="button"
+          onClick={() => void openInSystemBrowser(publicSiteUrl("/"))}
+          style={{
+            padding: "10px 16px",
+            borderRadius: 10,
+            border: "1px solid #cbd5e1",
+            background: "#fff",
+            color: "#0f172a",
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
+          Open tradesman-us.com
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -946,6 +1001,15 @@ function App() {
     )
   }
   if (pathname === "/pricing") {
+    if (isIosNativeApp()) {
+      return (
+        <IosBusinessSignInOnly
+          onLogin={() => {
+            window.location.href = "/#/login"
+          }}
+        />
+      )
+    }
     return (
       <PricingPage
         onBack={() => {
@@ -974,6 +1038,15 @@ function App() {
     )
   }
   if (pathname === "/trial") {
+    if (isIosNativeApp()) {
+      return (
+        <IosBusinessSignInOnly
+          onLogin={() => {
+            window.location.href = "/#/login"
+          }}
+        />
+      )
+    }
     return (
       <TrainingPage
         onBack={() => {
@@ -986,6 +1059,15 @@ function App() {
     )
   }
   if (pathname === "/signup") {
+    if (isIosNativeApp()) {
+      return (
+        <IosBusinessSignInOnly
+          onLogin={() => {
+            window.location.href = "/#/login"
+          }}
+        />
+      )
+    }
     return <SignupRoutePage />
   }
 
@@ -1085,17 +1167,24 @@ function App() {
   }, [refetchProfile])
 
   if (view === "home") {
+    const ios = isIosNativeApp()
     return (
       <MarketingHomePage
         onLogin={() => { beginContractorLogin(loginIntentRef); setView("login"); setLoginError("") }}
-        onSignup={() => {
+        onSignup={ios ? undefined : () => {
           window.location.href = "/signup"
         }}
-        onTrial={() => {
+        onTrial={ios ? undefined : () => {
           window.location.href = "/trial"
         }}
         onAboutUs={() => setView("about")}
-        onPricing={() => setView("pricing")}
+        onPricing={
+          ios
+            ? () => {
+                void openInSystemBrowser(publicSiteUrl("/pricing"))
+              }
+            : () => setView("pricing")
+        }
       />
     )
   }
@@ -1118,6 +1207,17 @@ function App() {
   }
 
   if (view === "signup") {
+    if (isIosNativeApp()) {
+      return (
+        <IosBusinessSignInOnly
+          onLogin={() => {
+            beginContractorLogin(loginIntentRef)
+            setView("login")
+            setLoginError("")
+          }}
+        />
+      )
+    }
     return (
       <SignupPage
         onBack={() => {
@@ -1130,6 +1230,17 @@ function App() {
   }
 
   if (view === "pricing") {
+    if (isIosNativeApp()) {
+      return (
+        <IosBusinessSignInOnly
+          onLogin={() => {
+            beginContractorLogin(loginIntentRef)
+            setView("login")
+            setLoginError("")
+          }}
+        />
+      )
+    }
     return (
       <PricingPage
         onBack={() => setView("home")}
@@ -1175,6 +1286,10 @@ function App() {
             setLoginError("")
           }}
           onGoToSignup={() => {
+            if (isIosNativeApp()) {
+              void openInSystemBrowser(publicSiteUrl("/"))
+              return
+            }
             setSignupPackagePreset(null)
             setView("signup")
             setLoginError("")

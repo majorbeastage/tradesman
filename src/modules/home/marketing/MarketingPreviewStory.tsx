@@ -520,10 +520,18 @@ export function MarketingPreviewStory({
         <div style={{ maxWidth: 640, margin: "0 auto", textAlign: "center" }}>
           <h2 style={{ margin: "0 0 12px", fontSize: 28, fontWeight: 900 }}>See it with your workflow</h2>
           <p style={{ margin: "0 0 24px", color: "#cbd5e1", lineHeight: 1.6 }}>
-            Trial mode uses sample customers so you can click through estimates, SMS, and scheduling before you commit.
+            {onTrial
+              ? "Trial mode uses sample customers so you can click through estimates, SMS, and scheduling before you commit."
+              : "Sign in with your contracting-business account to use estimates, SMS, and scheduling."}
           </p>
           <div style={{ display: "flex", justifyContent: "center" }}>
-            <MarketingPreviewCtas primaryLabel="Start trial" onPrimary={onTrial} onSignup={onSignup} onTrial={onTrial} onPricing={onPricing} />
+            <MarketingPreviewCtas
+              primaryLabel={onTrial ? "Start trial" : "Sign in"}
+              onPrimary={onTrial ?? onLogin}
+              onSignup={onSignup}
+              onTrial={onTrial}
+              onPricing={onPricing}
+            />
           </div>
         </div>
       </section>

@@ -3,10 +3,10 @@ import { MarketingPreviewShell } from "./marketing/MarketingPreviewShared"
 
 type Props = {
   onLogin: () => void
-  onSignup: () => void
-  onTrial: () => void
+  onSignup?: () => void
+  onTrial?: () => void
   onAboutUs: () => void
-  onPricing: () => void
+  onPricing?: () => void
 }
 
 /** Production homepage — story scroll (no preview banner). */

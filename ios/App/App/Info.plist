@@ -2,12 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CAPACITOR_DEBUG</key>
+	<key>CAPACITOR_DEBUG</key>
 	<string>$(CAPACITOR_DEBUG)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-        <string>Tradesman</string>
+	<string>Tradesman</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -61,8 +61,7 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Tradesman uses your location for dispatch radius, en-route customer updates, and team maps when you enable GPS in Account.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Tradesman uses the camera when you choose Take Photo to upload a picture to a conversation, estimate, calendar item, or your business profile.</string>
-	<!-- Required in the archived binary. Missing this key TCC-kills the app (App Review 2.3.14 build 13). -->
+	<string>Tradesman uses the camera for in-app video calls. Photos you attach to jobs and your profile come from your photo library.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Tradesman uses the microphone for voice greetings, in-app calls, and optional voice commands.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
@@ -73,8 +72,6 @@
 	<string>Tradesman may save a picture to your photo library when you choose to save an upload from the app.</string>
 	<key>UIBackgroundModes</key>
 	<array>
-		<!-- Push only. Do not add "location" — GPS is when-in-use while the app is open (guideline 2.5.4). -->
-		<!-- Do NOT add "processing" unless BGTaskSchedulerPermittedIdentifiers is also set. -->
 		<string>remote-notification</string>
 	</array>
 	<key>NSUserNotificationsUsageDescription</key>
