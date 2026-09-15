@@ -46,6 +46,7 @@ import { OPEN_DASHBOARD_TODO_EVENT } from "../lib/dashboardTodoUi"
 import { openMessenger } from "../lib/messengerBus"
 import { openMessagingAppWithSession } from "../lib/messagingHandoff"
 import { isNativeApp } from "../lib/capacitorMobile"
+import { isTabletDevice } from "../lib/deviceFormFactor"
 import DashboardTileStyleMenu from "./DashboardTileStyleMenu"
 import PlatformAssistantField from "./PlatformAssistantField"
 import { isOfficeManagerLikeRole } from "../lib/profileRoles"
@@ -1319,7 +1320,7 @@ export default function DashboardQuickActions(props: Props) {
             if (customize) return
             // Phone / Capacitor: always open Tradesman Messaging (or store if missing).
             // Desktop browser only: keep the in-app messenger widget.
-            if (isNativeApp() || isMobile || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "")) {
+            if (isNativeApp() || isMobile || isTabletDevice() || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "")) {
               void openMessagingAppWithSession()
               return
             }

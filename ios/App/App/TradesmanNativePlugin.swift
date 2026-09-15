@@ -103,7 +103,7 @@ public class TradesmanNativePlugin: CAPPlugin, CAPBridgedPlugin, UIImagePickerCo
     }
 
     @objc func pickImage(_ call: CAPPluginCall) {
-        let source = (call.getString("source") ?? "photos").lowercased()
+        let source = (call.getString("source") ?? "prompt").lowercased()
         DispatchQueue.main.async {
             self.beginPickImage(call, source: source)
         }
@@ -121,10 +121,32 @@ public class TradesmanNativePlugin: CAPPlugin, CAPBridgedPlugin, UIImagePickerCo
         imageCall = call
         call.keepAlive = true
 
-        // Never offer Take Photo here. App Review taps it on iPad and the process
-        // is killed if camera TCC is missing. Photo library (PHPicker) only.
-        _ = source
-        presentPhotoLibrary(from: vc)
+        if source == "camera" {
+            presentCamera(from: vc)
+            return
+        }
+        if source == "photos" {
+            presentPhotoLibrary(from: vc)
+            return
+        }
+        presentPickSourceSheet(from: vc)
+    }
+
+    private func presentPickSourceSheet(from vc: UIViewController) {
+        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
+        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+            sheet.addAction(UIAlertAction(title: "Take Photo", style: .default) { _ in
+                self.presentCamera(from: vc)
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "Photo Library", style: .default) { _ in
+            self.presentPhotoLibrary(from: vc)
+        })
+        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in
+            self.finishImagePick(["cancelled": true])
+        })
+        configurePopover(sheet, from: vc)
+        vc.present(sheet, animated: true)
     }
 
     private func hasCameraUsageDescription() -> Bool {
@@ -176,8 +198,8 @@ public class TradesmanNativePlugin: CAPPlugin, CAPBridgedPlugin, UIImagePickerCo
         config.selectionLimit = 1
         let picker = PHPickerViewController(configuration: config)
         picker.delegate = self
-        picker.modalPresentationStyle = .pageSheet
-        configurePopover(picker, from: vc)
+        picker.modalPresentationStyle = UIDevice.current.userInterfaceIdiom == .pad ? .formSheet : .pageSheet
+        picker.preferredContentSize = CGSize(width: 700, height: 720)
         vc.present(picker, animated: true)
     }
 

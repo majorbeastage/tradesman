@@ -4,6 +4,7 @@
  * - Mobile viewport or native Capacitor: open Messaging app with session + dial prefill.
  */
 import { isNativeApp } from "./capacitorMobile"
+import { isTabletDevice } from "./deviceFormFactor"
 import { openMessengerDial } from "./messengerBus"
 import { openMessagingAppWithSession } from "./messagingHandoff"
 
@@ -17,6 +18,7 @@ export type CallFromMessengerOpts = {
 function shouldUseMessagingApp(preferMessagingApp?: boolean): boolean {
   if (isNativeApp()) return true
   if (preferMessagingApp) return true
+  if (isTabletDevice()) return true
   return false
 }
 

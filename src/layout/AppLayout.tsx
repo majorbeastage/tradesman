@@ -5,6 +5,7 @@ import mytIcon from "../assets/MyT.png"
 import { useAuth } from "../contexts/AuthContext"
 import { useView } from "../contexts/ViewContext"
 import { useIsMobile } from "../hooks/useIsMobile"
+import { isTabletDevice } from "../lib/deviceFormFactor"
 import { useLocale } from "../i18n/LocaleContext"
 import { supabase } from "../lib/supabase"
 import { fetchUserPublicTwilioNumber } from "../lib/userPublicBusinessLine"
@@ -46,6 +47,7 @@ export default function AppLayout({
   const { signOut, profilePhotoUrl, user } = useAuth()
   const { setView } = useView()
   const isMobile = useIsMobile()
+  const hideInAppMessenger = isMobile || isTabletDevice()
   const { t } = useLocale()
   const [headerBusinessName, setHeaderBusinessName] = useState("")
   const [headerPublicLine, setHeaderPublicLine] = useState<string | null>(null)
@@ -249,7 +251,7 @@ export default function AppLayout({
         <CopyrightVersionFooter variant="portal" align={isMobile ? "center" : "left"} style={{ paddingLeft: isMobile ? 12 : 20, paddingRight: isMobile ? 12 : 20 }} />
       </div>
       {!isMobile && !hidePortalChrome && user?.id ? <NotificationCenter userId={user.id} setPage={setPage} /> : null}
-      {!isMobile && !hidePortalChrome && user?.id ? <MessengerWidget setPage={setPage} /> : null}
+      {!hideInAppMessenger && !hidePortalChrome && user?.id ? <MessengerWidget setPage={setPage} /> : null}
     </div>
   )
 }

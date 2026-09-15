@@ -41,7 +41,7 @@
  * **2.3.8** — Common login: main app single-device soft takeover (call-safe); Messaging up to 3 devices + stay-signed-in preference. Requires user-app-sessions.sql. Android versionCode 29.
  * **2.3.16** — App Store review: iOS camera/mic/photo privacy strings, no background location, in-app account deletion, iPad media capture fallbacks.
  * **2.3.17** — Customers Full profile opens the full profile page; large-shop customer load timeout fallback; website mobile/desktop layouts; auto-attendant WAV + editable opening line.
- * **2.3.19** — App Store: photo library only on iOS (no Take Photo crash), strip background location from Info.plist at archive, iOS app is sign-in only (no in-app registration).
+ * **2.3.20** — Hide in-app messenger on tablets (standalone Messaging app). My T profile/logo picker: Take Photo or Photo Library on iOS.
  *
  * @see CopyrightVersionFooter
  */
