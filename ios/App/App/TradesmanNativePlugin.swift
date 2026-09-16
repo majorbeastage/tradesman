@@ -24,6 +24,18 @@ public class TradesmanNativePlugin: CAPPlugin, CAPBridgedPlugin, UIImagePickerCo
 
     private var imageCall: CAPPluginCall?
 
+    private func hostController() -> UIViewController? {
+        let windows = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+        let window = windows.first(where: { $0.isKeyWindow }) ?? windows.first
+        var vc = window?.rootViewController ?? self.bridge?.viewController
+        while let presented = vc?.presentedViewController {
+            vc = presented
+        }
+        return vc
+    }
+
     @objc func getFcmAvailability(_ call: CAPPluginCall) {
         call.resolve(["available": true])
     }
@@ -110,12 +122,13 @@ public class TradesmanNativePlugin: CAPPlugin, CAPBridgedPlugin, UIImagePickerCo
     }
 
     private func beginPickImage(_ call: CAPPluginCall, source: String) {
-        guard let vc = self.bridge?.viewController else {
-            call.reject("Camera is unavailable right now.")
-            return
-        }
         if imageCall != nil {
-            call.reject("A photo picker is already open.")
+            let stale = imageCall
+            imageCall = nil
+            stale?.resolve(["cancelled": true])
+        }
+        guard let vc = self.hostController() else {
+            call.reject("Camera is unavailable right now.")
             return
         }
         imageCall = call
@@ -132,8 +145,24 @@ public class TradesmanNativePlugin: CAPPlugin, CAPBridgedPlugin, UIImagePickerCo
         presentPickSourceSheet(from: vc)
     }
 
+    private func presentOnHost(_ viewController: UIViewController) {
+        guard let host = hostController() else {
+            finishImagePick(["cancelled": false, "error": "Could not open the camera or photo library."])
+            return
+        }
+        let show = {
+            host.present(viewController, animated: true, completion: nil)
+        }
+        if let already = host.presentedViewController {
+            already.dismiss(animated: false, completion: show)
+        } else {
+            show()
+        }
+    }
+
     private func presentPickSourceSheet(from vc: UIViewController) {
-        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
+        let style: UIAlertController.Style = UIDevice.current.userInterfaceIdiom == .pad ? .alert : .actionSheet
+        let sheet = UIAlertController(title: "Add a photo", message: nil, preferredStyle: style)
         if UIImagePickerController.isSourceTypeAvailable(.camera) {
             sheet.addAction(UIAlertAction(title: "Take Photo", style: .default) { _ in
                 self.presentCamera(from: vc)
@@ -146,7 +175,7 @@ public class TradesmanNativePlugin: CAPPlugin, CAPBridgedPlugin, UIImagePickerCo
             self.finishImagePick(["cancelled": true])
         })
         configurePopover(sheet, from: vc)
-        vc.present(sheet, animated: true)
+        presentOnHost(sheet)
     }
 
     private func hasCameraUsageDescription() -> Bool {
@@ -169,10 +198,8 @@ public class TradesmanNativePlugin: CAPPlugin, CAPBridgedPlugin, UIImagePickerCo
                 picker.sourceType = .camera
                 picker.allowsEditing = false
                 picker.delegate = self
-                // Full screen avoids the iPad popover crash (nil sourceView on WKWebView file inputs).
                 picker.modalPresentationStyle = .fullScreen
-                self.configurePopover(picker, from: vc)
-                vc.present(picker, animated: true)
+                self.presentOnHost(picker)
             }
         }
         if status == .authorized {
@@ -198,9 +225,8 @@ public class TradesmanNativePlugin: CAPPlugin, CAPBridgedPlugin, UIImagePickerCo
         config.selectionLimit = 1
         let picker = PHPickerViewController(configuration: config)
         picker.delegate = self
-        picker.modalPresentationStyle = UIDevice.current.userInterfaceIdiom == .pad ? .formSheet : .pageSheet
-        picker.preferredContentSize = CGSize(width: 700, height: 720)
-        vc.present(picker, animated: true)
+        picker.modalPresentationStyle = .fullScreen
+        presentOnHost(picker)
     }
 
     private func configurePopover(_ presented: UIViewController, from host: UIViewController) {
