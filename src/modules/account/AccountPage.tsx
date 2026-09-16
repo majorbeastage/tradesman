@@ -57,8 +57,6 @@ import {
   audioExtensionForMime,
   createAudioMediaRecorder,
 } from "../../lib/mediaRecorderMime"
-import { pickImageFile, shouldUseNativeImagePick } from "../../lib/nativeImagePick"
-
 type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun"
 
 type BusinessHour = {
@@ -393,7 +391,6 @@ export function AccountProfilePanel({
   const [publishedWebSlug, setPublishedWebSlug] = useState<string | null>(null)
   const [publicBusinessLine, setPublicBusinessLine] = useState<string | null>(null)
   const [uploadingProfilePhoto, setUploadingProfilePhoto] = useState(false)
-  const [iosImageTarget, setIosImageTarget] = useState<null | "profile" | "logo">(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const recordedChunksRef = useRef<Blob[]>([])
@@ -597,30 +594,6 @@ export function AccountProfilePanel({
     await uploadProfilePhotoFile(file)
   }
 
-  async function applyIosPickedImage(target: "profile" | "logo", source: "camera" | "photos") {
-    setIosImageTarget(null)
-    const picked = await pickImageFile(source)
-    if (!picked.ok) {
-      if (!picked.cancelled) {
-        setError(picked.message)
-        window.alert(picked.message)
-      }
-      return
-    }
-    if (target === "logo") await uploadCompanyLogoFile(picked.file)
-    else await uploadProfilePhotoFile(picked.file)
-  }
-
-  async function handleProfilePhotoButton() {
-    if (uploadingProfilePhoto) return
-    if (shouldUseNativeImagePick()) {
-      setError("")
-      setIosImageTarget("profile")
-      return
-    }
-    profilePhotoInputRef.current?.click()
-  }
-
   async function uploadCompanyLogoFile(file: File) {
     if (!supabase || !profileUserId || profileUserId !== user?.id) return
     if (!file.type.startsWith("image/") && file.type !== "") {
@@ -675,16 +648,6 @@ export function AccountProfilePanel({
     e.target.value = ""
     if (!file) return
     await uploadCompanyLogoFile(file)
-  }
-
-  async function handleCompanyLogoButton() {
-    if (uploadingCompanyLogo) return
-    if (shouldUseNativeImagePick()) {
-      setError("")
-      setIosImageTarget("logo")
-      return
-    }
-    companyLogoInputRef.current?.click()
   }
 
   async function persistUiLanguage(next: "en" | "es") {
@@ -979,12 +942,28 @@ export function AccountProfilePanel({
               {!adminContext && user?.id === profileUserId ? (
                 <div style={{ display: "grid", gap: 12, marginBottom: 4 }}>
                   <div style={{ display: "flex", alignItems: "flex-start", gap: 14, flexWrap: "wrap", justifyContent: "space-between" }}>
-                    <div style={{ display: "flex", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", gap: 12, alignItems: "flex-start", flexWrap: "wrap", position: "relative" }}>
+                      <input
+                        id="account-profile-photo-input"
+                        ref={profilePhotoInputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={(ev) => void handleProfilePhotoChange(ev)}
+                        disabled={uploadingProfilePhoto}
+                        style={{ position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden" }}
+                      />
+                      <input
+                        id="account-company-logo-input"
+                        ref={companyLogoInputRef}
+                        type="file"
+                        accept="image/*"
+                        onChange={(ev) => void handleCompanyLogoChange(ev)}
+                        disabled={uploadingCompanyLogo}
+                        style={{ position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden" }}
+                      />
                       <div style={{ display: "grid", gap: 6, justifyItems: "center" }}>
-                        <button
-                          type="button"
-                          onClick={() => void handleProfilePhotoButton()}
-                          disabled={uploadingProfilePhoto}
+                        <label
+                          htmlFor="account-profile-photo-input"
                           aria-label="Take or choose profile photo"
                           style={{
                             width: 72,
@@ -998,6 +977,7 @@ export function AccountProfilePanel({
                             cursor: uploadingProfilePhoto ? "wait" : "pointer",
                             WebkitTapHighlightColor: "rgba(15,23,42,0.12)",
                             touchAction: "manipulation",
+                            pointerEvents: uploadingProfilePhoto ? "none" : "auto",
                           }}
                         >
                           {profilePhotoUrl ? (
@@ -1007,14 +987,12 @@ export function AccountProfilePanel({
                               No photo
                             </div>
                           )}
-                        </button>
+                        </label>
                         <span style={{ fontSize: 10, fontWeight: 700, color: "#64748b" }}>Profile photo</span>
                       </div>
                       <div style={{ display: "grid", gap: 6, justifyItems: "center" }}>
-                        <button
-                          type="button"
-                          onClick={() => void handleCompanyLogoButton()}
-                          disabled={uploadingCompanyLogo}
+                        <label
+                          htmlFor="account-company-logo-input"
                           aria-label="Take or choose company logo"
                           style={{
                             width: 88,
@@ -1028,6 +1006,7 @@ export function AccountProfilePanel({
                             cursor: uploadingCompanyLogo ? "wait" : "pointer",
                             WebkitTapHighlightColor: "rgba(15,23,42,0.12)",
                             touchAction: "manipulation",
+                            pointerEvents: uploadingCompanyLogo ? "none" : "auto",
                           }}
                         >
                           {companyLogoUrl ? (
@@ -1037,7 +1016,7 @@ export function AccountProfilePanel({
                               Company logo
                             </div>
                           )}
-                        </button>
+                        </label>
                         <span style={{ fontSize: 10, fontWeight: 700, color: "#64748b" }}>Company logo</span>
                       </div>
                     </div>
@@ -1058,10 +1037,8 @@ export function AccountProfilePanel({
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
                       <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Profile photo</span>
-                      <button
-                        type="button"
-                        onClick={() => void handleProfilePhotoButton()}
-                        disabled={uploadingProfilePhoto}
+                      <label
+                        htmlFor="account-profile-photo-input"
                         style={{
                           width: "fit-content",
                           minHeight: 44,
@@ -1075,25 +1052,18 @@ export function AccountProfilePanel({
                           cursor: uploadingProfilePhoto ? "wait" : "pointer",
                           WebkitTapHighlightColor: "rgba(15,23,42,0.12)",
                           touchAction: "manipulation",
+                          pointerEvents: uploadingProfilePhoto ? "none" : "auto",
+                          display: "inline-flex",
+                          alignItems: "center",
                         }}
                       >
                         {uploadingProfilePhoto ? "Uploading…" : "Take or choose profile photo"}
-                      </button>
-                      <input
-                        ref={profilePhotoInputRef}
-                        type="file"
-                        accept="image/png,image/jpeg,image/webp"
-                        onChange={(ev) => void handleProfilePhotoChange(ev)}
-                        disabled={uploadingProfilePhoto}
-                        style={{ display: "none" }}
-                      />
+                      </label>
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
                       <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>Company logo</span>
-                      <button
-                        type="button"
-                        onClick={() => void handleCompanyLogoButton()}
-                        disabled={uploadingCompanyLogo}
+                      <label
+                        htmlFor="account-company-logo-input"
                         style={{
                           width: "fit-content",
                           minHeight: 44,
@@ -1107,18 +1077,13 @@ export function AccountProfilePanel({
                           cursor: uploadingCompanyLogo ? "wait" : "pointer",
                           WebkitTapHighlightColor: "rgba(15,23,42,0.12)",
                           touchAction: "manipulation",
+                          pointerEvents: uploadingCompanyLogo ? "none" : "auto",
+                          display: "inline-flex",
+                          alignItems: "center",
                         }}
                       >
                         {uploadingCompanyLogo ? "Uploading…" : "Take or choose company logo"}
-                      </button>
-                      <input
-                        ref={companyLogoInputRef}
-                        type="file"
-                        accept="image/png,image/jpeg,image/webp"
-                        onChange={(ev) => void handleCompanyLogoChange(ev)}
-                        disabled={uploadingCompanyLogo}
-                        style={{ display: "none" }}
-                      />
+                      </label>
                     </div>
                   </div>
                   {showAccountSection("delete_account") ? (
@@ -1991,88 +1956,6 @@ export function AccountProfilePanel({
             </div>
           </div>
         )}
-      {iosImageTarget ? (
-        <div
-          role="presentation"
-          onClick={() => setIosImageTarget(null)}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(15,23,42,0.45)",
-            zIndex: 12000,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 24,
-          }}
-        >
-          <div
-            role="dialog"
-            aria-label={iosImageTarget === "logo" ? "Company logo" : "Profile photo"}
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: "min(420px, 100%)",
-              background: "#fff",
-              borderRadius: 12,
-              padding: 20,
-              display: "grid",
-              gap: 10,
-              boxShadow: "0 16px 40px rgba(15,23,42,0.25)",
-            }}
-          >
-            <strong style={{ fontSize: 16, color: theme.text }}>
-              {iosImageTarget === "logo" ? "Company logo" : "Profile photo"}
-            </strong>
-            <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.45 }}>
-              Take a new picture or choose one you already have.
-            </p>
-            <button
-              type="button"
-              onClick={() => void applyIosPickedImage(iosImageTarget, "camera")}
-              style={{
-                padding: "12px 14px",
-                borderRadius: 8,
-                border: "none",
-                background: theme.primary,
-                color: "#fff",
-                fontWeight: 800,
-                cursor: "pointer",
-              }}
-            >
-              Take Photo
-            </button>
-            <button
-              type="button"
-              onClick={() => void applyIosPickedImage(iosImageTarget, "photos")}
-              style={{
-                padding: "12px 14px",
-                borderRadius: 8,
-                border: `1px solid ${theme.border}`,
-                background: "#fff",
-                color: theme.text,
-                fontWeight: 700,
-                cursor: "pointer",
-              }}
-            >
-              Photo Library
-            </button>
-            <button
-              type="button"
-              onClick={() => setIosImageTarget(null)}
-              style={{
-                padding: "10px 14px",
-                border: "none",
-                background: "transparent",
-                color: "#64748b",
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      ) : null}
     </div>
   )
 }
