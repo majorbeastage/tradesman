@@ -27,6 +27,58 @@ export async function fetchImageBytesForQuotePdf(url: string): Promise<{ bytes: 
   }
 }
 
+function u8ToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const buf = new ArrayBuffer(bytes.byteLength)
+  new Uint8Array(buf).set(bytes)
+  return buf
+}
+
+/**
+ * Downscale/re-encode photos before pdf-lib embed. Phone JPEGs are often several MB;
+ * they are only drawn ~220pt tall, so embedding originals blows past email size limits.
+ * No-ops in Node or if the browser cannot rasterize.
+ */
+export async function compressRasterForPdfEmbed(
+  bytes: Uint8Array,
+  kind: "png" | "jpeg",
+  maxEdgePx: number,
+): Promise<{ bytes: Uint8Array; kind: "png" | "jpeg" }> {
+  if (!bytes.length) return { bytes, kind }
+  if (typeof document === "undefined" || typeof createImageBitmap !== "function") return { bytes, kind }
+  const alreadySmallJpeg = kind === "jpeg" && bytes.length <= 160_000
+  if (alreadySmallJpeg) return { bytes, kind }
+  try {
+    const blob = new Blob([u8ToArrayBuffer(bytes)], { type: kind === "png" ? "image/png" : "image/jpeg" })
+    const bitmap = await createImageBitmap(blob)
+    const scale = Math.min(1, maxEdgePx / Math.max(bitmap.width, bitmap.height, 1))
+    const w = Math.max(1, Math.round(bitmap.width * scale))
+    const h = Math.max(1, Math.round(bitmap.height * scale))
+    if (scale >= 1 && kind === "jpeg" && bytes.length <= 400_000) {
+      bitmap.close()
+      return { bytes, kind }
+    }
+    const canvas = document.createElement("canvas")
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext("2d")
+    if (!ctx) {
+      bitmap.close()
+      return { bytes, kind }
+    }
+    ctx.imageSmoothingEnabled = true
+    ctx.imageSmoothingQuality = "high"
+    ctx.drawImage(bitmap, 0, 0, w, h)
+    bitmap.close()
+    const outBlob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.72))
+    if (!outBlob || outBlob.size < 32) return { bytes, kind }
+    const out = new Uint8Array(await outBlob.arrayBuffer())
+    if (kind === "jpeg" && out.length >= bytes.length) return { bytes, kind }
+    return { bytes: out, kind: "jpeg" }
+  } catch {
+    return { bytes, kind }
+  }
+}
+
 /** Break a paragraph into lines that fit within maxWidth (points), using PDF font metrics. */
 function wrapParagraphToLines(text: string, font: PDFFont, maxWidth: number, size: number): string[] {
   const trimmed = text.trim()
@@ -169,8 +221,9 @@ export async function buildQuotePdfBytes(params: {
 
   if (params.logo?.bytes?.length) {
     try {
+      const logoImg = await compressRasterForPdfEmbed(params.logo.bytes, params.logo.kind, 900)
       const embedded =
-        params.logo.kind === "png" ? await doc.embedPng(params.logo.bytes) : await doc.embedJpg(params.logo.bytes)
+        logoImg.kind === "png" ? await doc.embedPng(logoImg.bytes) : await doc.embedJpg(logoImg.bytes)
       const maxW = 220
       const maxH = 72
       const scale = Math.min(maxW / embedded.width, maxH / embedded.height, 1)
@@ -259,8 +312,9 @@ export async function buildQuotePdfBytes(params: {
       const fetched = await fetchImageBytesForQuotePdf(att.publicUrl.trim())
       if (fetched) {
         try {
+          const photo = await compressRasterForPdfEmbed(fetched.bytes, fetched.kind, 1400)
           const embedded =
-            fetched.kind === "png" ? await doc.embedPng(fetched.bytes) : await doc.embedJpg(fetched.bytes)
+            photo.kind === "png" ? await doc.embedPng(photo.bytes) : await doc.embedJpg(photo.bytes)
           const maxImgW = maxTextWidth
           const maxImgH = 220
           const scale = Math.min(maxImgW / embedded.width, maxImgH / embedded.height, 1)

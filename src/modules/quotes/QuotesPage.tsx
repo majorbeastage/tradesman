@@ -4687,12 +4687,23 @@ export default function QuotesPage(_props: QuotesPageProps) {
       if (quoteEmailAttachEntity && copyRows.length > 0) {
         attachmentPublicUrls.push(...copyRows.map((r) => r.public_url))
       }
-      const inlineAttachments =
-        pdfBytes.length <= 2_500_000
-          ? [{ filename: pdfFilename, content: uint8ArrayToBase64(pdfBytes) }]
-          : undefined
-      if (!inlineAttachments) {
-        throw new Error("Estimate PDF is too large to attach by email. Try Download and send manually.")
+      /** Inline base64 must stay under Vercel/Resend body limits (~2.5MB PDF → ~3.3MB JSON). */
+      const EMAIL_INLINE_PDF_MAX_BYTES = 2_500_000
+      let inlineAttachments: { filename: string; content: string }[] | undefined
+      if (pdfBytes.length <= EMAIL_INLINE_PDF_MAX_BYTES) {
+        inlineAttachments = [{ filename: pdfFilename, content: uint8ArrayToBase64(pdfBytes) }]
+      } else {
+        const pdfUrl = await uploadBytesForOutbound(
+          authUserId || userId,
+          pdfBytes,
+          pdfFilename,
+          "estimate-email",
+          "application/pdf",
+        )
+        if (!pdfUrl) {
+          throw new Error("Estimate PDF is too large to attach by email. Try Download and send manually.")
+        }
+        attachmentPublicUrls.unshift(pdfUrl)
       }
       const res = await fetch("/api/outbound-messages?__channel=email", {
         method: "POST",
