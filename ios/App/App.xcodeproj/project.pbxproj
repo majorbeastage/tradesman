@@ -323,7 +323,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				INFOPLIST_FILE = App/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Tradesman uses the camera for in-app video calls. Photos you attach to jobs and your profile come from your photo library.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Tradesman uses the microphone for voice greetings, in-app calls, and optional voice commands.";
@@ -348,7 +348,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				INFOPLIST_FILE = App/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Tradesman uses the camera for in-app video calls. Photos you attach to jobs and your profile come from your photo library.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Tradesman uses the microphone for voice greetings, in-app calls, and optional voice commands.";
