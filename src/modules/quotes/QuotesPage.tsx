@@ -78,6 +78,7 @@ import { appendEmailSignature, loadStoredEmailSignature, saveStoredEmailSignatur
 import {
   buildQuotePdfBytes,
   downloadPdfBlob,
+  EMAIL_INLINE_PDF_MAX_BYTES,
   printPdfBlob,
   uint8ArrayToBase64,
   type QuotePdfCustomerCopyAttachment,
@@ -4687,8 +4688,6 @@ export default function QuotesPage(_props: QuotesPageProps) {
       if (quoteEmailAttachEntity && copyRows.length > 0) {
         attachmentPublicUrls.push(...copyRows.map((r) => r.public_url))
       }
-      /** Inline base64 must stay under Vercel/Resend body limits (~2.5MB PDF → ~3.3MB JSON). */
-      const EMAIL_INLINE_PDF_MAX_BYTES = 2_500_000
       let inlineAttachments: { filename: string; content: string }[] | undefined
       if (pdfBytes.length <= EMAIL_INLINE_PDF_MAX_BYTES) {
         inlineAttachments = [{ filename: pdfFilename, content: uint8ArrayToBase64(pdfBytes) }]

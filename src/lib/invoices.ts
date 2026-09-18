@@ -4,6 +4,7 @@ import { computeQuoteLineTotal, parseQuoteItemMetadata, totalFromQuoteItemRows }
 import { quoteCustomerJobDescriptionFromMetadata } from "./estimateQuoteMetadata"
 import { formatAppError } from "./formatAppError"
 import { loadOwnedCustomerRows } from "./loadOwnedCustomerRows"
+import { loadPurchaseOrdersFromProfile, type PurchaseOrderRecord } from "./purchaseOrders"
 
 export const INVOICES_META_KEY = "invoices_v1"
 
@@ -13,6 +14,8 @@ export type InvoiceLineItem = {
   quantity: number
   unit_price: number
   line_kind?: string
+  /** Set when this row was added from a purchase order. */
+  source_po_id?: string
 }
 
 export type InvoiceAttachment = {
@@ -63,6 +66,7 @@ export type InvoiceQuotePick = {
   customer_id: string | null
   customer_name: string
   title: string
+  estimate_number: string
   total: number
 }
 
@@ -139,6 +143,7 @@ export function parseInvoices(raw: unknown): InvoiceRecord[] {
           quantity: typeof li.quantity === "number" && Number.isFinite(li.quantity) ? li.quantity : Number.parseFloat(String(li.quantity ?? 1)) || 1,
           unit_price: typeof li.unit_price === "number" && Number.isFinite(li.unit_price) ? li.unit_price : Number.parseFloat(String(li.unit_price ?? 0)) || 0,
           line_kind: typeof li.line_kind === "string" ? li.line_kind : undefined,
+          source_po_id: typeof li.source_po_id === "string" ? li.source_po_id : undefined,
         })
       }
     }
@@ -224,6 +229,35 @@ export function invoiceSubtotal(items: InvoiceLineItem[]): number {
   let sum = 0
   for (const li of items) sum += invoiceLineTotal(li)
   return sum
+}
+
+export function invoiceLineFromPurchaseOrder(po: PurchaseOrderRecord): InvoiceLineItem {
+  const num = po.po_number.trim() || "PO"
+  const detail = po.description.trim() || po.vendor_name.trim() || "Purchase order"
+  return {
+    id: crypto.randomUUID(),
+    description: `${num} — ${detail}`,
+    quantity: 1,
+    unit_price: po.total != null && Number.isFinite(po.total) ? po.total : 0,
+    line_kind: "material",
+    source_po_id: po.id,
+  }
+}
+
+export function invoiceHasPurchaseOrderLine(items: InvoiceLineItem[], po: PurchaseOrderRecord): boolean {
+  const num = po.po_number.trim().toLowerCase()
+  return items.some(
+    (li) => li.source_po_id === po.id || (num.length > 0 && li.description.toLowerCase().includes(num)),
+  )
+}
+
+export function mergePurchaseOrderLines(items: InvoiceLineItem[], orders: PurchaseOrderRecord[]): InvoiceLineItem[] {
+  const next = [...items]
+  for (const po of orders) {
+    if (invoiceHasPurchaseOrderLine(next, po)) continue
+    next.push(invoiceLineFromPurchaseOrder(po))
+  }
+  return next
 }
 
 export function defaultInvoiceFormState(): InvoiceFormState {
@@ -348,10 +382,18 @@ export async function loadCustomersForInvoices(client: SupabaseClient, userId: s
   return mapCustomerInvoicePickerRows(owned.rows)
 }
 
+function quoteEstimateNumber(meta: Record<string, unknown>, quoteId: string): string {
+  for (const key of ["estimate_number", "document_number", "quote_number", "number"]) {
+    const raw = meta[key]
+    if (typeof raw === "string" && raw.trim()) return raw.trim()
+  }
+  return `EST-${quoteId.slice(0, 8).toUpperCase()}`
+}
+
 export async function loadQuotesForInvoices(client: SupabaseClient, userId: string, customerId?: string | null): Promise<InvoiceQuotePick[]> {
   let q = client
     .from("quotes")
-    .select("id, customer_id, metadata, customers ( display_name ), quote_items ( description, quantity, unit_price, metadata )")
+    .select("id, customer_id, metadata, customers ( display_name )")
     .eq("user_id", userId)
     .is("removed_at", null)
     .order("updated_at", { ascending: false })
@@ -359,28 +401,44 @@ export async function loadQuotesForInvoices(client: SupabaseClient, userId: stri
   if (customerId?.trim()) q = q.eq("customer_id", customerId.trim())
   const { data, error } = await q
   if (error) throw new Error(formatAppError(error))
+  const quotes = data ?? []
+  const quoteIds = quotes.map((row) => String((row as { id?: string }).id ?? "")).filter(Boolean)
+  const itemsByQuote = new Map<string, { description?: string; quantity?: unknown; unit_price?: unknown; metadata?: unknown }[]>()
+  if (quoteIds.length > 0) {
+    const { data: items } = await client
+      .from("quote_items")
+      .select("quote_id, description, quantity, unit_price, metadata")
+      .in("quote_id", quoteIds)
+    for (const row of items ?? []) {
+      const qid = String((row as { quote_id?: string }).quote_id ?? "")
+      if (!qid) continue
+      const list = itemsByQuote.get(qid) ?? []
+      list.push(row)
+      itemsByQuote.set(qid, list)
+    }
+  }
   const out: InvoiceQuotePick[] = []
-  for (const row of data ?? []) {
+  for (const row of quotes) {
     const r = row as {
       id: string
       customer_id?: string | null
       metadata?: unknown
       customers?: { display_name?: string | null } | { display_name?: string | null }[] | null
-      quote_items?: { description?: string; quantity?: unknown; unit_price?: unknown; metadata?: unknown }[] | null
     }
     const cust = Array.isArray(r.customers) ? r.customers[0] : r.customers
     const meta = isRecord(r.metadata) ? r.metadata : {}
     const title =
       (typeof meta.job_title === "string" && meta.job_title.trim()) ||
       (typeof meta.title === "string" && meta.title.trim()) ||
-      "Estimate"
-    const total = totalFromQuoteItemRows(r.quote_items ?? [])
+      ""
+    const id = String(r.id)
     out.push({
-      id: String(r.id),
+      id,
       customer_id: r.customer_id ?? null,
       customer_name: String(cust?.display_name ?? "").trim() || "Customer",
       title,
-      total,
+      estimate_number: quoteEstimateNumber(meta, id),
+      total: totalFromQuoteItemRows(itemsByQuote.get(id) ?? []),
     })
   }
   return out
@@ -395,7 +453,7 @@ function mapQuoteAttachments(rows: EntityAttachmentRow[]): InvoiceAttachment[] {
       storage_path: row.storage_path,
       file_name: row.file_name ?? null,
       content_type: row.content_type ?? null,
-      attach_to_customer_copy: parsed.attachToCustomerCopy,
+      attach_to_customer_copy: parsed.attachToCustomerCopy !== false,
       include_note: parsed.includeNote,
       note: parsed.note,
     }
@@ -407,6 +465,7 @@ export async function buildInvoiceFormFromQuote(
   userId: string,
   quoteId: string,
   base?: InvoiceFormState,
+  opts?: { includePurchaseOrders?: boolean },
 ): Promise<InvoiceFormState> {
   const form = base ? { ...base } : defaultInvoiceFormState()
   const { data, error } = await client
@@ -414,7 +473,6 @@ export async function buildInvoiceFormFromQuote(
     .select(
       "id, customer_id, metadata, customers ( display_name, customer_identifiers ( type, value ), service_address ) , quote_items ( id, description, quantity, unit_price, metadata )",
     )
-    .eq("user_id", userId)
     .eq("id", quoteId)
     .maybeSingle()
   if (error) throw error
@@ -467,7 +525,12 @@ export async function buildInvoiceFormFromQuote(
   form.jobTitle = title
   form.notes = jobDesc || form.notes
   form.lineItems = lineItems.length > 0 ? lineItems : form.lineItems
-  if (quoteAttachments.length > 0) form.attachments = mapQuoteAttachments(quoteAttachments)
+  form.attachments = mapQuoteAttachments(quoteAttachments)
+  if (opts?.includePurchaseOrders) {
+    const orders = await loadPurchaseOrdersFromProfile(client, userId)
+    const linked = orders.filter((o) => o.quote_id === quoteId)
+    form.lineItems = mergePurchaseOrderLines(form.lineItems, linked)
+  }
   return form
 }
 

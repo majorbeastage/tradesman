@@ -100,7 +100,11 @@ async function paymentApiFetch<T>(
         body: JSON.stringify(withSupabasePublicCredentials(payload)),
       })
       const data = (await res.json().catch(() => ({}))) as T & { error?: string }
-      if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`)
+      if (!res.ok) {
+        const err = (data as { error?: string; message?: string }).error
+        const msg = (data as { error?: string; message?: string }).message
+        throw new Error(err || msg || `Payment link failed (HTTP ${res.status}).`)
+      }
       return data
     } catch (e) {
       lastErr = e instanceof Error ? e.message : String(e)

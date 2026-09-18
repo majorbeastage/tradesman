@@ -12,6 +12,9 @@ export type QuotePdfCustomerCopyAttachment = {
   description: string
 }
 
+/** Inline base64 must stay under Vercel/Resend body limits (~2.5MB PDF → ~3.3MB JSON). */
+export const EMAIL_INLINE_PDF_MAX_BYTES = 2_500_000
+
 /** Fetch PNG/JPEG bytes for embedding in PDF/DOCX (browser or Node). WebP and others return null. */
 export async function fetchImageBytesForQuotePdf(url: string): Promise<{ bytes: Uint8Array; kind: "png" | "jpeg" } | null> {
   try {
