@@ -1283,8 +1283,9 @@ function App() {
           onGoToSignup={() => {
             if (isIosNativeApp()) return
             setSignupPackagePreset(null)
-            setView("signup")
             setLoginError("")
+            endLoginFlow(loginIntentRef)
+            window.location.assign("/signup")
           }}
         />
       </>
