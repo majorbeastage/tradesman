@@ -105,7 +105,7 @@ import {
   stripLoginRouteHash,
   stripAppNavHashFromLocation,
 } from "./lib/loginRouting"
-import { isIosNativeApp, openInSystemBrowser, publicSiteUrl } from "./lib/publicSite"
+import { isIosNativeApp } from "./lib/publicSite"
 
 type View = "home" | "login" | "admin-login" | "demo" | "training" | "signup" | "about" | "pricing" | "app" | "office" | "admin"
 
@@ -169,6 +169,8 @@ function readInitialAppView(): View {
   if (hasAppNavDeepLink(hash)) return "home"
   if (isAdminLoginRouteHash(hash)) return "admin-login"
   if (isContractorLoginRouteHash(hash)) return "login"
+  // App Store binary is sign-in only. Marketing / pricing / signup stay on the website.
+  if (isIosNativeApp()) return "login"
   return "home"
 }
 
@@ -218,8 +220,9 @@ function IosBusinessSignInOnly({ onLogin }: { onLogin: () => void }) {
       <div style={{ maxWidth: 440, display: "grid", gap: 14 }}>
         <h1 style={{ margin: 0, fontSize: 28, color: "#0f172a" }}>Tradesman</h1>
         <p style={{ margin: 0, fontSize: 15, lineHeight: 1.55, color: "#475569" }}>
-          This App Store app is sign-in only for people at contracting businesses that already have a Tradesman
-          workspace. New business accounts are created on the website, not in this app.
+          This App Store app is only for people at a contracting organization that already has Tradesman — owners,
+          office staff, and field employees with a seat. It is not sold to consumers or families, and you cannot buy
+          a plan in this app.
         </p>
         <button
           type="button"
@@ -235,21 +238,6 @@ function IosBusinessSignInOnly({ onLogin }: { onLogin: () => void }) {
           }}
         >
           Sign in
-        </button>
-        <button
-          type="button"
-          onClick={() => void openInSystemBrowser(publicSiteUrl("/"))}
-          style={{
-            padding: "10px 16px",
-            borderRadius: 10,
-            border: "1px solid #cbd5e1",
-            background: "#fff",
-            color: "#0f172a",
-            fontWeight: 700,
-            cursor: "pointer",
-          }}
-        >
-          Open tradesman-us.com
         </button>
       </div>
     </div>
@@ -1167,24 +1155,31 @@ function App() {
   }, [refetchProfile])
 
   if (view === "home") {
-    const ios = isIosNativeApp()
+    if (isIosNativeApp()) {
+      return (
+        <LoginPage
+          isAdminLogin={false}
+          onSuccess={handleLoginSuccess}
+          onBack={() => {
+            beginContractorLogin(loginIntentRef)
+            setView("login")
+            setLoginError("")
+          }}
+          onGoToSignup={() => undefined}
+        />
+      )
+    }
     return (
       <MarketingHomePage
         onLogin={() => { beginContractorLogin(loginIntentRef); setView("login"); setLoginError("") }}
-        onSignup={ios ? undefined : () => {
+        onSignup={() => {
           window.location.href = "/signup"
         }}
-        onTrial={ios ? undefined : () => {
+        onTrial={() => {
           window.location.href = "/trial"
         }}
         onAboutUs={() => setView("about")}
-        onPricing={
-          ios
-            ? () => {
-                void openInSystemBrowser(publicSiteUrl("/pricing"))
-              }
-            : () => setView("pricing")
-        }
+        onPricing={() => setView("pricing")}
       />
     )
   }
@@ -1286,10 +1281,7 @@ function App() {
             setLoginError("")
           }}
           onGoToSignup={() => {
-            if (isIosNativeApp()) {
-              void openInSystemBrowser(publicSiteUrl("/"))
-              return
-            }
+            if (isIosNativeApp()) return
             setSignupPackagePreset(null)
             setView("signup")
             setLoginError("")

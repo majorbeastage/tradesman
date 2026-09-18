@@ -43,7 +43,7 @@ import {
   type CustomerPaymentCollectionsRow,
 } from "../../lib/customerPaymentCollections"
 import PaymentRequestsWorkspace from "./PaymentRequestsWorkspace"
-import { isIosNativeApp, openInSystemBrowser, publicSiteUrl } from "../../lib/publicSite"
+import { isIosNativeApp } from "../../lib/publicSite"
 
 /** Must use `import.meta.env.VITE_*` directly so Vite inlines values at build time (cast/indirect access is left empty in production). */
 const ENV_PORTAL = String(import.meta.env.VITE_HELCIM_PAYMENT_PORTAL_URL ?? "").trim()
@@ -648,26 +648,10 @@ export default function PaymentsPage() {
           }}
         >
           <strong style={{ display: "block", fontSize: 14, color: theme.text }}>Pay your Tradesman bill on the website</strong>
-          <p style={{ margin: "8px 0 12px", fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
-            Tradesman subscriptions are billed to contracting businesses on our website. On iPhone and iPad, payment opens
-            in Safari — it is not collected inside this App Store app.
+          <p style={{ margin: "8px 0 0", fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
+            Tradesman is billed to the contracting business that owns this workspace. Subscription payment is not
+            collected in the App Store app and is not offered to consumers or families here.
           </p>
-          <button
-            type="button"
-            onClick={() => void openInSystemBrowser(publicSiteUrl("/pricing"))}
-            style={{
-              padding: "10px 16px",
-              borderRadius: 8,
-              border: "none",
-              background: theme.primary,
-              color: "#fff",
-              fontWeight: 800,
-              fontSize: 14,
-              cursor: "pointer",
-            }}
-          >
-            Open billing in Safari
-          </button>
         </div>
       ) : null}
 

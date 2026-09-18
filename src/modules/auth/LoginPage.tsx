@@ -13,7 +13,7 @@ import { useLocale } from "../../i18n/LocaleContext"
 import { PasswordFieldWithReveal } from "../../components/PasswordFieldWithReveal"
 import { PublicLegalNav } from "../public/PublicLegalNav"
 import { withTimeout } from "../../lib/promiseTimeout"
-import { isIosNativeApp, openInSystemBrowser, publicSiteUrl } from "../../lib/publicSite"
+import { isIosNativeApp } from "../../lib/publicSite"
 
 const SIGN_IN_TIMEOUT_MS = 18_000
 const OUTAGE_MSG =
@@ -361,15 +361,8 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
                 </button>
               ) : isIosNativeApp() ? (
                 <span style={{ display: "block", fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
-                  This app is sign-in only for existing contracting-business accounts. New business accounts are created
-                  on the website, not in the App Store app.{" "}
-                  <button
-                    type="button"
-                    onClick={() => void openInSystemBrowser(publicSiteUrl("/"))}
-                    style={{ background: "none", border: "none", color: theme.primary, cursor: "pointer", fontWeight: 600, padding: 0 }}
-                  >
-                    Open tradesman-us.com
-                  </button>
+                  This app is only for people at a contracting organization that already has Tradesman. It is not for
+                  consumers or families, and you cannot create or buy an account here.
                 </span>
               ) : (
                 <>

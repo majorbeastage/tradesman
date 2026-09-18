@@ -27,7 +27,7 @@ import {
 import { BILLING_PROMO_CODES_KEY, SIGNUP_PROMO_CODE_STORAGE_KEY, type BillingPromoCodesStore } from "../../types/billing-promo-codes"
 import type { BillingPromoCode } from "../../types/billing-promo-codes"
 import { SignupHelcimPaymentStep } from "../../components/SignupHelcimPaymentStep"
-import { isIosNativeApp, openInSystemBrowser, publicSiteUrl } from "../../lib/publicSite"
+import { isIosNativeApp } from "../../lib/publicSite"
 import SignupProductAdvisorPanel from "../../components/SignupProductAdvisorPanel"
 import SignupSupportCallout from "../../components/SignupSupportCallout"
 import type { HelcimJsReturnMessage } from "../../lib/helcimJsReturnMessage"
@@ -1225,49 +1225,12 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
                 }}
               >
                 <p style={{ margin: "0 0 10px", fontWeight: 800, fontSize: 15, color: theme.text }}>
-                  Complete business checkout in Safari
+                  Not available in the App Store app
                 </p>
-                <p style={{ margin: "0 0 12px", fontSize: 14, color: theme.text, lineHeight: 1.55 }}>
-                  Tradesman plans are sold to contracting businesses on our website. On iPhone and iPad, payment opens in
-                  the default browser. You can create a login here and finish billing on the web, or complete both steps
-                  in Safari.
+                <p style={{ margin: 0, fontSize: 14, color: theme.text, lineHeight: 1.55 }}>
+                  Tradesman is provided to contracting organizations and their employees. You cannot create or purchase
+                  an account in this app. Sign in with the seat your organization already issued.
                 </p>
-                <button
-                  type="button"
-                  onClick={() => void openInSystemBrowser(publicSiteUrl("/signup"))}
-                  style={{
-                    padding: "12px 16px",
-                    borderRadius: 10,
-                    border: "none",
-                    background: theme.primary,
-                    color: "#fff",
-                    fontWeight: 800,
-                    fontSize: 14,
-                    cursor: "pointer",
-                  }}
-                >
-                  Open signup payment in Safari
-                </button>
-                <p style={{ margin: "12px 0 0", fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
-                  Or create the login now and pay later on the website.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => void handleSkipPaymentAndCreate()}
-                  style={{
-                    marginTop: 8,
-                    padding: "10px 14px",
-                    borderRadius: 8,
-                    border: `1px solid ${theme.border}`,
-                    background: "#fff",
-                    color: theme.text,
-                    fontWeight: 700,
-                    fontSize: 13,
-                    cursor: "pointer",
-                  }}
-                >
-                  Create account without paying here
-                </button>
               </div>
             ) : (
               <SignupHelcimPaymentStep
