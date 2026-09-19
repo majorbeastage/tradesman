@@ -109,13 +109,16 @@ export default function MessengerScreen({ me }: { me: string }) {
   const [missedCalls, setMissedCalls] = useState<MissedCallRow[]>([])
   const [missedFocus, setMissedFocus] = useState(false)
 
-  // Prefill Phone tab when Main app hands off a customer number.
+  // Prefill Phone tab when Main app or Android tel: / PhoneAccount hands off a number.
   useEffect(() => {
     function applyDial(d: PendingDial) {
       setTab("phone")
       setDialNumber(d.phone)
       setDialSelectedName(d.label ?? null)
       setDialCustQuery(d.label ?? "")
+      if (d.autoStart && voice.callState === "idle") {
+        void voice.placePhoneCall(d.phone, d.label)
+      }
     }
     const existing = takePendingDial()
     if (existing) applyDial(existing)
@@ -123,12 +126,12 @@ export default function MessengerScreen({ me }: { me: string }) {
       const d = (e as CustomEvent<PendingDial>).detail
       if (d?.phone?.trim()) {
         takePendingDial()
-        applyDial({ phone: d.phone.trim(), label: d.label?.trim() || undefined })
+        applyDial({ phone: d.phone.trim(), label: d.label?.trim() || undefined, autoStart: Boolean(d.autoStart) })
       }
     }
     window.addEventListener(PENDING_DIAL_EVENT, handler)
     return () => window.removeEventListener(PENDING_DIAL_EVENT, handler)
-  }, [])
+  }, [voice.placePhoneCall, voice.callState])
 
   // Calendar
   const [calEvents, setCalEvents] = useState<MobileCalendarEvent[]>([])

@@ -3,6 +3,8 @@ import { Capacitor } from "@capacitor/core"
 import { supabase } from "./supabaseClient"
 import { setVoiceTrafficInCall } from "./voiceTrafficGuard"
 import { setAppSessionInCall } from "./appSessions"
+import { prepareCallAudio, resetCallAudioRoute, setCallSpeakerOn } from "./nativeCallAudio"
+import { startCallRingtone, stopCallRingtone } from "./callRingtone"
 import type { Call, Device } from "@twilio/voice-sdk"
 
 /**
@@ -26,41 +28,6 @@ export function toE164(raw: string): string | null {
   if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`
   if (raw.trim().startsWith("+") && digits.length >= 10) return `+${digits}`
   return null
-}
-
-async function setCallSpeakerOn(on: boolean): Promise<void> {
-  if (!Capacitor.isNativePlatform()) return
-  try {
-    const { MessagingNative } = await import("../plugins/messaging-native")
-    await MessagingNative.setSpeakerOn({ enabled: on })
-    window.setTimeout(() => {
-      void MessagingNative.setSpeakerOn({ enabled: on }).catch(() => undefined)
-    }, 250)
-  } catch {
-    /* ignore */
-  }
-}
-
-async function prepareCallAudio(): Promise<void> {
-  if (!Capacitor.isNativePlatform()) return
-  try {
-    const { MessagingNative } = await import("../plugins/messaging-native")
-    if (typeof MessagingNative.prepareCallAudio === "function") {
-      await MessagingNative.prepareCallAudio()
-    }
-  } catch {
-    /* ignore */
-  }
-}
-
-async function resetCallAudioRoute(): Promise<void> {
-  if (!Capacitor.isNativePlatform()) return
-  try {
-    const { MessagingNative } = await import("../plugins/messaging-native")
-    await MessagingNative.resetCallAudio()
-  } catch {
-    /* ignore */
-  }
 }
 
 async function fetchVoiceToken(): Promise<{ token: string | null; error?: string }> {
@@ -102,6 +69,7 @@ export function useVoiceDevice() {
 
   const teardown = useCallback(() => {
     stopTimer()
+    stopCallRingtone()
     try {
       callRef.current?.disconnect()
     } catch {
@@ -159,18 +127,26 @@ export function useVoiceDevice() {
         device.on("error", (e: { message?: string }) => {
           setError(e?.message || "Call error.")
           setCallState("error")
+          stopCallRingtone()
           stopTimer()
         })
-        const call = await device.connect({ params: { To: e164 } })
-        callRef.current = call
         setMuted(false)
-        setSpeakerOn(false)
+        setSpeakerOn(Capacitor.isNativePlatform())
         setSeconds(0)
         setCallState("ringing")
-        void prepareCallAudio()
+        if (Capacitor.isNativePlatform()) {
+          await prepareCallAudio(true)
+          await setCallSpeakerOn(true)
+          startCallRingtone()
+        }
+        const call = await device.connect({ params: { To: e164 } })
+        callRef.current = call
         call.on("accept", () => {
+          stopCallRingtone()
           setCallState("in_call")
-          void prepareCallAudio()
+          setSpeakerOn(false)
+          void prepareCallAudio(false)
+          void setCallSpeakerOn(false)
           stopTimer()
           timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000)
         })
@@ -179,9 +155,11 @@ export function useVoiceDevice() {
         call.on("error", (e: { message?: string }) => {
           setError(e?.message || "Call error.")
           setCallState("error")
+          stopCallRingtone()
           stopTimer()
         })
       } catch (e) {
+        stopCallRingtone()
         setError(e instanceof Error ? e.message : String(e))
         setCallState("error")
       }

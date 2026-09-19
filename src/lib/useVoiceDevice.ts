@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { Capacitor } from "@capacitor/core"
 import { supabase } from "./supabase"
 import { resetCallAudioRoute, setCallSpeakerOn, prepareCallAudio } from "./nativeCallAudio"
+import { startCallRingtone, stopCallRingtone } from "./callRingtone"
 import { setVoiceTrafficInCall } from "./voiceTrafficGuard"
 import { setAppSessionInCall } from "./appSessions"
 import type { Call, Device } from "@twilio/voice-sdk"
@@ -57,6 +58,7 @@ export function useVoiceDevice() {
 
   const teardown = useCallback(() => {
     stopTimer()
+    stopCallRingtone()
     try {
       callRef.current?.disconnect()
     } catch {
@@ -108,18 +110,26 @@ export function useVoiceDevice() {
         device.on("error", (e: { message?: string }) => {
           setError(e?.message || "Call error.")
           setCallState("error")
+          stopCallRingtone()
           stopTimer()
         })
-        const call = await device.connect({ params: { To: e164 } })
-        callRef.current = call
         setMuted(false)
-        setSpeakerOn(false)
+        setSpeakerOn(Capacitor.isNativePlatform())
         setSeconds(0)
         setCallState("ringing")
-        void prepareCallAudio()
+        if (Capacitor.isNativePlatform()) {
+          await prepareCallAudio(true)
+          await setCallSpeakerOn(true)
+          startCallRingtone()
+        }
+        const call = await device.connect({ params: { To: e164 } })
+        callRef.current = call
         call.on("accept", () => {
+          stopCallRingtone()
           setCallState("in_call")
-          void prepareCallAudio()
+          setSpeakerOn(false)
+          void prepareCallAudio(false)
+          void setCallSpeakerOn(false)
           stopTimer()
           timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000)
         })
@@ -128,9 +138,11 @@ export function useVoiceDevice() {
         call.on("error", (e: { message?: string }) => {
           setError(e?.message || "Call error.")
           setCallState("error")
+          stopCallRingtone()
           stopTimer()
         })
       } catch (e) {
+        stopCallRingtone()
         setError(e instanceof Error ? e.message : String(e))
         setCallState("error")
       }

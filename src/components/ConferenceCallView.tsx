@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { theme } from "../styles/theme"
+import {
+  MAX_VISIBLE_DOCKED,
+  MAX_VISIBLE_POPOUT,
+  pickVisibleStageTiles,
+  useSpeakingIds,
+} from "../lib/conferenceVideoStage"
 import type { useConferenceRoom } from "../lib/useConferenceRoom"
 
 type RoomApi = ReturnType<typeof useConferenceRoom>
@@ -46,6 +52,7 @@ function VideoTile({
   fill,
   thumbnail,
   suppressAudio,
+  speaking,
 }: {
   stream: MediaStream | null
   label: string
@@ -56,6 +63,7 @@ function VideoTile({
   thumbnail?: boolean
   /** Video-only tile — remote audio plays via ConferenceCallRemoteAudio in the parent window. */
   suppressAudio?: boolean
+  speaking?: boolean
 }) {
   const ref = useRef<HTMLVideoElement | null>(null)
   useEffect(() => {
@@ -69,11 +77,12 @@ function VideoTile({
       style={{
         ...tile,
         aspectRatio: thumbnail ? "16 / 9" : fill ? undefined : screen ? "16 / 9" : "4 / 3",
+        boxShadow: speaking ? "0 0 0 2px #22c55e, 0 0 12px rgba(34,197,94,0.45)" : undefined,
         ...(thumbnail
-          ? { width: "100%", flexShrink: 0, minHeight: 0, maxHeight: 88 }
+          ? { width: "100%", flexShrink: 0, minHeight: 0, maxHeight: 72 }
           : fill
             ? { minHeight: 0, minWidth: 0, height: "100%", width: "100%" }
-            : null),
+            : { minHeight: 0, minWidth: 0, width: "100%", height: "100%" }),
       }}
     >
       {stream ? (
@@ -307,6 +316,15 @@ export function ConferenceCallBody({
     return rows
   }, [participants, selfStream, selfName, sharingScreen])
 
+  const speakingIds = useSpeakingIds(participants)
+  const speakingSet = useMemo(() => new Set(speakingIds), [speakingIds])
+  const maxVisible = popOut ? MAX_VISIBLE_POPOUT : compact ? 2 : MAX_VISIBLE_DOCKED
+  const visibleTiles = useMemo(
+    () => pickVisibleStageTiles(stageTiles, { max: maxVisible, speakingIds }),
+    [stageTiles, maxVisible, speakingIds],
+  )
+  const hiddenCount = Math.max(0, stageTiles.length - visibleTiles.length)
+
   function toggleChat() {
     if (onToggleChat) onToggleChat()
     else setShowChatLocal((v) => !v)
@@ -364,21 +382,20 @@ export function ConferenceCallBody({
   const stateText =
     state === "ringing" ? "Ringing…" : state === "error" ? "Call error" : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
   const showInlineChat = Boolean(chat) && showChat && !chatPanelExternal
-  const videoTileCount = participants.length + 1
-  const videoGrid = videoGridLayout(videoTileCount)
-  const fitVideoTiles = fillHeight || popOut
   const remoteHasVideo = participants.some((p) => p.stream?.getVideoTracks().some((t) => t.readyState === "live"))
   const showVideoLayout = isVideo || sharingScreen || remoteHasVideo || Boolean(selfStream?.getVideoTracks().some((t) => t.readyState === "live"))
   const remoteScreenSharer = participants.find((p) => streamIsScreenShare(p.stream))
   const anyScreenShare = sharingScreen || Boolean(remoteScreenSharer)
-  const useStageLayout = fitVideoTiles && showVideoLayout
+  const videoGrid = videoGridLayout(visibleTiles.length)
   const suppressRemoteTileAudio = (tileMuted?: boolean) => Boolean(remoteAudioExternal && !tileMuted)
+  const tileSpeaking = (key: string) => speakingSet.has(key)
 
   function renderVideoStage() {
-    if (anyScreenShare && useStageLayout) {
+    if (anyScreenShare) {
       const mainKey = sharingScreen ? "self" : remoteScreenSharer?.id ?? "self"
-      const main = stageTiles.find((t) => t.key === mainKey) ?? stageTiles[0]
-      const thumbs = stageTiles.filter((t) => t.key !== mainKey)
+      const main = visibleTiles.find((t) => t.key === mainKey) ?? visibleTiles[0]
+      const thumbs = visibleTiles.filter((t) => t.key !== mainKey)
+      const thumbCol = popOut || !compact ? 112 : 88
       return (
         <div
           style={{
@@ -392,13 +409,21 @@ export function ConferenceCallBody({
         >
           <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
             {main ? (
-              <VideoTile stream={main.stream} label={main.label} muted={main.muted} screen fill suppressAudio={suppressRemoteTileAudio(main.muted)} />
+              <VideoTile
+                stream={main.stream}
+                label={main.label}
+                muted={main.muted}
+                screen
+                fill
+                speaking={tileSpeaking(main.key)}
+                suppressAudio={suppressRemoteTileAudio(main.muted)}
+              />
             ) : null}
           </div>
           {thumbs.length > 0 ? (
             <div
               style={{
-                width: 108,
+                width: thumbCol,
                 flexShrink: 0,
                 display: "flex",
                 flexDirection: "column",
@@ -409,53 +434,16 @@ export function ConferenceCallBody({
               }}
             >
               {thumbs.map((t) => (
-                <VideoTile key={t.key} stream={t.stream} label={t.label} muted={t.muted} screen={t.screen} thumbnail suppressAudio={suppressRemoteTileAudio(t.muted)} />
-              ))}
-            </div>
-          ) : null}
-        </div>
-      )
-    }
-
-    if (useStageLayout) {
-      return (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: `repeat(${videoGrid.columns}, minmax(0, 1fr))`,
-            gridTemplateRows: `repeat(${videoGrid.rows}, minmax(0, 1fr))`,
-            gap: 6,
-            flex: 1,
-            minHeight: 0,
-            overflow: "hidden",
-            alignContent: "stretch",
-          }}
-        >
-          {stageTiles.map((t) => (
-            <VideoTile key={t.key} stream={t.stream} label={t.label} muted={t.muted} screen={t.screen} fill suppressAudio={suppressRemoteTileAudio(t.muted)} />
-          ))}
-        </div>
-      )
-    }
-
-    if (anyScreenShare) {
-      const mainKey = sharingScreen ? "self" : remoteScreenSharer?.id ?? "self"
-      const main = stageTiles.find((t) => t.key === mainKey) ?? stageTiles[0]
-      const thumbs = stageTiles.filter((t) => t.key !== mainKey)
-      return (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {main ? <VideoTile stream={main.stream} label={main.label} muted={main.muted} screen suppressAudio={suppressRemoteTileAudio(main.muted)} /> : null}
-          {thumbs.length > 0 ? (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: `repeat(${Math.min(thumbs.length, 3)}, minmax(0, 1fr))`,
-                gap: 6,
-                maxHeight: 120,
-              }}
-            >
-              {thumbs.map((t) => (
-                <VideoTile key={t.key} stream={t.stream} label={t.label} muted={t.muted} thumbnail suppressAudio={suppressRemoteTileAudio(t.muted)} />
+                <VideoTile
+                  key={t.key}
+                  stream={t.stream}
+                  label={t.label}
+                  muted={t.muted}
+                  screen={t.screen}
+                  thumbnail
+                  speaking={tileSpeaking(t.key)}
+                  suppressAudio={suppressRemoteTileAudio(t.muted)}
+                />
               ))}
             </div>
           ) : null}
@@ -468,11 +456,25 @@ export function ConferenceCallBody({
         style={{
           display: "grid",
           gridTemplateColumns: `repeat(${videoGrid.columns}, minmax(0, 1fr))`,
-          gap: 8,
+          gridTemplateRows: `repeat(${videoGrid.rows}, minmax(0, 1fr))`,
+          gap: 6,
+          flex: 1,
+          minHeight: 0,
+          overflow: "hidden",
+          alignContent: "stretch",
         }}
       >
-        {stageTiles.map((t) => (
-          <VideoTile key={t.key} stream={t.stream} label={t.label} muted={t.muted} screen={t.screen} suppressAudio={suppressRemoteTileAudio(t.muted)} />
+        {visibleTiles.map((t) => (
+          <VideoTile
+            key={t.key}
+            stream={t.stream}
+            label={t.label}
+            muted={t.muted}
+            screen={t.screen}
+            fill
+            speaking={tileSpeaking(t.key)}
+            suppressAudio={suppressRemoteTileAudio(t.muted)}
+          />
         ))}
       </div>
     )
@@ -495,16 +497,23 @@ export function ConferenceCallBody({
               borderRadius: 0,
               background: "transparent",
             }
-          : fillHeight
+          : compact
             ? {
+                flexShrink: 0,
+                maxHeight: 180,
+                overflow: "hidden",
+                display: "flex",
+                flexDirection: "column" as const,
+              }
+            : {
                 flex: 1,
                 minHeight: 0,
                 alignSelf: "stretch",
                 boxSizing: "border-box" as const,
                 display: "flex",
                 flexDirection: "column" as const,
-              }
-            : null),
+                overflow: "hidden",
+              }),
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
@@ -524,6 +533,7 @@ export function ConferenceCallBody({
           <div style={{ marginTop: 1, fontSize: 12, fontWeight: 700, color: popOut ? "#cbd5e1" : "#475569" }}>
             {stateText}
             {sharingScreen ? " · Sharing screen" : ""}
+            {hiddenCount > 0 ? ` · +${hiddenCount} more` : ""}
           </div>
         </div>
         {onPopOut ? (
@@ -540,7 +550,7 @@ export function ConferenceCallBody({
 
       {!compact || showVideoLayout ? (
         showVideoLayout ? (
-          <div style={useStageLayout ? { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } : undefined}>
+          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
             {renderVideoStage()}
           </div>
         ) : (
@@ -751,14 +761,18 @@ export async function openConferencePopOut(render: (mount: HTMLElement) => () =>
 
   let win: Window | null = null
   try {
-    if (dip?.requestWindow) {
-      win = await dip.requestWindow({ width: 520, height: 420 })
-    }
+    win = window.open("", "tradesman-video-call", "popup=yes,width=720,height=560,resizable=yes,scrollbars=no")
   } catch {
     win = null
   }
   if (!win) {
-    win = window.open("", "tradesman-video-call", "popup=yes,width=640,height=480")
+    try {
+      if (dip?.requestWindow) {
+        win = await dip.requestWindow({ width: 720, height: 560 })
+      }
+    } catch {
+      win = null
+    }
   }
   if (!win) throw new Error("Popup blocked — allow popups for Tradesman to pop out video.")
 
@@ -817,7 +831,6 @@ const wrap: CSSProperties = {
 }
 const tile: CSSProperties = {
   position: "relative",
-  aspectRatio: "4 / 3",
   background: "#0f172a",
   borderRadius: 10,
   overflow: "hidden",

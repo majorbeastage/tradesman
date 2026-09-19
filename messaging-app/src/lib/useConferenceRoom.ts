@@ -194,7 +194,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
   }, [])
 
   const armCallAudio = useCallback(async (preferSpeaker = true) => {
-    await prepareCallAudio()
+    await prepareCallAudio(preferSpeaker)
     setSpeakerOn(preferSpeaker)
     await setCallSpeakerOn(preferSpeaker)
   }, [])

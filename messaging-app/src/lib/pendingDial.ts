@@ -1,6 +1,6 @@
 /** Dial request handed off from the main Tradesman app via deep link hash params. */
 
-export type PendingDial = { phone: string; label?: string }
+export type PendingDial = { phone: string; label?: string; autoStart?: boolean }
 
 export const PENDING_DIAL_EVENT = "tradesman-pending-dial"
 

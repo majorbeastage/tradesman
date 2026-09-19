@@ -4,6 +4,9 @@ import android.content.Context;
 import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
 import android.media.AudioManager;
+import android.media.Ringtone;
+import android.media.RingtoneManager;
+import android.net.Uri;
 import android.os.Build;
 
 import com.getcapacitor.JSObject;
@@ -22,6 +25,7 @@ public class TradesmanNativePlugin extends Plugin {
 
     private AudioFocusRequest focusRequest;
     private boolean speakerEnabled = false;
+    private Ringtone ringtone;
 
     @PluginMethod
     public void openExternalUrl(PluginCall call) {
@@ -44,6 +48,20 @@ public class TradesmanNativePlugin extends Plugin {
     }
 
     @PluginMethod
+    public void requestCameraAccess(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("granted", true);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void requestMicrophoneAccess(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("granted", true);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
     public void getFcmAvailability(PluginCall call) {
         JSObject ret = new JSObject();
         try {
@@ -58,12 +76,37 @@ public class TradesmanNativePlugin extends Plugin {
     /** Enter voice-call audio mode before / when Twilio connects (boosts VOICE_CALL stream). */
     @PluginMethod
     public void prepareCallAudio(PluginCall call) {
+        Boolean speaker = call.getBoolean("speaker", false);
         getActivity().runOnUiThread(() -> {
             try {
-                applyVoiceCallMode(false);
+                applyVoiceCallMode(Boolean.TRUE.equals(speaker));
                 call.resolve();
             } catch (Throwable t) {
                 call.reject(t.getMessage() != null ? t.getMessage() : "prepareCallAudio failed");
+            }
+        });
+    }
+
+    @PluginMethod
+    public void startCallRingtone(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            try {
+                startRingtoneInternal();
+                call.resolve();
+            } catch (Throwable t) {
+                call.reject(t.getMessage() != null ? t.getMessage() : "startCallRingtone failed");
+            }
+        });
+    }
+
+    @PluginMethod
+    public void stopCallRingtone(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            try {
+                stopRingtoneInternal();
+                call.resolve();
+            } catch (Throwable t) {
+                call.reject(t.getMessage() != null ? t.getMessage() : "stopCallRingtone failed");
             }
         });
     }
@@ -86,6 +129,7 @@ public class TradesmanNativePlugin extends Plugin {
     public void resetCallAudio(PluginCall call) {
         getActivity().runOnUiThread(() -> {
             try {
+                stopRingtoneInternal();
                 AudioManager am = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
                 if (am != null) {
                     abandonFocus(am);
@@ -98,6 +142,45 @@ public class TradesmanNativePlugin extends Plugin {
                 call.reject(t.getMessage() != null ? t.getMessage() : "resetCallAudio failed");
             }
         });
+    }
+
+    private void startRingtoneInternal() {
+        stopRingtoneInternal();
+        AudioManager am = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+        if (am != null) {
+            requestFocus(am);
+            am.setMode(AudioManager.MODE_RINGTONE);
+            am.setSpeakerphoneOn(true);
+            try {
+                int max = am.getStreamMaxVolume(AudioManager.STREAM_RING);
+                if (max > 0) {
+                    int target = Math.max(1, (int) Math.round(max * 0.8));
+                    am.setStreamVolume(AudioManager.STREAM_RING, target, 0);
+                }
+            } catch (Throwable ignored) {
+                /* best-effort */
+            }
+        }
+        Uri uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
+        ringtone = RingtoneManager.getRingtone(getContext(), uri);
+        if (ringtone == null) return;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            ringtone.setLooping(true);
+        }
+        ringtone.setAudioAttributes(new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build());
+        ringtone.play();
+    }
+
+    private void stopRingtoneInternal() {
+        try {
+            if (ringtone != null && ringtone.isPlaying()) ringtone.stop();
+        } catch (Throwable ignored) {
+            /* ignore */
+        }
+        ringtone = null;
     }
 
     private void applyVoiceCallMode(boolean speaker) {

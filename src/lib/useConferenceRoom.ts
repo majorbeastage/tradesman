@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import type { RealtimeChannel } from "@supabase/supabase-js"
 import { supabase } from "./supabase"
 import { recordMissedCall } from "./missedCalls"
-import { acquireCallMedia } from "./mediaRecorderMime"
+import { acquireCallMedia, acquireCameraStream } from "./mediaRecorderMime"
+import { startCallRingtone, stopCallRingtone } from "./callRingtone"
 
 /**
  * Multi-party internal team calls (audio + video) over WebRTC — no Twilio.
@@ -122,6 +123,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
   }, [])
 
   const cleanup = useCallback(() => {
+    stopCallRingtone()
     stopTimer()
     if (ringTimerRef.current) {
       clearTimeout(ringTimerRef.current)
@@ -180,6 +182,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
     if (startedTimerRef.current) return
     startedTimerRef.current = true
     answeredRef.current = true
+    stopCallRingtone()
     if (ringTimerRef.current) {
       clearTimeout(ringTimerRef.current)
       ringTimerRef.current = null
@@ -508,6 +511,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
       setState("ringing")
       const roomId = `${me}-${Date.now()}`
       try {
+        startCallRingtone()
         await acquireMedia(opts.video)
         for (const id of others) upsertParticipant(id, {})
         await joinRoom(roomId)
@@ -622,6 +626,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
   }, [acquireMedia, cleanup, incoming, joinRoom, maybeStartTimer, me, upsertParticipant])
 
   const decline = useCallback(() => {
+    stopCallRingtone()
     const inv = incoming
     if (inviteTimeoutRef.current) {
       clearTimeout(inviteTimeoutRef.current)
@@ -671,10 +676,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
     if (videoTracks.length === 0) {
       void (async () => {
         try {
-          const cam = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: "user" },
-            audio: false,
-          })
+          const cam = await acquireCameraStream()
           const track = cam.getVideoTracks()[0]
           if (!track) {
             setError("Camera is unavailable on this device.")
@@ -715,6 +717,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
         video: Boolean(p.video),
       })
       setState("incoming")
+      startCallRingtone()
       if (inviteTimeoutRef.current) clearTimeout(inviteTimeoutRef.current)
       inviteTimeoutRef.current = setTimeout(() => {
         inviteTimeoutRef.current = null
@@ -731,6 +734,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
               notify: false,
             })
           }
+          stopCallRingtone()
           setState("idle")
           return null
         })
@@ -745,6 +749,7 @@ export function useConferenceRoom(me: string | null | undefined, resolveName: (i
       }
       setIncoming((cur) => {
         if (!cur || cur.roomId !== p.roomId) return cur
+        stopCallRingtone()
         setState("idle")
         return null
       })

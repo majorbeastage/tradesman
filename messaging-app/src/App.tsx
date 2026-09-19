@@ -6,6 +6,7 @@ import { supabase } from "./lib/supabaseClient"
 import { initSharedAuth } from "./lib/sharedAuth"
 import { requestTradesmanAppHandoff } from "./lib/openMainApp"
 import { initMessagingPushTapListener } from "./lib/pushTapHandler"
+import { initSystemDialHandler } from "./lib/systemDialHandler"
 import { initAndroidBackListener } from "./lib/androidBack"
 import { initNativeAuthLifecycle } from "./lib/nativeAuthLifecycle"
 import { heartbeatAppSession, registerAppSession } from "./lib/appSessions"
@@ -23,12 +24,14 @@ export default function App() {
   useEffect(() => {
     let cleanup: (() => void) | undefined
     let pushCleanup: (() => void) | undefined
+    let dialCleanup: (() => void) | undefined
     let backCleanup: (() => void) | undefined
     let authLifecycleCleanup: (() => void) | undefined
     void (async () => {
       authLifecycleCleanup = await initNativeAuthLifecycle(supabase)
       cleanup = await initSharedAuth()
       pushCleanup = await initMessagingPushTapListener()
+      dialCleanup = await initSystemDialHandler()
       backCleanup = await initAndroidBackListener()
       const { data } = await supabase.auth.getSession()
       setSession(data.session)
@@ -58,6 +61,7 @@ export default function App() {
       sub.subscription.unsubscribe()
       cleanup?.()
       pushCleanup?.()
+      dialCleanup?.()
       backCleanup?.()
       authLifecycleCleanup?.()
     }

@@ -1,6 +1,13 @@
 import { Capacitor } from "@capacitor/core"
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type RefObject } from "react"
 import type { useConferenceRoom } from "../lib/useConferenceRoom"
+import {
+  MAX_VISIBLE_MOBILE,
+  pickVisibleStageTiles,
+  streamIsScreenShare,
+  useSpeakingIds,
+  videoGridLayout,
+} from "../lib/conferenceVideoStage"
 
 type RoomApi = ReturnType<typeof useConferenceRoom>
 
@@ -28,12 +35,18 @@ function RemoteMedia({
   muted,
   label,
   screen,
+  fill,
+  thumbnail,
+  speaking,
 }: {
   stream: MediaStream | null
   video?: boolean
   muted?: boolean
   label: string
   screen?: boolean
+  fill?: boolean
+  thumbnail?: boolean
+  speaking?: boolean
 }) {
   const ref = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
   useEffect(() => {
@@ -45,7 +58,18 @@ function RemoteMedia({
 
   if (video) {
     return (
-      <div style={{ ...tile, aspectRatio: screen ? "16 / 9" : "3 / 4" }}>
+      <div
+        style={{
+          ...tile,
+          aspectRatio: fill ? undefined : thumbnail ? "16 / 9" : screen ? "16 / 9" : "3 / 4",
+          boxShadow: speaking ? "0 0 0 2px #4ade80, 0 0 14px rgba(74,222,128,0.45)" : undefined,
+          ...(fill
+            ? { minHeight: 0, minWidth: 0, width: "100%", height: "100%" }
+            : thumbnail
+              ? { width: "100%", flexShrink: 0, minHeight: 0, maxHeight: 84 }
+              : null),
+        }}
+      >
         {stream ? (
           <video
             ref={ref as RefObject<HTMLVideoElement>}
@@ -163,6 +187,33 @@ export default function ConferenceCallView({
     [participants],
   )
   const showVideoLayout = isVideo || sharingScreen || remoteHasVideo || streamHasLiveVideo(selfStream)
+  const speakingIds = useSpeakingIds(participants)
+  const speakingSet = useMemo(() => new Set(speakingIds), [speakingIds])
+  const stageTiles = useMemo(() => {
+    const rows = participants.map((p) => ({
+      key: p.id,
+      stream: p.stream,
+      label: streamIsScreenShare(p.stream) ? `${p.name} (screen)` : p.name,
+      screen: streamIsScreenShare(p.stream),
+      muted: false,
+    }))
+    rows.push({
+      key: "self",
+      stream: selfStream,
+      label: sharingScreen ? `${selfName} (screen)` : selfName,
+      screen: sharingScreen,
+      muted: true,
+    })
+    return rows
+  }, [participants, selfStream, selfName, sharingScreen])
+  const visibleTiles = useMemo(
+    () => pickVisibleStageTiles(stageTiles, { max: MAX_VISIBLE_MOBILE, speakingIds }),
+    [stageTiles, speakingIds],
+  )
+  const hiddenCount = Math.max(0, stageTiles.length - visibleTiles.length)
+  const videoGrid = videoGridLayout(visibleTiles.length)
+  const remoteScreenSharer = participants.find((p) => streamIsScreenShare(p.stream))
+  const anyScreenShare = sharingScreen || Boolean(remoteScreenSharer)
 
   const addablePeers = useMemo(() => {
     const inCall = new Set(participants.map((p) => p.id))
@@ -245,33 +296,77 @@ export default function ConferenceCallView({
           {stateText}
           {sharingScreen ? " · Sharing screen" : ""}
           {remoteHasVideo && !sharingScreen && !isVideo ? " · Screen / video incoming" : ""}
+          {hiddenCount > 0 ? ` · +${hiddenCount} more` : ""}
         </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: showVideoLayout ? "hidden" : "auto", padding: 12, display: "flex", flexDirection: "column" }}>
         {showVideoLayout ? (
-          <div style={{ display: "grid", gridTemplateColumns: participants.length > 0 ? "1fr 1fr" : "1fr", gap: 8 }}>
-            {participants.map((p) => {
-              const peerVideo = streamHasLiveVideo(p.stream)
-              const looksLikeScreen = peerVideo && (p.stream?.getVideoTracks()[0]?.getSettings?.().displaySurface != null || p.stream?.getVideoTracks()[0]?.label?.toLowerCase().includes("screen"))
+          anyScreenShare ? (
+            (() => {
+              const mainKey = sharingScreen ? "self" : remoteScreenSharer?.id ?? "self"
+              const main = visibleTiles.find((t) => t.key === mainKey) ?? visibleTiles[0]
+              const thumbs = visibleTiles.filter((t) => t.key !== mainKey)
               return (
-                <RemoteMedia
-                  key={p.id}
-                  stream={p.stream}
-                  video={peerVideo || isVideo || sharingScreen}
-                  label={looksLikeScreen ? `${p.name} (screen)` : p.name}
-                  screen={Boolean(looksLikeScreen)}
-                />
+                <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "row", gap: 8, overflow: "hidden" }}>
+                  <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>
+                    {main ? (
+                      <RemoteMedia
+                        stream={main.stream}
+                        video
+                        muted={main.muted}
+                        label={main.label}
+                        screen
+                        fill
+                        speaking={speakingSet.has(main.key)}
+                      />
+                    ) : null}
+                  </div>
+                  {thumbs.length > 0 ? (
+                    <div style={{ width: 92, flexShrink: 0, display: "flex", flexDirection: "column", gap: 6, minHeight: 0, overflowY: "auto" }}>
+                      {thumbs.map((t) => (
+                        <RemoteMedia
+                          key={t.key}
+                          stream={t.stream}
+                          video
+                          muted={t.muted}
+                          label={t.label}
+                          screen={t.screen}
+                          thumbnail
+                          speaking={speakingSet.has(t.key)}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
               )
-            })}
-            <RemoteMedia
-              stream={selfStream}
-              video
-              muted
-              label={sharingScreen ? `${selfName} (screen)` : selfName}
-              screen={sharingScreen}
-            />
-          </div>
+            })()
+          ) : (
+            <div
+              style={{
+                flex: 1,
+                minHeight: 0,
+                display: "grid",
+                gridTemplateColumns: `repeat(${videoGrid.columns}, minmax(0, 1fr))`,
+                gridTemplateRows: `repeat(${videoGrid.rows}, minmax(0, 1fr))`,
+                gap: 8,
+                overflow: "hidden",
+              }}
+            >
+              {visibleTiles.map((t) => (
+                <RemoteMedia
+                  key={t.key}
+                  stream={t.stream}
+                  video
+                  muted={t.muted}
+                  label={t.label}
+                  screen={t.screen}
+                  fill
+                  speaking={speakingSet.has(t.key)}
+                />
+              ))}
+            </div>
+          )
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {participants.map((p) => (
@@ -500,7 +595,6 @@ const fullscreen: CSSProperties = {
 }
 const tile: CSSProperties = {
   position: "relative",
-  aspectRatio: "3 / 4",
   background: "#000",
   borderRadius: 12,
   overflow: "hidden",

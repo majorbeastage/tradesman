@@ -41,5 +41,6 @@ public class MainActivity extends BridgeActivity {
 
     private void handleLaunchIntent(Intent intent) {
         MessagingNativePlugin.setPendingLaunchPush(intent);
+        MessagingNativePlugin.setPendingLaunchDial(intent);
     }
 }

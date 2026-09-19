@@ -4,7 +4,10 @@ export interface TradesmanNativePlugin {
   /** True when Firebase default app exists (FCM / PushNotifications.register safe). */
   getFcmAvailability(): Promise<{ available: boolean }>
   /** Enter VOICE_CALL / IN_COMMUNICATION mode before softphone audio. */
-  prepareCallAudio(): Promise<void>
+  prepareCallAudio(options?: { speaker?: boolean }): Promise<void>
+  /** Play the device ringtone on speaker while dialing / incoming. */
+  startCallRingtone(): Promise<void>
+  stopCallRingtone(): Promise<void>
   /** Route softphone audio to speaker (true) or handset/Phone (false). */
   setSpeakerOn(options: { enabled: boolean }): Promise<void>
   /** Restore default audio mode after hangup. */

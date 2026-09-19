@@ -1,6 +1,7 @@
 import Foundation
 import Capacitor
 import AVFoundation
+import AudioToolbox
 import UIKit
 import PhotosUI
 
@@ -14,6 +15,8 @@ public class TradesmanNativePlugin: CAPPlugin, CAPBridgedPlugin, UIImagePickerCo
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "getFcmAvailability", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "prepareCallAudio", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "startCallRingtone", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "stopCallRingtone", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setSpeakerOn", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "resetCallAudio", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "openExternalUrl", returnType: CAPPluginReturnPromise),
@@ -23,6 +26,7 @@ public class TradesmanNativePlugin: CAPPlugin, CAPBridgedPlugin, UIImagePickerCo
     ]
 
     private var imageCall: CAPPluginCall?
+    private var ringTimer: Timer?
 
     private func hostController() -> UIViewController? {
         let windows = UIApplication.shared.connectedScenes
@@ -41,15 +45,49 @@ public class TradesmanNativePlugin: CAPPlugin, CAPBridgedPlugin, UIImagePickerCo
     }
 
     @objc func prepareCallAudio(_ call: CAPPluginCall) {
+        let speaker = call.getBool("speaker") ?? false
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth, .defaultToSpeaker])
             try session.setActive(true)
-            try session.overrideOutputAudioPort(.none)
+            try session.overrideOutputAudioPort(speaker ? .speaker : .none)
             call.resolve()
         } catch {
             call.reject(error.localizedDescription)
         }
+    }
+
+    @objc func startCallRingtone(_ call: CAPPluginCall) {
+        stopRingInternal()
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .default, options: [.duckOthers])
+            try session.setActive(true)
+            try session.overrideOutputAudioPort(.speaker)
+        } catch {
+            /* still try the system sound */
+        }
+        playRingTick()
+        DispatchQueue.main.async {
+            self.ringTimer = Timer.scheduledTimer(withTimeInterval: 2.8, repeats: true) { [weak self] _ in
+                self?.playRingTick()
+            }
+        }
+        call.resolve()
+    }
+
+    @objc func stopCallRingtone(_ call: CAPPluginCall) {
+        stopRingInternal()
+        call.resolve()
+    }
+
+    private func playRingTick() {
+        AudioServicesPlaySystemSound(1005)
+    }
+
+    private func stopRingInternal() {
+        ringTimer?.invalidate()
+        ringTimer = nil
     }
 
     @objc func setSpeakerOn(_ call: CAPPluginCall) {
@@ -66,6 +104,7 @@ public class TradesmanNativePlugin: CAPPlugin, CAPBridgedPlugin, UIImagePickerCo
     }
 
     @objc func resetCallAudio(_ call: CAPPluginCall) {
+        stopRingInternal()
         do {
             let session = AVAudioSession.sharedInstance()
             try session.overrideOutputAudioPort(.none)

@@ -4,12 +4,36 @@ import { Capacitor } from "@capacitor/core"
  * Route softphone audio to speakerphone vs handset ("Phone") on native.
  * No-ops on web (browser uses default output — no Phone/Speaker toggle).
  */
-export async function prepareCallAudio(): Promise<void> {
+export async function prepareCallAudio(speaker = false): Promise<void> {
   if (!Capacitor.isNativePlatform()) return
   try {
     const { TradesmanNative } = await import("../plugins/tradesman-native")
     if (typeof TradesmanNative.prepareCallAudio === "function") {
-      await TradesmanNative.prepareCallAudio()
+      await TradesmanNative.prepareCallAudio({ speaker })
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function startNativeCallRingtone(): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return
+  try {
+    const { TradesmanNative } = await import("../plugins/tradesman-native")
+    if (typeof TradesmanNative.startCallRingtone === "function") {
+      await TradesmanNative.startCallRingtone()
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function stopNativeCallRingtone(): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return
+  try {
+    const { TradesmanNative } = await import("../plugins/tradesman-native")
+    if (typeof TradesmanNative.stopCallRingtone === "function") {
+      await TradesmanNative.stopCallRingtone()
     }
   } catch {
     /* ignore */

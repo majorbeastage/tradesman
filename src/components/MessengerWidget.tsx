@@ -647,14 +647,15 @@ export default function MessengerWidget({ setPage }: Props) {
         }
       : null
 
+  const conferenceFillsPanel = roomActive && !callPoppedOut && !(view === "chat" && callChatOpen)
   const callPanel =
     roomActive ? (
       <div
         style={{
-          padding: view === "chat" ? (callChatOpen ? "8px 8px 0" : 0) : 0,
-          ...(view === "chat" && !callChatOpen
+          padding: view === "chat" && callChatOpen ? "8px 8px 0" : 0,
+          ...(conferenceFillsPanel
             ? { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }
-            : null),
+            : { flexShrink: 0 }),
         }}
       >
         <ConferenceCallView
@@ -665,7 +666,7 @@ export default function MessengerWidget({ setPage }: Props) {
           chatPanelExternal={view === "chat"}
           showChat={view === "chat" ? callChatOpen : undefined}
           onToggleChat={view === "chat" ? () => setCallChatOpen((v) => !v) : undefined}
-          fillHeight={view === "chat" && !callChatOpen}
+          fillHeight={conferenceFillsPanel}
           onPopOut={() => void handlePopOut()}
           poppedOut={callPoppedOut}
           onReturnFromPopOut={handleReturnFromPopOut}
@@ -1134,24 +1135,17 @@ export default function MessengerWidget({ setPage }: Props) {
               </div>
             </div>
           ) : (
-            <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "grid", gap: 12, alignContent: "start" }}>
+            <div
+              style={{
+                flex: 1,
+                minHeight: 0,
+                ...(roomActive
+                  ? { display: "flex", flexDirection: "column", overflow: "hidden", padding: 0 }
+                  : { overflowY: "auto", padding: 16, display: "grid", gap: 12, alignContent: "start" }),
+              }}
+            >
               {roomActive ? (
-                <ConferenceCallView
-                  room={room}
-                  selfName="You"
-                  chat={inCallChat}
-                  onPopOut={() => void handlePopOut()}
-                  poppedOut={callPoppedOut}
-                  onReturnFromPopOut={handleReturnFromPopOut}
-                  teamPeers={peers.map((p) => ({ id: p.id, name: p.displayName }))}
-                  onInvitePeople={(ids) => void room.inviteMore(ids)}
-                  onStartSeparatePhoneCall={startSeparateExternalCall}
-                  searchEmailCustomers={searchEmailCustomers}
-                  onEmailCustomer={(c) => void handleEmailCustomerFromCall(c)}
-                  emailCustomerBusy={emailCustomerBusy}
-                  conferenceDialInHint={conferenceDialInHint}
-                  remoteAudioExternal
-                />
+                callPanel
               ) : callActive && active ? (
                 <InCallControls
                   label={active.label}
