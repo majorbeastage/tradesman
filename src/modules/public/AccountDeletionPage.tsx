@@ -55,8 +55,7 @@ export default function AccountDeletionPage() {
             </a>
           </li>
           <li style={{ marginBottom: 10 }}>
-            Under <strong>Contact &amp; profile</strong>, use the <strong>Delete account</strong> box (also listed under
-            System and Mobile Settings).
+            Under <strong>System and Mobile Settings</strong>, open <strong>Delete account</strong>.
           </li>
           <li style={{ marginBottom: 10 }}>
             Type <strong>DELETE</strong>, tap <strong>Delete my account</strong>, and confirm. You are signed out and the

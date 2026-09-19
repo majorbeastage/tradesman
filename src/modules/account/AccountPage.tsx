@@ -1086,22 +1086,6 @@ export function AccountProfilePanel({
                       </label>
                     </div>
                   </div>
-                  {showAccountSection("delete_account") ? (
-                    <div
-                      style={{
-                        marginTop: 4,
-                        padding: 12,
-                        borderRadius: 10,
-                        border: "1px solid #fecaca",
-                        background: "#fff7f7",
-                      }}
-                    >
-                      <div style={{ fontSize: 13, fontWeight: 800, color: "#991b1b", marginBottom: 8 }}>
-                        {t("account.delete.title")}
-                      </div>
-                      <DeleteAccountCard />
-                    </div>
-                  ) : null}
                 </div>
               ) : null}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
