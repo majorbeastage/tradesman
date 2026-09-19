@@ -20,9 +20,9 @@ export function isBulkPortalAudienceId(id: string): boolean {
   )
 }
 
-/** True when the sidebar selection is a real auth profile UUID */
+/** True when the sidebar selection is a real auth profile UUID (any version nibble, including v7). */
 export function isProfileUserId(id: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
 }
 
 export function profilesMatchingPortalAudience(rows: ProfileRowLike[], audienceId: string): ProfileRowLike[] {

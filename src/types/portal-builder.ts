@@ -728,6 +728,77 @@ export function applyOptionalPortalTabOrder(order: string[], portalConfig: Porta
   return out
 }
 
+/**
+ * Every standard + optional tab an admin can turn on or off.
+ * Unlike the live sidebar, this list is not filtered by current visibility.
+ */
+export const ADMIN_PORTAL_TAB_CATALOG_IDS = [
+  ...USER_PORTAL_TAB_IDS,
+  OPERATIONS_TAB_ID,
+  ...LEGACY_OPERATIONS_TAB_IDS,
+  ...EXTENDED_PORTAL_TAB_IDS,
+  ...DASHBOARD_ONLY_PORTAL_TAB_IDS,
+] as const
+
+/** Tabs a profile type is expected to be able to use (does not apply them). */
+export function typicalPortalTabIdsForRole(role: string | null | undefined): string[] {
+  return getPortalTabListForConfig(getDefaultPortalConfigForViewRole(role ?? "user")).map((t) => t.tab_id)
+}
+
+export function getAdminPortalTabCatalog(
+  portalConfig: PortalConfig,
+  role?: string | null,
+): Array<{ tab_id: string; label: string | null; typicalForRole: boolean }> {
+  const typical = new Set(typicalPortalTabIdsForRole(role))
+  const customTabs = portalConfig.customTabs ?? []
+  const canonical = [...ADMIN_PORTAL_TAB_CATALOG_IDS, ...customTabs.map((t) => t.id)]
+  const order = mergeCanonicalOrder(portalConfig.sidebarTabOrder, canonical)
+  const labelById = new Map<string, string | null>()
+  for (const id of ADMIN_PORTAL_TAB_CATALOG_IDS) labelById.set(id, TAB_ID_LABELS[id] ?? null)
+  if (portalConfig.quotes_tab_display_name?.trim()) {
+    labelById.set("quotes", portalConfig.quotes_tab_display_name.trim())
+  }
+  for (const t of customTabs) labelById.set(t.id, t.label)
+  return order
+    .filter((id) => labelById.has(id))
+    .map((tab_id) => ({
+      tab_id,
+      label: labelById.get(tab_id) ?? null,
+      typicalForRole: typical.has(tab_id),
+    }))
+}
+
+/** Toggle a tab for admin editing. Does not write to the database. */
+export function setPortalTabEnabledInConfig(
+  config: PortalConfig,
+  tabId: string,
+  enabled: boolean,
+): PortalConfig {
+  const next: PortalConfig = {
+    ...config,
+    tabs: { ...(config.tabs ?? {}), [tabId]: enabled },
+  }
+  if (tabId === GROWTH_TAB_ID) {
+    next.enable_growth_tab = enabled
+  }
+  if (tabId === OPERATIONS_TAB_ID) {
+    next.enable_operations_tab = enabled
+  }
+  if (tabId === WORK_ORDERS_TAB_ID) {
+    next.enable_work_orders_tab = enabled
+  }
+  if (tabId === PURCHASE_ORDERS_TAB_ID) {
+    next.enable_purchase_orders_tab = enabled
+  }
+  if (tabId === PARTS_INVENTORY_TAB_ID) {
+    next.enable_parts_inventory_tab = enabled
+  }
+  if ((tabId === "leads" || tabId === "conversations") && enabled) {
+    next.show_legacy_contractor_leads_conversations = true
+  }
+  return next
+}
+
 /** Ordered tab entries for user portal sidebar (default + custom labels). */
 export function getPortalTabListForConfig(portalConfig: PortalConfig): Array<{ tab_id: string; label: string | null }> {
   const customTabs = portalConfig.customTabs ?? []

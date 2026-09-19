@@ -12,6 +12,7 @@ import { useAuth } from "../contexts/AuthContext"
 import {
   isOperationsPackageEnabled,
   isGrowthTabEnabled,
+  isPortalTabVisibleInV2,
   operationsSubModuleEnabled,
 } from "../types/portal-builder"
 import {
@@ -26,6 +27,7 @@ import {
   normalizeCustomizeGrid,
   normalizeDashboardTileOrder,
   orderToTileGrid,
+  packDashboardTileGrid,
   removeTileFromCustomizeGrid,
   resizeCustomizeGrid,
   tileGridToOrder,
@@ -964,18 +966,45 @@ export default function DashboardQuickActions(props: Props) {
     ],
   )
 
-  const visibleOrder = useMemo(
-    () => tileGridToOrder(displayGrid).filter((id) => linkAvailable(id)),
+  /** Palette / restart only — do not hide tiles already on an active user's saved grid. */
+  const linkOffered = useCallback(
+    (id: DashboardQuickLinkId): boolean => {
+      if (!linkAvailable(id)) return false
+      if (id === "customers" || id === "email_client") return isPortalTabVisibleInV2("customers", portalConfig)
+      if (id === "estimates") return isPortalTabVisibleInV2("quotes", portalConfig)
+      if (id === "calendar" || id === "team_management" || id === "scheduling_tools" || id === "job_types") {
+        return isPortalTabVisibleInV2("calendar", portalConfig)
+      }
+      if (id === "payments" || id === "customer_payments_soon") return isPortalTabVisibleInV2("payments", portalConfig)
+      if (id === "insurance") {
+        return isPortalTabVisibleInV2("insurance-options", portalConfig) || isPortalTabVisibleInV2("insurance", portalConfig)
+      }
+      if (id === "reporting") return isPortalTabVisibleInV2("reporting", portalConfig)
+      if (id === "business_workflow") return isPortalTabVisibleInV2("business-workflow", portalConfig)
+      if (id === "organization_chart") return isPortalTabVisibleInV2("organization-chart", portalConfig)
+      if (id === "time_clock") return isPortalTabVisibleInV2("calendar", portalConfig)
+      return true
+    },
+    [linkAvailable, portalConfig],
+  )
+
+  const packedDisplayGrid = useMemo(
+    () => packDashboardTileGrid(displayGrid, linkAvailable),
     [displayGrid, linkAvailable],
+  )
+
+  const visibleOrder = useMemo(
+    () => tileGridToOrder(packedDisplayGrid).filter((id) => linkAvailable(id)),
+    [packedDisplayGrid, linkAvailable],
   )
 
   const hiddenIds = useMemo(() => {
     const onBar = new Set(visibleOrder)
     return (Array.from(ALL_DASHBOARD_LINK_IDS) as DashboardQuickLinkId[]).filter((id) => {
       if (onBar.has(id)) return false
-      return linkAvailable(id)
+      return linkOffered(id)
     })
-  }, [visibleOrder, linkAvailable])
+  }, [visibleOrder, linkOffered])
 
   const onGridChange = useCallback(
     (grid: DashboardTileGridSlot[]) => {
@@ -996,10 +1025,11 @@ export default function DashboardQuickActions(props: Props) {
   const restartTileOrder = useCallback(() => {
     userModifiedRef.current = true
     writeLocalDashboardLayoutUpdatedAt(new Date().toISOString(), profileUserId ?? null)
-    const next = buildCustomizeGrid(undefined, undefined, undefined, gridCols, true)
+    const offered = fallbackOrder.filter(linkOffered)
+    const next = buildCustomizeGrid(offered, undefined, undefined, gridCols, false)
     setTileGrid(next)
     setAuthorCols(gridCols)
-  }, [buildCustomizeGrid, gridCols, profileUserId])
+  }, [buildCustomizeGrid, fallbackOrder, gridCols, linkOffered, profileUserId])
 
   const removeFromBar = useCallback(
     (id: DashboardQuickLinkId) => {
@@ -1619,7 +1649,7 @@ export default function DashboardQuickActions(props: Props) {
 
         {customize ? (
           <DashboardQuickLinkCustomizeZones
-            grid={displayGrid}
+            grid={packedDisplayGrid}
             gridCols={gridCols}
             hiddenIds={hiddenIds}
             isMobile={isMobile}
@@ -1630,7 +1660,7 @@ export default function DashboardQuickActions(props: Props) {
           />
         ) : (
           <DashboardQuickLinkGrid
-            grid={displayGrid}
+            grid={packedDisplayGrid}
             gridCols={gridCols}
             isMobile={isMobile}
             renderTile={renderTile}

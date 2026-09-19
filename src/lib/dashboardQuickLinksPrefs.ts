@@ -447,6 +447,14 @@ export function tileGridToOrder(grid: DashboardTileGridSlot[]): DashboardQuickLi
   return grid.filter((x): x is DashboardQuickLinkId => x != null)
 }
 
+/** Drop tiles the current profile cannot use. Empty slots stay unless they only existed for a dropped tile. */
+export function packDashboardTileGrid(
+  grid: DashboardTileGridSlot[],
+  keep: (id: DashboardQuickLinkId) => boolean,
+): DashboardTileGridSlot[] {
+  return grid.filter((id) => id == null || keep(id))
+}
+
 export function normalizeDashboardTileGrid(
   saved: DashboardTileGridSlot[] | undefined,
   fallbackOrder: DashboardQuickLinkId[],

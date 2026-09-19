@@ -30,6 +30,8 @@ type UserRow = {
 type AdminUsersSectionProps = {
   /** When role change updates `profiles.portal_config`, keep Portal builder in sync without a full reload. */
   onUserPortalConfigUpdated?: (userId: string, portalConfig: PortalConfig) => void
+  /** Role-only updates — does not change portal_config or live views. */
+  onUserRoleUpdated?: (userId: string, role: string) => void
 }
 
 /** `profiles.display_name` is stored as "First Last" from admin create; split for table columns. */
@@ -51,7 +53,7 @@ function userRowSearchText(u: UserRow): string {
   return [dn, first, last, u.email ?? "", u.role, u.id, access, mode].join(" ").toLowerCase()
 }
 
-export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUsersSectionProps) {
+export default function AdminUsersSection({ onUserPortalConfigUpdated, onUserRoleUpdated }: AdminUsersSectionProps) {
   const { session, user: currentAuthUser } = useAuth()
   const portalView = usePortalViewOptional()
   const [users, setUsers] = useState<UserRow[]>([])
@@ -237,6 +239,7 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
       if (payload.portal_config !== undefined && onUserPortalConfigUpdated) {
         onUserPortalConfigUpdated(userId, payload.portal_config as PortalConfig)
       }
+      onUserRoleUpdated?.(userId, nextRole)
       setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, role: nextRole } : u)))
     } finally {
       setRoleSavingUserId(null)
@@ -707,6 +710,7 @@ export default function AdminUsersSection({ onUserPortalConfigUpdated }: AdminUs
       <h2 style={{ color: theme.text, fontSize: 18, marginBottom: 16 }}>Add user</h2>
       <p style={{ color: theme.text, opacity: 0.8, marginBottom: 4 }}>
         All profiles are created here. Choose role: User, New User, Office Manager, Corporate (Management / External / Internal), or Admin.
+        Changing a role only updates the profile type. It does not change that person's live tabs or Quick Links — use Portal builder to turn options on or off for that user.
       </p>
       <p style={{ color: theme.text, opacity: 0.85, marginBottom: 12, fontSize: 13, lineHeight: 1.5, padding: 12, borderRadius: 8, border: "1px solid #fbbf24", background: "rgba(251, 191, 36, 0.12)" }}>
         <strong>Admin role policy (email workflow pending):</strong> Any change that <strong>grants or removes</strong> admin access must be approved by{" "}

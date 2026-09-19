@@ -37,6 +37,9 @@ import {
   getDefaultControlItems,
   getAccountSectionVisible,
   getPortalTabListForConfig,
+  getAdminPortalTabCatalog,
+  setPortalTabEnabledInConfig,
+  isPortalTabVisibleInV2,
   getOrderedAccountPortalSections,
   formatPortalItemDependenciesSummary,
   sanitizePortalSettingItemDependencies,
@@ -776,7 +779,25 @@ function AdminAppInner() {
     }
   }
 
+  const catalogRole =
+    selectedProfile?.role ??
+    (selectedId === ALL_OFFICE_MANAGERS_ID
+      ? "office_manager"
+      : selectedId === ALL_NEW_USERS_ID
+        ? "new_user"
+        : selectedId === ALL_ADMINS_ID
+          ? "admin"
+          : selectedId === ALL_USERS_ID
+            ? "user"
+            : null)
+
+  const adminTabCatalog = getAdminPortalTabCatalog(config, catalogRole)
+
   const toggle = (section: "tabs" | "settings" | "dropdowns", key: string) => {
+    if (section === "tabs") {
+      setConfig(setPortalTabEnabledInConfig(config, key, !isPortalTabVisibleInV2(key, config)))
+      return
+    }
     setConfig(setVisible(config, section, key, !getVisible(config, section, key)))
   }
 
@@ -810,7 +831,7 @@ function AdminAppInner() {
   }
 
   function reorderSidebarTabs(from: number, to: number) {
-    const ids = getPortalTabListForConfig(config).map((t) => t.tab_id)
+    const ids = getAdminPortalTabCatalog(config, catalogRole).map((t) => t.tab_id)
     setConfig({ ...config, sidebarTabOrder: reorderByIndex(ids, from, to) })
   }
 
@@ -1644,6 +1665,9 @@ function AdminAppInner() {
                   setConfig(portalConfig)
                 }
               }}
+              onUserRoleUpdated={(userId, role) => {
+                setProfiles((prev) => prev.map((p) => (p.id === userId ? { ...p, role } : p)))
+              }}
             />
           </div>
         ) : adminPanel === "billing" ? (
@@ -1982,22 +2006,30 @@ function AdminAppInner() {
               </section>
               </AdminSettingBlock>
 
-              {/* Right side: global toggles when Dashboard (or no page controls), else page controls + options */}
+              {/* Right side: catalog always stays up so hidden tabs can be turned back on */}
               <div style={{ flex: "1 1 320px", minWidth: 280 }}>
-                {showGlobalToggles ? (
-                  <>
                     <section style={{ marginBottom: 24 }}>
                       <h2 style={{ color: theme.text, fontSize: 16, marginBottom: 8 }}>Sidebar tabs</h2>
-                      <p style={{ fontSize: 12, color: theme.text, opacity: 0.8, margin: "0 0 8px" }}>Drag ⋮⋮ to reorder. Order applies to the user and office manager portals.</p>
-                      {getPortalTabListForConfig(config).map(({ tab_id: id, label }, index) => (
+                      <p style={{ fontSize: 12, color: theme.text, opacity: 0.8, margin: "0 0 8px" }}>
+                        Checkboxes match what this profile currently sees. Off tabs stay in this list so you can turn them on.
+                        {catalogRole
+                          ? ` Typical for ${catalogRole.replace(/_/g, " ")} is marked — changing a role does not turn those on until you check them and save this user.`
+                          : " Changing a role does not change anyone's live portal until you check a tab and save that user."}
+                      </p>
+                      {adminTabCatalog.map(({ tab_id: id, label, typicalForRole }, index) => (
                         <AdminSortableRow key={id} scope="portal-sidebar-tabs" index={index} onReorder={reorderSidebarTabs} rowStyle={{ marginBottom: 4 }}>
                         <AdminSettingBlock id={`admin:portal:tab_row:${id}`}>
                         <div style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 8 }}>
                           <label style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", margin: 0 }} onClick={() => toggle("tabs", id)}>
-                            <input type="checkbox" checked={getVisible(config, "tabs", id)} onChange={() => toggle("tabs", id)} />
-                            <span style={{ color: theme.text }}>{label ?? TAB_ID_LABELS[id] ?? id}</span>
+                            <input type="checkbox" checked={isPortalTabVisibleInV2(id, config)} onChange={() => toggle("tabs", id)} />
+                            <span style={{ color: theme.text }}>
+                              {label ?? TAB_ID_LABELS[id] ?? id}
+                              {typicalForRole ? (
+                                <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: "#64748b" }}>typical for role</span>
+                              ) : null}
+                            </span>
                           </label>
-                          <button type="button" onClick={(e) => { e.preventDefault(); (config.customTabs ?? []).some((t) => t.id === id) ? removeCustomTab(id) : setConfig(setVisible(config, "tabs", id, false)) }} style={REMOVE_BTN_STYLE}>Remove</button>
+                          <button type="button" onClick={(e) => { e.preventDefault(); (config.customTabs ?? []).some((t) => t.id === id) ? removeCustomTab(id) : setConfig(setPortalTabEnabledInConfig(config, id, false)) }} style={REMOVE_BTN_STYLE}>Remove</button>
                         </div>
                         </AdminSettingBlock>
                         </AdminSortableRow>
@@ -2027,8 +2059,7 @@ function AdminAppInner() {
                         ))}
                       </section>
                     ) : null}
-                  </>
-                ) : (
+                {!showGlobalToggles ? (
                   <>
                     <AdminSettingBlock id={`admin:portal:page_controls_section:${previewPage}`}>
                     <section style={{ marginBottom: 16 }}>
@@ -2462,7 +2493,7 @@ function AdminAppInner() {
                       </AdminSettingBlock>
                     )}
                   </>
-                )}
+                ) : null}
               </div>
             </div>
           </>
