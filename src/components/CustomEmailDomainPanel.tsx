@@ -36,7 +36,18 @@ type DnsRecordRow = {
   status?: string | null
 }
 
+type DnsPayload = {
+  dnsRecords?: DnsRecordRow[]
+  mxPresent?: boolean
+  dnsHostLabel?: string | null
+  mailRecordsReady?: boolean
+  resendError?: string | null
+  canManageDns?: boolean
+  suggestedLocalPart?: string
+}
+
 const inputStyle = { ...theme.formInput, width: "100%" }
+const thHint = { display: "block", fontWeight: 400, color: "#64748b", fontSize: 10, lineHeight: 1.35, marginTop: 2 }
 
 export function CustomEmailDomainPanel({ profileUserId }: Props) {
   const { t } = useLocale()
@@ -47,6 +58,9 @@ export function CustomEmailDomainPanel({ profileUserId }: Props) {
   const [customRoute, setCustomRoute] = useState<CustomRouteRow | null>(null)
   const [dnsRecords, setDnsRecords] = useState<DnsRecordRow[]>([])
   const [mxPresent, setMxPresent] = useState<boolean | null>(null)
+  const [dnsHostLabel, setDnsHostLabel] = useState<string | null>(null)
+  const [mailRecordsReady, setMailRecordsReady] = useState(false)
+  const [canManageDns, setCanManageDns] = useState(true)
   const [registering, setRegistering] = useState(false)
   const [verifying, setVerifying] = useState(false)
   const [claiming, setClaiming] = useState(false)
@@ -60,6 +74,14 @@ export function CustomEmailDomainPanel({ profileUserId }: Props) {
     normalizedDomain && normalizedLocal ? customEmailAddress(normalizedLocal, normalizedDomain) : ""
   const isVerified = domainRow?.status === "verified"
   const txtToken = domainRow?.verification_token ?? ""
+
+  const applyDnsPayload = useCallback((json: DnsPayload) => {
+    setDnsRecords(Array.isArray(json.dnsRecords) ? json.dnsRecords : [])
+    setMxPresent(typeof json.mxPresent === "boolean" ? json.mxPresent : null)
+    setDnsHostLabel(typeof json.dnsHostLabel === "string" && json.dnsHostLabel.trim() ? json.dnsHostLabel.trim() : null)
+    setMailRecordsReady(json.mailRecordsReady === true)
+    if (typeof json.canManageDns === "boolean") setCanManageDns(json.canManageDns)
+  }, [])
 
   const authHeaders = useCallback(async (): Promise<Record<string, string>> => {
     const session = await supabase?.auth.getSession()
@@ -78,12 +100,11 @@ export function CustomEmailDomainPanel({ profileUserId }: Props) {
         `/api/platform-tools?__route=platform-email-domain-status&accountId=${encodeURIComponent(profileUserId)}`,
         { headers },
       )
-      const json = (await res.json()) as {
+      const json = (await res.json()) as DnsPayload & {
         error?: string
         domains?: DomainRow[]
         customRoutes?: CustomRouteRow[]
-        dnsRecords?: DnsRecordRow[]
-        mxPresent?: boolean
+        suggestedLocalPart?: string
       }
       if (!res.ok) throw new Error(json.error || "Failed to load custom domain status")
       const domains = json.domains ?? []
@@ -94,14 +115,16 @@ export function CustomEmailDomainPanel({ profileUserId }: Props) {
       const route = routes[0] ?? null
       setCustomRoute(route)
       if (route?.local_part) setLocalPart(route.local_part)
-      setDnsRecords(Array.isArray(json.dnsRecords) ? json.dnsRecords : [])
-      setMxPresent(typeof json.mxPresent === "boolean" ? json.mxPresent : null)
+      applyDnsPayload(json)
+      if (!route?.local_part && typeof json.suggestedLocalPart === "string" && json.suggestedLocalPart.trim()) {
+        setLocalPart(json.suggestedLocalPart.trim())
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setLoading(false)
     }
-  }, [authHeaders, profileUserId])
+  }, [applyDnsPayload, authHeaders, profileUserId])
 
   useEffect(() => {
     void loadStatus()
@@ -118,12 +141,11 @@ export function CustomEmailDomainPanel({ profileUserId }: Props) {
         headers,
         body: JSON.stringify({ domain: normalizedDomain, accountId: profileUserId }),
       })
-      const json = (await res.json()) as DomainRow & {
-        error?: string
-        txt_value?: string
-        dnsRecords?: DnsRecordRow[]
-        mxPresent?: boolean
-      }
+      const json = (await res.json()) as DomainRow &
+        DnsPayload & {
+          error?: string
+          txt_value?: string
+        }
       if (!res.ok) throw new Error(json.error || "Register failed")
       setDomainRow({
         id: String(json.id ?? ""),
@@ -131,8 +153,7 @@ export function CustomEmailDomainPanel({ profileUserId }: Props) {
         status: String(json.status ?? "pending"),
         verification_token: String(json.verification_token ?? json.txt_value ?? ""),
       })
-      setDnsRecords(Array.isArray(json.dnsRecords) ? json.dnsRecords : [])
-      setMxPresent(typeof json.mxPresent === "boolean" ? json.mxPresent : null)
+      applyDnsPayload(json)
       setMessage(t("account.tradesmanEmail.custom.registered"))
     } catch (e) {
       const raw = e instanceof Error ? e.message : String(e)
@@ -153,17 +174,14 @@ export function CustomEmailDomainPanel({ profileUserId }: Props) {
         headers,
         body: JSON.stringify({ domain: domainRow?.domain || normalizedDomain, accountId: profileUserId }),
       })
-      const json = (await res.json()) as {
+      const json = (await res.json()) as DnsPayload & {
         error?: string
         hint?: string
         verified?: boolean
-        dnsRecords?: DnsRecordRow[]
-        mxPresent?: boolean
       }
       if (!res.ok) throw new Error(json.hint || json.error || "Verification failed")
       setDomainRow((prev) => (prev ? { ...prev, status: "verified" } : prev))
-      if (Array.isArray(json.dnsRecords)) setDnsRecords(json.dnsRecords)
-      if (typeof json.mxPresent === "boolean") setMxPresent(json.mxPresent)
+      applyDnsPayload(json)
       setMessage(t("account.tradesmanEmail.custom.verified"))
       await loadStatus()
     } catch (e) {
@@ -210,6 +228,7 @@ export function CustomEmailDomainPanel({ profileUserId }: Props) {
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
+      {canManageDns ? (
       <label style={{ display: "grid", gap: 6 }}>
         <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>{t("account.tradesmanEmail.custom.domainLabel")}</span>
         <input
@@ -227,8 +246,15 @@ export function CustomEmailDomainPanel({ profileUserId }: Props) {
           <span style={{ fontSize: 11, color: "#b91c1c" }}>{t("account.tradesmanEmail.custom.err.invalid")}</span>
         ) : null}
       </label>
+      ) : (
+        <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.45 }}>
+          {isVerified
+            ? t("account.tradesmanEmail.custom.memberIntro").replace("{domain}", domainRow?.domain || "")
+            : t("account.tradesmanEmail.custom.memberWaiting")}
+        </p>
+      )}
 
-      {!isVerified ? (
+      {canManageDns && !isVerified ? (
         <button
           type="button"
           onClick={() => void handleRegister()}
@@ -250,12 +276,23 @@ export function CustomEmailDomainPanel({ profileUserId }: Props) {
         </button>
       ) : null}
 
-      {dnsRecords.length > 0 || txtToken ? (
+      {canManageDns && (dnsRecords.length > 0 || txtToken) ? (
         <div style={{ fontSize: 12, color: "#475569", lineHeight: 1.5, padding: 10, background: "#f1f5f9", borderRadius: 8 }}>
           <div style={{ fontWeight: 700, marginBottom: 6 }}>{t("account.tradesmanEmail.custom.dnsTitle")}</div>
           <p style={{ margin: "0 0 8px", fontSize: 11, color: "#64748b" }}>
-            {t("account.tradesmanEmail.custom.dnsGoDaddy")}
+            {(dnsHostLabel
+              ? t("account.tradesmanEmail.custom.dnsAtHost")
+              : t("account.tradesmanEmail.custom.dnsGoDaddy")
+            ).replace("{host}", dnsHostLabel || t("account.tradesmanEmail.custom.dnsHostFallback"))}
           </p>
+          <p style={{ margin: "0 0 8px", fontSize: 11, color: "#475569" }}>
+            {t("account.tradesmanEmail.custom.dnsOverwrite")}
+          </p>
+          {!mailRecordsReady && (dnsRecords.length > 0 || txtToken) ? (
+            <p style={{ margin: "0 0 8px", fontSize: 11, color: "#9a3412" }}>
+              {t("account.tradesmanEmail.custom.dnsBuilding")}
+            </p>
+          ) : null}
           {mxPresent === false ? (
             <p style={{ margin: "0 0 8px", fontSize: 11, color: "#0f766e" }}>{t("account.tradesmanEmail.custom.dnsNoMx")}</p>
           ) : mxPresent === true ? (
@@ -265,17 +302,28 @@ export function CustomEmailDomainPanel({ profileUserId }: Props) {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
               <thead>
                 <tr>
-                  <th style={{ textAlign: "left", padding: "4px 6px" }}>{t("account.tradesmanEmail.custom.dnsColPurpose")}</th>
-                  <th style={{ textAlign: "left", padding: "4px 6px" }}>{t("account.tradesmanEmail.custom.dnsColType")}</th>
-                  <th style={{ textAlign: "left", padding: "4px 6px" }}>{t("account.tradesmanEmail.custom.dnsColHost")}</th>
-                  <th style={{ textAlign: "left", padding: "4px 6px" }}>{t("account.tradesmanEmail.custom.dnsColValue")}</th>
+                  <th style={{ textAlign: "left", padding: "4px 6px", verticalAlign: "top" }}>
+                    {t("account.tradesmanEmail.custom.dnsColPurpose")}
+                  </th>
+                  <th style={{ textAlign: "left", padding: "4px 6px", verticalAlign: "top" }}>
+                    {t("account.tradesmanEmail.custom.dnsColType")}
+                    <span style={thHint}>{t("account.tradesmanEmail.custom.dnsColTypeHint")}</span>
+                  </th>
+                  <th style={{ textAlign: "left", padding: "4px 6px", verticalAlign: "top" }}>
+                    {t("account.tradesmanEmail.custom.dnsColHost")}
+                    <span style={thHint}>{t("account.tradesmanEmail.custom.dnsColHostHint")}</span>
+                  </th>
+                  <th style={{ textAlign: "left", padding: "4px 6px", verticalAlign: "top" }}>
+                    {t("account.tradesmanEmail.custom.dnsColValue")}
+                    <span style={thHint}>{t("account.tradesmanEmail.custom.dnsColValueHint")}</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {(dnsRecords.length > 0
                   ? dnsRecords
                   : txtToken
-                    ? [{ purpose: "Tradesman verify", host: "_tradesman-verify", type: "TXT", value: txtToken }]
+                    ? [{ purpose: "Prove you own the domain", host: "_tradesman-verify", type: "TXT", value: txtToken }]
                     : []
                 ).map((row, i) => (
                   <tr key={`${row.type}-${row.host}-${i}`}>
@@ -332,12 +380,18 @@ export function CustomEmailDomainPanel({ profileUserId }: Props) {
                 type="text"
                 value={localPart}
                 onChange={(e) => setLocalPart(e.target.value)}
+                placeholder="joe"
+                autoComplete="off"
+                spellCheck={false}
                 style={{ ...inputStyle, maxWidth: 180 }}
               />
-              <span style={{ fontSize: 13, color: "#64748b" }}>@{domainRow?.domain}</span>
+              <span style={{ fontSize: 13, color: "#475569", fontWeight: 600 }}>@{domainRow?.domain}</span>
             </div>
+            <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.45 }}>
+              {t("account.tradesmanEmail.custom.localHint")}
+            </span>
             {previewAddress ? (
-              <span style={{ fontSize: 11, color: "#64748b" }}>
+              <span style={{ fontSize: 11, color: "#0f766e" }}>
                 {t("account.tradesmanEmail.custom.preview")}: <code>{previewAddress}</code>
               </span>
             ) : null}

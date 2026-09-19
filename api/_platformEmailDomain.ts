@@ -68,6 +68,65 @@ async function resolveManagedAccountId(
   }
 }
 
+async function resolveOrgOwnerId(
+  service: ReturnType<typeof createServiceSupabase>,
+  accountId: string,
+): Promise<string> {
+  const { data } = await service.from("profiles").select("role").eq("id", accountId).maybeSingle()
+  const role = typeof data?.role === "string" ? data.role : ""
+  if (role === "office_manager" || role === "corporate_management") return accountId
+
+  const { data: link } = await service
+    .from("office_manager_clients")
+    .select("office_manager_id")
+    .eq("user_id", accountId)
+    .limit(1)
+    .maybeSingle()
+  if (typeof link?.office_manager_id === "string" && link.office_manager_id.trim()) {
+    return link.office_manager_id.trim()
+  }
+
+  const { data: invite } = await service
+    .from("team_member_invites")
+    .select("account_owner_id")
+    .eq("shell_profile_id", accountId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (typeof invite?.account_owner_id === "string" && invite.account_owner_id.trim()) {
+    return invite.account_owner_id.trim()
+  }
+
+  return accountId
+}
+
+async function actorCanManageOrgDns(
+  service: ReturnType<typeof createServiceSupabase>,
+  actorUserId: string,
+  orgOwnerId: string,
+): Promise<boolean> {
+  if (actorUserId === orgOwnerId) return true
+  const { data } = await service.from("profiles").select("role").eq("id", actorUserId).maybeSingle()
+  return data?.role === "admin"
+}
+
+function suggestLocalPart(email: string | null | undefined, displayName: string | null | undefined): string {
+  const at = String(email ?? "").indexOf("@")
+  if (at > 1) {
+    const slug = String(email)
+      .slice(0, at)
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, "")
+    if (slug.length >= 2) return slug
+  }
+  const name = String(displayName ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+  return name.length >= 2 ? name : "hello"
+}
+
 async function txtRecordsContainToken(host: string, token: string): Promise<boolean> {
   try {
     const rows = await dns.resolveTxt(host)
@@ -148,16 +207,28 @@ function dnsHostForRegistrar(name: string, domain: string): string {
   return n
 }
 
+function purposeForResendRecord(rec: ResendDnsRecord, host: string): string {
+  const kind = String(rec.record ?? "").trim()
+  const type = String(rec.type ?? "").toUpperCase()
+  const k = kind.toLowerCase()
+  if (k.includes("receiv") || (type === "MX" && host === "@")) return "Receive mail in Tradesman"
+  if (type === "MX") return "Send mail (bounce / SPF)"
+  if (k === "spf") return "Send mail (SPF)"
+  if (k === "dkim") return "Send mail (DKIM)"
+  if (k === "tracking") return "Open/click tracking (optional)"
+  return kind || type
+}
+
 function mapResendRecords(domain: string, records: ResendDnsRecord[] | undefined): PlatformEmailDnsRecord[] {
   const out: PlatformEmailDnsRecord[] = []
   for (const rec of records ?? []) {
     const type = String(rec.type ?? "").toUpperCase()
     const value = String(rec.value ?? "").replace(/^"|"$/g, "")
     if (!type || !value) continue
-    const purpose = String(rec.record ?? type).trim() || type
+    const host = dnsHostForRegistrar(String(rec.name ?? "@"), domain)
     out.push({
-      purpose,
-      host: dnsHostForRegistrar(String(rec.name ?? "@"), domain),
+      purpose: purposeForResendRecord(rec, host),
+      host,
       type,
       value,
       priority: typeof rec.priority === "number" ? rec.priority : null,
@@ -169,7 +240,7 @@ function mapResendRecords(domain: string, records: ResendDnsRecord[] | undefined
 
 function tradesmanVerifyRecord(_domain: string, token: string): PlatformEmailDnsRecord {
   return {
-    purpose: "Tradesman verify",
+    purpose: "Prove you own the domain",
     host: `_tradesman-verify`,
     type: "TXT",
     value: token,
@@ -178,10 +249,74 @@ function tradesmanVerifyRecord(_domain: string, token: string): PlatformEmailDns
   }
 }
 
+function mailRecordsReady(records: PlatformEmailDnsRecord[]): boolean {
+  return records.some((r) => String(r.type || "").toUpperCase() === "MX")
+}
+
+async function dnsGuidance(domain: string, records: PlatformEmailDnsRecord[]) {
+  return {
+    dnsHostLabel: await detectDnsHostLabel(domain),
+    mailRecordsReady: mailRecordsReady(records),
+  }
+}
+
+async function detectDnsHostLabel(domain: string): Promise<string | null> {
+  try {
+    const ns = await dns.resolveNs(domain)
+    const joined = ns.join(" ").toLowerCase()
+    if (joined.includes("domaincontrol.com")) return "GoDaddy"
+    if (joined.includes("cloudflare")) return "Cloudflare"
+    if (joined.includes("awsdns")) return "Amazon Route 53"
+    if (joined.includes("googledomains") || joined.includes("ns.google") || joined.includes("google.com")) {
+      return "Google Domains"
+    }
+    if (joined.includes("registrar-servers.com") || joined.includes("namecheap")) return "Namecheap"
+    if (joined.includes("squarespacedns") || joined.includes("squarespace")) return "Squarespace"
+    if (joined.includes("hover.com.ns")) return "Hover"
+    if (joined.includes("bluehost")) return "Bluehost"
+    if (joined.includes("hostgator")) return "HostGator"
+    if (joined.includes("ionos")) return "IONOS"
+    if (joined.includes("porkbun") || joined.includes("curi.land")) return "Porkbun"
+    if (joined.includes("digitalocean")) return "DigitalOcean"
+    if (joined.includes("wixdns") || joined.includes("wix.com")) return "Wix"
+    return null
+  } catch {
+    return null
+  }
+}
+
+function resendErrorMessage(json: unknown, fallback: string): string {
+  if (json && typeof json === "object") {
+    const message = (json as { message?: unknown }).message
+    if (typeof message === "string" && message.trim()) return message.trim()
+  }
+  return fallback
+}
+
+function resendAlreadyExists(status: number, json: unknown): boolean {
+  const message = resendErrorMessage(json, "").toLowerCase()
+  return status === 409 || message.includes("already") || message.includes("exists")
+}
+
+async function listAllResendDomains(): Promise<ResendDomainPayload[]> {
+  const out: ResendDomainPayload[] = []
+  let after: string | undefined
+  for (let page = 0; page < 20; page++) {
+    const path = after ? `/domains?limit=100&after=${encodeURIComponent(after)}` : "/domains?limit=100"
+    const list = await resendFetch(path)
+    const json = list.json as { data?: ResendDomainPayload[]; has_more?: boolean } | null
+    const rows = Array.isArray(json?.data) ? json.data : []
+    out.push(...rows)
+    if (!json?.has_more || rows.length === 0) break
+    const lastId = rows[rows.length - 1]?.id
+    if (!lastId) break
+    after = lastId
+  }
+  return out
+}
+
 async function getResendDomainByName(domain: string): Promise<ResendDomainPayload | null> {
-  const list = await resendFetch("/domains")
-  const json = list.json as { data?: ResendDomainPayload[] } | null
-  const rows = Array.isArray(json?.data) ? json.data : []
+  const rows = await listAllResendDomains()
   return rows.find((d) => String(d.name ?? "").toLowerCase() === domain) ?? null
 }
 
@@ -191,32 +326,83 @@ async function getResendDomainById(id: string): Promise<ResendDomainPayload | nu
   return got.json as ResendDomainPayload
 }
 
-async function ensureResendReceivingDomain(domain: string): Promise<{
-  id: string
+type EnsureResendResult = {
+  id: string | null
   records: PlatformEmailDnsRecord[]
-} | null> {
-  const created = await resendFetch("/domains", {
-    method: "POST",
-    body: JSON.stringify({
-      name: domain,
-      capabilities: { sending: "enabled", receiving: "enabled" },
-    }),
-  })
-  let payload = created.ok && created.json && typeof created.json === "object" ? (created.json as ResendDomainPayload) : null
+  error: string | null
+}
 
-  if (!payload?.id) {
-    const existing = await getResendDomainByName(domain)
-    if (!existing?.id) return null
-    await resendFetch(`/domains/${existing.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ capabilities: { sending: "enabled", receiving: "enabled" } }),
-    })
-    payload = (await getResendDomainById(existing.id)) ?? existing
+async function createResendDomain(domain: string, withReceiving: boolean) {
+  return resendFetch("/domains", {
+    method: "POST",
+    body: JSON.stringify(
+      withReceiving
+        ? { name: domain, capabilities: { sending: "enabled", receiving: "enabled" } }
+        : { name: domain },
+    ),
+  })
+}
+
+async function ensureResendReceivingDomain(domain: string): Promise<EnsureResendResult> {
+  if (!resendApiKey()) {
+    return {
+      id: null,
+      records: [],
+      error: "RESEND_API_KEY is not set on the server, so mail records cannot be created yet.",
+    }
   }
 
-  if (!payload.id) return null
+  let payload: ResendDomainPayload | null = null
+  let lastError: string | null = null
+
+  const createdReceiving = await createResendDomain(domain, true)
+  if (createdReceiving.ok && createdReceiving.json && typeof createdReceiving.json === "object") {
+    payload = createdReceiving.json as ResendDomainPayload
+  } else {
+    lastError = resendErrorMessage(createdReceiving.json, `Resend could not add this domain (${createdReceiving.status}).`)
+    if (resendAlreadyExists(createdReceiving.status, createdReceiving.json) || createdReceiving.status >= 400) {
+      const existing = await getResendDomainByName(domain)
+      if (existing?.id) payload = existing
+    }
+  }
+
+  if (!payload?.id) {
+    const createdPlain = await createResendDomain(domain, false)
+    if (createdPlain.ok && createdPlain.json && typeof createdPlain.json === "object") {
+      payload = createdPlain.json as ResendDomainPayload
+      lastError = null
+    } else if (resendAlreadyExists(createdPlain.status, createdPlain.json)) {
+      const existing = await getResendDomainByName(domain)
+      if (existing?.id) {
+        payload = existing
+        lastError = null
+      } else {
+        lastError = resendErrorMessage(createdPlain.json, lastError || `Resend could not add this domain (${createdPlain.status}).`)
+      }
+    } else {
+      lastError = resendErrorMessage(createdPlain.json, lastError || `Resend could not add this domain (${createdPlain.status}).`)
+    }
+  }
+
+  if (!payload?.id) {
+    return { id: null, records: [], error: lastError || "Could not add this domain in Resend." }
+  }
+
+  await resendFetch(`/domains/${payload.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ capabilities: { sending: "enabled", receiving: "enabled" } }),
+  })
+
   const fresh = (await getResendDomainById(payload.id)) ?? payload
-  return { id: payload.id, records: mapResendRecords(domain, fresh.records) }
+  const records = mapResendRecords(domain, fresh.records?.length ? fresh.records : payload.records)
+  if (records.length === 0) {
+    return {
+      id: payload.id,
+      records,
+      error: "Resend accepted the domain but has not returned MX/SPF/DKIM rows yet. Refresh this page in a minute.",
+    }
+  }
+  return { id: payload.id, records, error: null }
 }
 
 async function domainHasMx(domain: string): Promise<boolean> {
@@ -266,10 +452,13 @@ export async function handlePlatformEmailDomainStatus(req: VercelRequest, res: V
     return
   }
 
+  const orgOwnerId = await resolveOrgOwnerId(service, managed.accountId)
+  const canManageDns = await actorCanManageOrgDns(service, auth.userId, orgOwnerId)
+
   const { data: domains, error: domErr } = await service
     .from("platform_custom_email_domains")
     .select("id, domain, status, verified_at, verification_token, resend_domain_id, created_at")
-    .eq("account_id", managed.accountId)
+    .eq("account_id", orgOwnerId)
     .order("created_at", { ascending: false })
 
   if (domErr) {
@@ -288,7 +477,11 @@ export async function handlePlatformEmailDomainStatus(req: VercelRequest, res: V
     return
   }
 
-  const { data: profile } = await service.from("profiles").select("metadata").eq("id", managed.accountId).maybeSingle()
+  const { data: profile } = await service
+    .from("profiles")
+    .select("metadata, email, display_name")
+    .eq("id", managed.accountId)
+    .maybeSingle()
   const meta =
     profile?.metadata && typeof profile.metadata === "object" && !Array.isArray(profile.metadata)
       ? (profile.metadata as Record<string, unknown>)
@@ -300,25 +493,55 @@ export async function handlePlatformEmailDomainStatus(req: VercelRequest, res: V
     | undefined
   let dnsRecords: PlatformEmailDnsRecord[] = []
   let mxPresent = false
-  if (latest?.domain) {
+  let resendError: string | null = null
+  if (latest?.domain && canManageDns) {
     mxPresent = await domainHasMx(latest.domain)
     if (latest.verification_token) {
       dnsRecords.push(tradesmanVerifyRecord(latest.domain, latest.verification_token))
     }
     const resendId = typeof latest.resend_domain_id === "string" ? latest.resend_domain_id.trim() : ""
+    let resendRecords: PlatformEmailDnsRecord[] = []
     if (resendId) {
       const resendDomain = await getResendDomainById(resendId)
-      dnsRecords = dnsRecords.concat(mapResendRecords(latest.domain, resendDomain?.records))
+      resendRecords = mapResendRecords(latest.domain, resendDomain?.records)
     }
+    if (!mailRecordsReady(resendRecords)) {
+      const ensured = await ensureResendReceivingDomain(latest.domain)
+      if (ensured.id) await persistResendDomainId(service, orgOwnerId, latest.domain, ensured.id)
+      if (ensured.records.length) resendRecords = ensured.records
+      resendError = ensured.error
+    }
+    dnsRecords = dnsRecords.concat(resendRecords)
   }
+
+  const publicDomains = (domains ?? []).map((row) => {
+    const rec = row as { id?: string; domain?: string; status?: string; verified_at?: string | null; verification_token?: string }
+    if (canManageDns) return rec
+    return {
+      id: rec.id,
+      domain: rec.domain,
+      status: rec.status,
+      verified_at: rec.verified_at ?? null,
+    }
+  })
 
   res.status(200).json({
     ok: true,
-    domains: domains ?? [],
+    domains: publicDomains,
     customRoutes: customRoutes ?? [],
     outboundRouteId,
+    orgOwnerId,
+    canManageDns,
+    suggestedLocalPart: suggestLocalPart(
+      typeof profile?.email === "string" ? profile.email : "",
+      typeof profile?.display_name === "string" ? profile.display_name : "",
+    ),
     dnsRecords,
     mxPresent,
+    resendError,
+    ...(latest?.domain && canManageDns
+      ? await dnsGuidance(latest.domain, dnsRecords)
+      : { dnsHostLabel: null, mailRecordsReady: mailRecordsReady(dnsRecords) }),
   })
 }
 
@@ -358,11 +581,19 @@ export async function handlePlatformEmailDomainRegister(req: VercelRequest, res:
     return
   }
 
+  const orgOwnerId = await resolveOrgOwnerId(service, managed.accountId)
+  if (!(await actorCanManageOrgDns(service, auth.userId, orgOwnerId))) {
+    res.status(403).json({
+      error: "Ask your office manager to connect the company domain. You can pick your name before @ after it is verified.",
+    })
+    return
+  }
+
   const { data: taken } = await service
     .from("platform_custom_email_domains")
     .select("account_id")
     .eq("domain", domain)
-    .neq("account_id", managed.accountId)
+    .neq("account_id", orgOwnerId)
     .maybeSingle()
   if (taken?.account_id) {
     res.status(400).json({ error: "That domain is already registered to another Tradesman account." })
@@ -372,7 +603,7 @@ export async function handlePlatformEmailDomainRegister(req: VercelRequest, res:
   const { data: existing } = await service
     .from("platform_custom_email_domains")
     .select("id, status, verification_token")
-    .eq("account_id", managed.accountId)
+    .eq("account_id", orgOwnerId)
     .eq("domain", domain)
     .maybeSingle()
 
@@ -400,7 +631,7 @@ export async function handlePlatformEmailDomainRegister(req: VercelRequest, res:
     const { data: inserted, error: insErr } = await service
       .from("platform_custom_email_domains")
       .insert({
-        account_id: managed.accountId,
+        account_id: orgOwnerId,
         domain,
         verification_token: token,
         status: "pending",
@@ -415,11 +646,11 @@ export async function handlePlatformEmailDomainRegister(req: VercelRequest, res:
   }
 
   const resend = await ensureResendReceivingDomain(domain)
-  if (resend) {
-    await persistResendDomainId(service, managed.accountId, domain, resend.id)
+  if (resend.id) {
+    await persistResendDomainId(service, orgOwnerId, domain, resend.id)
   }
   const mxPresent = await domainHasMx(domain)
-  const dnsRecords: PlatformEmailDnsRecord[] = [tradesmanVerifyRecord(domain, token), ...(resend?.records ?? [])]
+  const dnsRecords: PlatformEmailDnsRecord[] = [tradesmanVerifyRecord(domain, token), ...resend.records]
 
   res.status(200).json({
     ok: true,
@@ -429,9 +660,11 @@ export async function handlePlatformEmailDomainRegister(req: VercelRequest, res:
     txt_host: "_tradesman-verify",
     txt_value: token,
     status,
-    resendDomainId: resend?.id ?? null,
+    resendDomainId: resend.id,
+    resendError: resend.error,
     dnsRecords,
     mxPresent,
+    ...(await dnsGuidance(domain, dnsRecords)),
   })
 }
 
@@ -467,10 +700,16 @@ export async function handlePlatformEmailDomainVerify(req: VercelRequest, res: V
     return
   }
 
+  const orgOwnerId = await resolveOrgOwnerId(service, managed.accountId)
+  if (!(await actorCanManageOrgDns(service, auth.userId, orgOwnerId))) {
+    res.status(403).json({ error: "Ask your office manager to finish connecting the company domain." })
+    return
+  }
+
   const { data: row, error: rowErr } = await service
     .from("platform_custom_email_domains")
     .select("id, domain, status, verification_token")
-    .eq("account_id", managed.accountId)
+    .eq("account_id", orgOwnerId)
     .eq("domain", domain)
     .maybeSingle()
 
@@ -482,58 +721,60 @@ export async function handlePlatformEmailDomainVerify(req: VercelRequest, res: V
     res.status(404).json({ error: "Domain not registered — add it first" })
     return
   }
-  if (row.status === "verified") {
-    res.status(200).json({ ok: true, alreadyVerified: true, domain })
-    return
-  }
-
   const token = String(row.verification_token ?? "").trim()
   if (!token) {
     res.status(500).json({ error: "Missing verification token" })
     return
   }
 
-  const verified = await domainTxtVerified(domain, token)
-  if (!verified) {
-    res.status(400).json({
-      error: "TXT record not found yet",
-      hint: `Add a TXT record at _tradesman-verify.${domain} (or @) with value: ${token}`,
-      txt_host: `_tradesman-verify`,
-      txt_value: token,
-    })
-    return
+  const alreadyVerified = row.status === "verified"
+  if (!alreadyVerified) {
+    const verified = await domainTxtVerified(domain, token)
+    if (!verified) {
+      res.status(400).json({
+        error: "Those DNS records are not visible yet. Add every row at your DNS provider, wait a few minutes, and check again.",
+        hint: `The ownership TXT is at host _tradesman-verify with value: ${token}`,
+        txt_host: `_tradesman-verify`,
+        txt_value: token,
+      })
+      return
+    }
   }
 
   const resend = await ensureResendReceivingDomain(domain)
-  if (resend) {
-    await persistResendDomainId(service, managed.accountId, domain, resend.id)
+  if (resend.id) {
+    await persistResendDomainId(service, orgOwnerId, domain, resend.id)
     await resendFetch(`/domains/${resend.id}/verify`, { method: "POST" })
   }
 
-  const { error: markErr } = await service
-    .from("platform_custom_email_domains")
-    .update({
-      status: "verified",
-      verified_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", row.id)
-  if (markErr) {
-    res.status(400).json({ error: markErr.message })
-    return
+  if (!alreadyVerified) {
+    const { error: markErr } = await service
+      .from("platform_custom_email_domains")
+      .update({
+        status: "verified",
+        verified_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", row.id)
+    if (markErr) {
+      res.status(400).json({ error: markErr.message })
+      return
+    }
   }
 
-  const dnsRecords: PlatformEmailDnsRecord[] = [tradesmanVerifyRecord(domain, token)]
-  if (resend) dnsRecords.push(...resend.records)
+  const dnsRecords: PlatformEmailDnsRecord[] = [tradesmanVerifyRecord(domain, token), ...resend.records]
 
   res.status(200).json({
     ok: true,
     verified: true,
+    alreadyVerified,
     domain,
     status: "verified",
-    resendDomainId: resend?.id ?? null,
+    resendDomainId: resend.id,
+    resendError: resend.error,
     dnsRecords,
     mxPresent: await domainHasMx(domain),
+    ...(await dnsGuidance(domain, dnsRecords)),
   })
 }
 
@@ -575,16 +816,22 @@ export async function handlePlatformEmailDomainClaim(req: VercelRequest, res: Ve
     return
   }
 
+  const orgOwnerId = await resolveOrgOwnerId(service, managed.accountId)
   const { data: domainRow } = await service
     .from("platform_custom_email_domains")
-    .select("id, status, verified_at")
-    .eq("account_id", managed.accountId)
+    .select("id, account_id, status, verified_at")
     .eq("domain", domain)
+    .eq("status", "verified")
     .maybeSingle()
   if (!domainRow || domainRow.status !== "verified") {
     res.status(400).json({
-      error: "Add the DNS rows for this domain, then click Check DNS now, before using an address on it.",
+      error: "Ask your office manager to add the DNS records and verify the company domain first.",
     })
+    return
+  }
+  const domainOwnerId = typeof domainRow.account_id === "string" ? domainRow.account_id : ""
+  if (domainOwnerId && domainOwnerId !== orgOwnerId && domainOwnerId !== managed.accountId) {
+    res.status(403).json({ error: "This domain belongs to another organization." })
     return
   }
 
@@ -601,16 +848,16 @@ export async function handlePlatformEmailDomainClaim(req: VercelRequest, res: Ve
     return
   }
 
-  const { data: existingChannels } = await service
+  const { data: existingCustomChannel } = await service
     .from("client_communication_channels")
     .select("id, public_address")
     .eq("user_id", managed.accountId)
     .eq("channel_kind", "email")
     .eq("provider", "resend")
-    .order("active", { ascending: false })
-    .limit(1)
+    .ilike("public_address", publicAddress)
+    .maybeSingle()
 
-  let channelId = existingChannels?.[0]?.id as string | undefined
+  let channelId = existingCustomChannel?.id as string | undefined
   if (!channelId) {
     const { data: inserted, error: chErr } = await service
       .from("client_communication_channels")
