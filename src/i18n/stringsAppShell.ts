@@ -138,17 +138,28 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "account.tradesmanEmail.optionADetail":
       "Choose a name for your business email, e.g. stillcreek@tradesman-us.com. You send customer email from Tradesman using this address.",
     "account.tradesmanEmail.optionB": "Option B — Your own domain",
-    "account.tradesmanEmail.optionBDetail":
-      "Verify a domain you own (e.g. servicerequests@yourcompany.com). Mail is stored in Tradesman first, same as Option A.",
-    "account.tradesmanEmail.custom.needPrimary": "Claim your free @tradesman-us.com address first, then add a custom domain.",
+    "account.tradesmanEmail.optionBDetail": "",
+    "account.tradesmanEmail.custom.needPrimary": "",
+    "account.tradesmanEmail.custom.intro":
+      "Type the domain you own, then start verification. This page will list the TXT, MX, SPF, and DKIM rows to add at your DNS host (GoDaddy → DNS for sole.systems). You do not need a @tradesman-us.com address first.",
     "account.tradesmanEmail.custom.domainLabel": "Your domain",
     "account.tradesmanEmail.custom.register": "Start verification",
-    "account.tradesmanEmail.custom.registered": "DNS instructions are ready — add the TXT record, then verify.",
-    "account.tradesmanEmail.custom.dnsTitle": "DNS verification",
+    "account.tradesmanEmail.custom.registered": "DNS rows are ready — add them at your registrar (GoDaddy for sole.systems), then check DNS.",
+    "account.tradesmanEmail.custom.dnsTitle": "DNS records to add",
     "account.tradesmanEmail.custom.dnsTxt": "Add a TXT record at host",
     "account.tradesmanEmail.custom.dnsValue": "Value:",
+    "account.tradesmanEmail.custom.dnsGoDaddy":
+      "At GoDaddy: DNS → Add record. Host is the Name column (use @ for the root). Add every row, wait a few minutes, then Check DNS now.",
+    "account.tradesmanEmail.custom.dnsNoMx":
+      "This domain has no mail (MX) today — adding the Resend MX row will start receiving @this-domain mail in Tradesman.",
+    "account.tradesmanEmail.custom.dnsHasMx":
+      "This domain already has mail. The Resend MX row must be the lowest priority or existing inboxes will stop receiving.",
+    "account.tradesmanEmail.custom.dnsColPurpose": "Purpose",
+    "account.tradesmanEmail.custom.dnsColType": "Type",
+    "account.tradesmanEmail.custom.dnsColHost": "Host / Name",
+    "account.tradesmanEmail.custom.dnsColValue": "Value",
     "account.tradesmanEmail.custom.dnsMxHint":
-      "After verification, point MX for this domain to Resend (records appear in your Resend dashboard). Outbound sends use this address when claimed.",
+      "Keep these DNS rows in place. After you claim an address (hello@yourdomain), inbound mail lands in Conversations and outbound uses that From address.",
     "account.tradesmanEmail.custom.verify": "Check DNS now",
     "account.tradesmanEmail.custom.verifying": "Checking DNS…",
     "account.tradesmanEmail.custom.verified": "Domain verified.",
@@ -161,6 +172,8 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "account.tradesmanEmail.custom.active": "Active custom address",
     "account.tradesmanEmail.custom.err.invalid": "Enter a valid domain (e.g. yourcompany.com).",
     "account.tradesmanEmail.custom.err.platformDomain": "Use Option A for @tradesman-us.com addresses.",
+    "account.tradesmanEmail.custom.err.notAuthorized":
+      "Could not save this domain for the signed-in workspace. Sign in as that company (or as a platform admin viewing that user). After it saves, add the TXT / MX / SPF / DKIM rows this page lists, then Check DNS now.",
     "account.fold.callScreeningTitle": "Auto-attendant settings",
     "account.fold.callScreeningSub": "Ask callers questions before ringing your phones — off by default.",
     "account.callScreening.intro":
@@ -557,17 +570,28 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "account.tradesmanEmail.optionADetail":
       "Elija un nombre para su correo comercial, p. ej. stillcreek@tradesman-us.com. Envía correo a clientes desde Tradesman con esta dirección.",
     "account.tradesmanEmail.optionB": "Opción B — Su propio dominio",
-    "account.tradesmanEmail.optionBDetail":
-      "Verifique un dominio suyo (p. ej. servicerequests@suempresa.com). El correo se guarda primero en Tradesman, igual que la Opción A.",
-    "account.tradesmanEmail.custom.needPrimary": "Reclame primero su dirección @tradesman-us.com gratuita y luego añada un dominio propio.",
+    "account.tradesmanEmail.optionBDetail": "",
+    "account.tradesmanEmail.custom.needPrimary": "",
+    "account.tradesmanEmail.custom.intro":
+      "Escriba el dominio que posee e inicie la verificación. Esta página listará las filas TXT, MX, SPF y DKIM para su DNS (GoDaddy → DNS para sole.systems). No necesita primero una dirección @tradesman-us.com.",
     "account.tradesmanEmail.custom.domainLabel": "Su dominio",
     "account.tradesmanEmail.custom.register": "Iniciar verificación",
-    "account.tradesmanEmail.custom.registered": "Instrucciones DNS listas — añada el TXT y verifique.",
-    "account.tradesmanEmail.custom.dnsTitle": "Verificación DNS",
+    "account.tradesmanEmail.custom.registered": "Filas DNS listas — añádalas en su registrador (GoDaddy para sole.systems) y compruebe DNS.",
+    "account.tradesmanEmail.custom.dnsTitle": "Registros DNS a añadir",
     "account.tradesmanEmail.custom.dnsTxt": "Añada un registro TXT en el host",
     "account.tradesmanEmail.custom.dnsValue": "Valor:",
+    "account.tradesmanEmail.custom.dnsGoDaddy":
+      "En GoDaddy: DNS → Añadir registro. El host es la columna Name (use @ para la raíz). Añada cada fila, espere unos minutos y pulse Comprobar DNS.",
+    "account.tradesmanEmail.custom.dnsNoMx":
+      "Este dominio no tiene correo (MX) hoy — al añadir el MX de Resend, el correo @este-dominio llegará a Tradesman.",
+    "account.tradesmanEmail.custom.dnsHasMx":
+      "Este dominio ya tiene correo. El MX de Resend debe ser la prioridad más baja o las bandejas actuales dejarán de recibir.",
+    "account.tradesmanEmail.custom.dnsColPurpose": "Uso",
+    "account.tradesmanEmail.custom.dnsColType": "Tipo",
+    "account.tradesmanEmail.custom.dnsColHost": "Host / Name",
+    "account.tradesmanEmail.custom.dnsColValue": "Valor",
     "account.tradesmanEmail.custom.dnsMxHint":
-      "Tras verificar, apunte el MX de este dominio a Resend (registros en el panel de Resend). Los envíos usarán esta dirección.",
+      "Mantenga estas filas DNS. Tras reclamar una dirección (hello@sudominio), el correo entra en Conversaciones y los envíos usan ese From.",
     "account.tradesmanEmail.custom.verify": "Comprobar DNS",
     "account.tradesmanEmail.custom.verifying": "Comprobando DNS…",
     "account.tradesmanEmail.custom.verified": "Dominio verificado.",
@@ -580,6 +604,8 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "account.tradesmanEmail.custom.active": "Dirección personalizada activa",
     "account.tradesmanEmail.custom.err.invalid": "Introduzca un dominio válido (p. ej. suempresa.com).",
     "account.tradesmanEmail.custom.err.platformDomain": "Use la Opción A para direcciones @tradesman-us.com.",
+    "account.tradesmanEmail.custom.err.notAuthorized":
+      "No se pudo guardar este dominio para el espacio de trabajo actual. Inicie sesión como esa empresa (o como admin de plataforma viendo ese usuario). Luego añada las filas TXT / MX / SPF / DKIM que lista esta página y pulse Comprobar DNS.",
     "account.tradesmanEmail.slugLabel": "Nombre del correo",
     "account.tradesmanEmail.forwardLabel": "Reenviar copias a (opcional)",
     "account.tradesmanEmail.forwardHint": "Después de guardar en Tradesman. Déjelo vacío para usar solo Conversaciones.",

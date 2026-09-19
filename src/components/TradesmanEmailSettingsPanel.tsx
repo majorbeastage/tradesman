@@ -427,8 +427,7 @@ export function TradesmanEmailSettingsPanel({ profileUserId }: Props) {
         }}
       >
         <div style={{ fontWeight: 700, fontSize: 13, color: theme.text }}>{t("account.tradesmanEmail.optionB")}</div>
-        <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>{t("account.tradesmanEmail.optionBDetail")}</p>
-        <CustomEmailDomainPanel profileUserId={profileUserId} hasPrimaryTradesmanAddress={Boolean(claimedSlug)} />
+        <CustomEmailDomainPanel profileUserId={profileUserId} />
       </div>
 
       {message ? <p style={{ margin: 0, fontSize: 13, color: "#0f766e", fontWeight: 600 }}>{message}</p> : null}

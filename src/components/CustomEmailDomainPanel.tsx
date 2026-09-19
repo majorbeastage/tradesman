@@ -11,7 +11,6 @@ import { useLocale } from "../i18n/LocaleContext"
 
 type Props = {
   profileUserId: string
-  hasPrimaryTradesmanAddress: boolean
 }
 
 type DomainRow = {
@@ -28,15 +27,26 @@ type CustomRouteRow = {
   domain: string
 }
 
+type DnsRecordRow = {
+  purpose: string
+  host: string
+  type: string
+  value: string
+  priority?: number | null
+  status?: string | null
+}
+
 const inputStyle = { ...theme.formInput, width: "100%" }
 
-export function CustomEmailDomainPanel({ profileUserId, hasPrimaryTradesmanAddress }: Props) {
+export function CustomEmailDomainPanel({ profileUserId }: Props) {
   const { t } = useLocale()
   const [loading, setLoading] = useState(true)
   const [domainInput, setDomainInput] = useState("")
-  const [localPart, setLocalPart] = useState("info")
+  const [localPart, setLocalPart] = useState("hello")
   const [domainRow, setDomainRow] = useState<DomainRow | null>(null)
   const [customRoute, setCustomRoute] = useState<CustomRouteRow | null>(null)
+  const [dnsRecords, setDnsRecords] = useState<DnsRecordRow[]>([])
+  const [mxPresent, setMxPresent] = useState<boolean | null>(null)
   const [registering, setRegistering] = useState(false)
   const [verifying, setVerifying] = useState(false)
   const [claiming, setClaiming] = useState(false)
@@ -64,11 +74,16 @@ export function CustomEmailDomainPanel({ profileUserId, hasPrimaryTradesmanAddre
     setError("")
     try {
       const headers = await authHeaders()
-      const res = await fetch("/api/platform-tools?__route=platform-email-domain-status", { headers })
+      const res = await fetch(
+        `/api/platform-tools?__route=platform-email-domain-status&accountId=${encodeURIComponent(profileUserId)}`,
+        { headers },
+      )
       const json = (await res.json()) as {
         error?: string
         domains?: DomainRow[]
         customRoutes?: CustomRouteRow[]
+        dnsRecords?: DnsRecordRow[]
+        mxPresent?: boolean
       }
       if (!res.ok) throw new Error(json.error || "Failed to load custom domain status")
       const domains = json.domains ?? []
@@ -79,6 +94,8 @@ export function CustomEmailDomainPanel({ profileUserId, hasPrimaryTradesmanAddre
       const route = routes[0] ?? null
       setCustomRoute(route)
       if (route?.local_part) setLocalPart(route.local_part)
+      setDnsRecords(Array.isArray(json.dnsRecords) ? json.dnsRecords : [])
+      setMxPresent(typeof json.mxPresent === "boolean" ? json.mxPresent : null)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -99,9 +116,14 @@ export function CustomEmailDomainPanel({ profileUserId, hasPrimaryTradesmanAddre
       const res = await fetch("/api/platform-tools?__route=platform-email-domain-register", {
         method: "POST",
         headers,
-        body: JSON.stringify({ domain: normalizedDomain }),
+        body: JSON.stringify({ domain: normalizedDomain, accountId: profileUserId }),
       })
-      const json = (await res.json()) as DomainRow & { error?: string; txt_value?: string }
+      const json = (await res.json()) as DomainRow & {
+        error?: string
+        txt_value?: string
+        dnsRecords?: DnsRecordRow[]
+        mxPresent?: boolean
+      }
       if (!res.ok) throw new Error(json.error || "Register failed")
       setDomainRow({
         id: String(json.id ?? ""),
@@ -109,9 +131,12 @@ export function CustomEmailDomainPanel({ profileUserId, hasPrimaryTradesmanAddre
         status: String(json.status ?? "pending"),
         verification_token: String(json.verification_token ?? json.txt_value ?? ""),
       })
+      setDnsRecords(Array.isArray(json.dnsRecords) ? json.dnsRecords : [])
+      setMxPresent(typeof json.mxPresent === "boolean" ? json.mxPresent : null)
       setMessage(t("account.tradesmanEmail.custom.registered"))
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      const raw = e instanceof Error ? e.message : String(e)
+      setError(/not authorized/i.test(raw) ? t("account.tradesmanEmail.custom.err.notAuthorized") : raw)
     } finally {
       setRegistering(false)
     }
@@ -126,11 +151,19 @@ export function CustomEmailDomainPanel({ profileUserId, hasPrimaryTradesmanAddre
       const res = await fetch("/api/platform-tools?__route=platform-email-domain-verify", {
         method: "POST",
         headers,
-        body: JSON.stringify({ domain: domainRow?.domain || normalizedDomain }),
+        body: JSON.stringify({ domain: domainRow?.domain || normalizedDomain, accountId: profileUserId }),
       })
-      const json = (await res.json()) as { error?: string; hint?: string; verified?: boolean }
+      const json = (await res.json()) as {
+        error?: string
+        hint?: string
+        verified?: boolean
+        dnsRecords?: DnsRecordRow[]
+        mxPresent?: boolean
+      }
       if (!res.ok) throw new Error(json.hint || json.error || "Verification failed")
       setDomainRow((prev) => (prev ? { ...prev, status: "verified" } : prev))
+      if (Array.isArray(json.dnsRecords)) setDnsRecords(json.dnsRecords)
+      if (typeof json.mxPresent === "boolean") setMxPresent(json.mxPresent)
       setMessage(t("account.tradesmanEmail.custom.verified"))
       await loadStatus()
     } catch (e) {
@@ -153,6 +186,7 @@ export function CustomEmailDomainPanel({ profileUserId, hasPrimaryTradesmanAddre
           domain: domainRow?.domain || normalizedDomain,
           localPart: normalizedLocal,
           preferForOutbound: true,
+          accountId: profileUserId,
         }),
       })
       const json = (await res.json()) as CustomRouteRow & { error?: string; public_address?: string }
@@ -174,14 +208,6 @@ export function CustomEmailDomainPanel({ profileUserId, hasPrimaryTradesmanAddre
     return <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>{t("common.loading")}</p>
   }
 
-  if (!hasPrimaryTradesmanAddress) {
-    return (
-      <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-        {t("account.tradesmanEmail.custom.needPrimary")}
-      </p>
-    )
-  }
-
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <label style={{ display: "grid", gap: 6 }}>
@@ -190,10 +216,11 @@ export function CustomEmailDomainPanel({ profileUserId, hasPrimaryTradesmanAddre
           type="text"
           value={domainInput}
           onChange={(e) => setDomainInput(e.target.value)}
-          placeholder="stillcreeklandscaping.com"
+          placeholder="sole.systems"
           disabled={isVerified}
           style={inputStyle}
         />
+        <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.45 }}>{t("account.tradesmanEmail.custom.intro")}</span>
         {domainIssue === "platform_domain" ? (
           <span style={{ fontSize: 11, color: "#b91c1c" }}>{t("account.tradesmanEmail.custom.err.platformDomain")}</span>
         ) : domainIssue ? (
@@ -223,35 +250,73 @@ export function CustomEmailDomainPanel({ profileUserId, hasPrimaryTradesmanAddre
         </button>
       ) : null}
 
-      {txtToken && !isVerified ? (
+      {dnsRecords.length > 0 || txtToken ? (
         <div style={{ fontSize: 12, color: "#475569", lineHeight: 1.5, padding: 10, background: "#f1f5f9", borderRadius: 8 }}>
           <div style={{ fontWeight: 700, marginBottom: 6 }}>{t("account.tradesmanEmail.custom.dnsTitle")}</div>
-          <div>
-            {t("account.tradesmanEmail.custom.dnsTxt")}{" "}
-            <code>_tradesman-verify.{domainRow?.domain || normalizedDomain}</code>
+          <p style={{ margin: "0 0 8px", fontSize: 11, color: "#64748b" }}>
+            {t("account.tradesmanEmail.custom.dnsGoDaddy")}
+          </p>
+          {mxPresent === false ? (
+            <p style={{ margin: "0 0 8px", fontSize: 11, color: "#0f766e" }}>{t("account.tradesmanEmail.custom.dnsNoMx")}</p>
+          ) : mxPresent === true ? (
+            <p style={{ margin: "0 0 8px", fontSize: 11, color: "#9a3412" }}>{t("account.tradesmanEmail.custom.dnsHasMx")}</p>
+          ) : null}
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left", padding: "4px 6px" }}>{t("account.tradesmanEmail.custom.dnsColPurpose")}</th>
+                  <th style={{ textAlign: "left", padding: "4px 6px" }}>{t("account.tradesmanEmail.custom.dnsColType")}</th>
+                  <th style={{ textAlign: "left", padding: "4px 6px" }}>{t("account.tradesmanEmail.custom.dnsColHost")}</th>
+                  <th style={{ textAlign: "left", padding: "4px 6px" }}>{t("account.tradesmanEmail.custom.dnsColValue")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(dnsRecords.length > 0
+                  ? dnsRecords
+                  : txtToken
+                    ? [{ purpose: "Tradesman verify", host: "_tradesman-verify", type: "TXT", value: txtToken }]
+                    : []
+                ).map((row, i) => (
+                  <tr key={`${row.type}-${row.host}-${i}`}>
+                    <td style={{ padding: "4px 6px", whiteSpace: "nowrap" }}>{row.purpose}</td>
+                    <td style={{ padding: "4px 6px" }}>
+                      {row.type}
+                      {row.priority != null ? ` (${row.priority})` : ""}
+                    </td>
+                    <td style={{ padding: "4px 6px" }}>
+                      <code>{row.host}</code>
+                    </td>
+                    <td style={{ padding: "4px 6px", wordBreak: "break-all" }}>
+                      <code>{row.value}</code>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          <div style={{ marginTop: 6 }}>
-            {t("account.tradesmanEmail.custom.dnsValue")} <code>{txtToken}</code>
-          </div>
-          <div style={{ marginTop: 8, fontSize: 11, color: "#64748b" }}>{t("account.tradesmanEmail.custom.dnsMxHint")}</div>
-          <button
-            type="button"
-            onClick={() => void handleVerify()}
-            disabled={verifying}
-            style={{
-              marginTop: 10,
-              padding: "8px 14px",
-              borderRadius: 8,
-              border: "none",
-              background: theme.primary,
-              color: "#fff",
-              fontWeight: 700,
-              fontSize: 12,
-              cursor: verifying ? "wait" : "pointer",
-            }}
-          >
-            {verifying ? t("account.tradesmanEmail.custom.verifying") : t("account.tradesmanEmail.custom.verify")}
-          </button>
+          {!isVerified ? (
+            <button
+              type="button"
+              onClick={() => void handleVerify()}
+              disabled={verifying}
+              style={{
+                marginTop: 10,
+                padding: "8px 14px",
+                borderRadius: 8,
+                border: "none",
+                background: theme.primary,
+                color: "#fff",
+                fontWeight: 700,
+                fontSize: 12,
+                cursor: verifying ? "wait" : "pointer",
+              }}
+            >
+              {verifying ? t("account.tradesmanEmail.custom.verifying") : t("account.tradesmanEmail.custom.verify")}
+            </button>
+          ) : (
+            <div style={{ marginTop: 8, fontSize: 11, color: "#64748b" }}>{t("account.tradesmanEmail.custom.dnsMxHint")}</div>
+          )}
         </div>
       ) : null}
 
