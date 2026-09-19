@@ -163,6 +163,8 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
       "Do not overwrite other records. If a TXT or MX already exists on a different host, leave it and add a new row. Only change a row when Type and Host already match what is listed.",
     "account.tradesmanEmail.custom.dnsBuilding":
       "The ownership row is ready. Mail records are still being built on our side — refresh in a minute if you only see one row.",
+    "account.tradesmanEmail.custom.resendFailed":
+      "Could not add this domain in Resend yet",
     "account.tradesmanEmail.custom.dnsColTypeHint": "TXT, MX, or CNAME — pick this in the Type menu",
     "account.tradesmanEmail.custom.dnsColHostHint": "Name field. Use exactly this. @ means the root of your domain.",
     "account.tradesmanEmail.custom.dnsColValueHint": "Copy this exactly into Value / Points to / Data",
@@ -186,6 +188,10 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "account.tradesmanEmail.custom.update": "Update address",
     "account.tradesmanEmail.custom.claimed": "Custom domain address saved for outbound and inbound.",
     "account.tradesmanEmail.custom.active": "Active custom address",
+    "account.tradesmanEmail.custom.remove": "Remove this domain",
+    "account.tradesmanEmail.custom.removeConfirm":
+      "Remove this domain from Tradesman so you can add it again and re-check DNS? This does not change records at your DNS provider and does not change any @tradesman-us.com address.",
+    "account.tradesmanEmail.custom.removed": "Domain removed. Enter it again to start a new setup.",
     "account.tradesmanEmail.custom.err.invalid": "Enter a valid domain (e.g. yourcompany.com).",
     "account.tradesmanEmail.custom.err.platformDomain": "Use Option A for @tradesman-us.com addresses.",
     "account.tradesmanEmail.custom.err.notAuthorized":
@@ -611,6 +617,8 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
       "No sobrescriba otros registros. Si ya hay un TXT o MX en otro host, déjelo y añada una fila nueva. Solo cambie una fila si Tipo y Host ya coinciden con lo listado.",
     "account.tradesmanEmail.custom.dnsBuilding":
       "La fila de propiedad está lista. Los registros de correo se están armando — actualice en un minuto si solo ve una fila.",
+    "account.tradesmanEmail.custom.resendFailed":
+      "Aún no se pudo añadir este dominio en Resend",
     "account.tradesmanEmail.custom.dnsColTypeHint": "TXT, MX o CNAME — elija esto en Tipo",
     "account.tradesmanEmail.custom.dnsColHostHint": "Campo Name. Úselo tal cual. @ es la raíz del dominio.",
     "account.tradesmanEmail.custom.dnsColValueHint": "Cópielo tal cual en Valor / Apunta a / Data",
@@ -634,6 +642,10 @@ export const APP_SHELL_STRINGS: Record<"en" | "es", Record<string, string>> = {
     "account.tradesmanEmail.custom.update": "Actualizar dirección",
     "account.tradesmanEmail.custom.claimed": "Dirección de dominio propio guardada para envío y recepción.",
     "account.tradesmanEmail.custom.active": "Dirección personalizada activa",
+    "account.tradesmanEmail.custom.remove": "Quitar este dominio",
+    "account.tradesmanEmail.custom.removeConfirm":
+      "¿Quitar este dominio de Tradesman para añadirlo de nuevo y volver a comprobar DNS? Esto no cambia los registros en su proveedor DNS ni ninguna dirección @tradesman-us.com.",
+    "account.tradesmanEmail.custom.removed": "Dominio quitado. Escríbalo de nuevo para empezar otra vez.",
     "account.tradesmanEmail.custom.err.invalid": "Introduzca un dominio válido (p. ej. suempresa.com).",
     "account.tradesmanEmail.custom.err.platformDomain": "Use la Opción A para direcciones @tradesman-us.com.",
     "account.tradesmanEmail.custom.err.notAuthorized":

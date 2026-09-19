@@ -61,9 +61,11 @@ export function CustomEmailDomainPanel({ profileUserId }: Props) {
   const [dnsHostLabel, setDnsHostLabel] = useState<string | null>(null)
   const [mailRecordsReady, setMailRecordsReady] = useState(false)
   const [canManageDns, setCanManageDns] = useState(true)
+  const [resendError, setResendError] = useState("")
   const [registering, setRegistering] = useState(false)
   const [verifying, setVerifying] = useState(false)
   const [claiming, setClaiming] = useState(false)
+  const [removing, setRemoving] = useState(false)
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
 
@@ -81,6 +83,7 @@ export function CustomEmailDomainPanel({ profileUserId }: Props) {
     setDnsHostLabel(typeof json.dnsHostLabel === "string" && json.dnsHostLabel.trim() ? json.dnsHostLabel.trim() : null)
     setMailRecordsReady(json.mailRecordsReady === true)
     if (typeof json.canManageDns === "boolean") setCanManageDns(json.canManageDns)
+    setResendError(typeof json.resendError === "string" && json.resendError.trim() ? json.resendError.trim() : "")
   }, [])
 
   const authHeaders = useCallback(async (): Promise<Record<string, string>> => {
@@ -222,6 +225,36 @@ export function CustomEmailDomainPanel({ profileUserId }: Props) {
     }
   }
 
+  async function handleRemove() {
+    const domain = domainRow?.domain || normalizedDomain
+    if (!domain) return
+    if (!window.confirm(t("account.tradesmanEmail.custom.removeConfirm"))) return
+    setRemoving(true)
+    setMessage("")
+    setError("")
+    try {
+      const headers = await authHeaders()
+      const res = await fetch("/api/platform-tools?__route=platform-email-domain-remove", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ domain, accountId: profileUserId }),
+      })
+      const json = (await res.json()) as { error?: string }
+      if (!res.ok) throw new Error(json.error || "Remove failed")
+      setDomainRow(null)
+      setCustomRoute(null)
+      setDnsRecords([])
+      setMxPresent(null)
+      setMailRecordsReady(false)
+      setResendError("")
+      setMessage(t("account.tradesmanEmail.custom.removed"))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRemoving(false)
+    }
+  }
+
   if (loading) {
     return <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>{t("common.loading")}</p>
   }
@@ -291,6 +324,11 @@ export function CustomEmailDomainPanel({ profileUserId }: Props) {
           {!mailRecordsReady && (dnsRecords.length > 0 || txtToken) ? (
             <p style={{ margin: "0 0 8px", fontSize: 11, color: "#9a3412" }}>
               {t("account.tradesmanEmail.custom.dnsBuilding")}
+            </p>
+          ) : null}
+          {resendError ? (
+            <p style={{ margin: "0 0 8px", fontSize: 11, color: "#b91c1c", lineHeight: 1.45 }}>
+              {t("account.tradesmanEmail.custom.resendFailed")}: {resendError}
             </p>
           ) : null}
           {mxPresent === false ? (
@@ -421,6 +459,27 @@ export function CustomEmailDomainPanel({ profileUserId }: Props) {
             </span>
           ) : null}
         </div>
+      ) : null}
+
+      {canManageDns && domainRow?.domain ? (
+        <button
+          type="button"
+          onClick={() => void handleRemove()}
+          disabled={removing}
+          style={{
+            padding: "8px 12px",
+            borderRadius: 8,
+            border: "1px solid #fecaca",
+            background: "transparent",
+            color: "#b91c1c",
+            fontWeight: 700,
+            fontSize: 12,
+            cursor: removing ? "wait" : "pointer",
+            justifySelf: "start",
+          }}
+        >
+          {removing ? t("common.saving") : t("account.tradesmanEmail.custom.remove")}
+        </button>
       ) : null}
 
       {message ? <p style={{ margin: 0, fontSize: 12, color: "#0f766e", fontWeight: 600 }}>{message}</p> : null}

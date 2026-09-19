@@ -2,6 +2,7 @@
  * Custom domain verification (Option B) — DNS TXT check + Supabase RPCs.
  * POST /api/platform-tools?__route=platform-email-domain-register
  * POST /api/platform-tools?__route=platform-email-domain-verify
+ * POST /api/platform-tools?__route=platform-email-domain-remove
  * GET  /api/platform-tools?__route=platform-email-domain-status
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node"
@@ -306,6 +307,11 @@ async function listAllResendDomains(): Promise<ResendDomainPayload[]> {
     const list = await resendFetch(path)
     const json = list.json as { data?: ResendDomainPayload[]; has_more?: boolean } | null
     const rows = Array.isArray(json?.data) ? json.data : []
+    if (!list.ok && page === 0 && !after) {
+      const fallback = await resendFetch("/domains")
+      const raw = fallback.json as { data?: ResendDomainPayload[] } | null
+      return Array.isArray(raw?.data) ? raw.data : []
+    }
     out.push(...rows)
     if (!json?.has_more || rows.length === 0) break
     const lastId = rows[rows.length - 1]?.id
@@ -320,10 +326,18 @@ async function getResendDomainByName(domain: string): Promise<ResendDomainPayloa
   return rows.find((d) => String(d.name ?? "").toLowerCase() === domain) ?? null
 }
 
+function asResendDomain(json: unknown): ResendDomainPayload | null {
+  if (!json || typeof json !== "object") return null
+  const rec = json as ResendDomainPayload & { data?: ResendDomainPayload }
+  if (typeof rec.id === "string" && rec.id.trim()) return rec
+  if (rec.data && typeof rec.data.id === "string" && rec.data.id.trim()) return rec.data
+  return null
+}
+
 async function getResendDomainById(id: string): Promise<ResendDomainPayload | null> {
   const got = await resendFetch(`/domains/${id}`)
-  if (!got.ok || !got.json || typeof got.json !== "object") return null
-  return got.json as ResendDomainPayload
+  if (!got.ok) return null
+  return asResendDomain(got.json)
 }
 
 type EnsureResendResult = {
@@ -356,9 +370,10 @@ async function ensureResendReceivingDomain(domain: string): Promise<EnsureResend
   let lastError: string | null = null
 
   const createdReceiving = await createResendDomain(domain, true)
-  if (createdReceiving.ok && createdReceiving.json && typeof createdReceiving.json === "object") {
-    payload = createdReceiving.json as ResendDomainPayload
-  } else {
+  if (createdReceiving.ok) {
+    payload = asResendDomain(createdReceiving.json)
+  }
+  if (!payload?.id) {
     lastError = resendErrorMessage(createdReceiving.json, `Resend could not add this domain (${createdReceiving.status}).`)
     if (resendAlreadyExists(createdReceiving.status, createdReceiving.json) || createdReceiving.status >= 400) {
       const existing = await getResendDomainByName(domain)
@@ -368,9 +383,9 @@ async function ensureResendReceivingDomain(domain: string): Promise<EnsureResend
 
   if (!payload?.id) {
     const createdPlain = await createResendDomain(domain, false)
-    if (createdPlain.ok && createdPlain.json && typeof createdPlain.json === "object") {
-      payload = createdPlain.json as ResendDomainPayload
-      lastError = null
+    if (createdPlain.ok) {
+      payload = asResendDomain(createdPlain.json)
+      if (payload?.id) lastError = null
     } else if (resendAlreadyExists(createdPlain.status, createdPlain.json)) {
       const existing = await getResendDomainByName(domain)
       if (existing?.id) {
@@ -385,6 +400,7 @@ async function ensureResendReceivingDomain(domain: string): Promise<EnsureResend
   }
 
   if (!payload?.id) {
+    console.error("[platform-email-domain] Resend domain create failed", lastError)
     return { id: null, records: [], error: lastError || "Could not add this domain in Resend." }
   }
 
@@ -944,4 +960,65 @@ export async function handlePlatformEmailDomainClaim(req: VercelRequest, res: Ve
     local_part: localPart,
     prefer_for_outbound: preferForOutbound,
   })
+}
+
+export async function handlePlatformEmailDomainRemove(req: VercelRequest, res: VercelResponse): Promise<void> {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed" })
+    return
+  }
+  const auth = await resolveAuthedUserId(req)
+  if ("error" in auth) {
+    res.status(auth.status).json({ error: auth.error })
+    return
+  }
+
+  const body = (req.body ?? {}) as Record<string, unknown>
+  const domain = normalizeDomainInput(typeof body.domain === "string" ? body.domain : "")
+  if (!domain) {
+    res.status(400).json({ error: "domain is required" })
+    return
+  }
+
+  let service: ReturnType<typeof createServiceSupabase>
+  try {
+    service = createServiceSupabase()
+  } catch {
+    res.status(500).json({ error: "Service role not configured" })
+    return
+  }
+
+  const managed = await resolveManagedAccountId(service, auth.userId, req)
+  if ("error" in managed) {
+    res.status(managed.status).json({ error: managed.error })
+    return
+  }
+
+  const orgOwnerId = await resolveOrgOwnerId(service, managed.accountId)
+  if (!(await actorCanManageOrgDns(service, auth.userId, orgOwnerId))) {
+    res.status(403).json({ error: "Ask your office manager if this domain needs to be removed." })
+    return
+  }
+
+  const { data: row } = await service
+    .from("platform_custom_email_domains")
+    .select("id, account_id")
+    .eq("domain", domain)
+    .maybeSingle()
+  if (!row?.id) {
+    res.status(200).json({ ok: true, removed: domain, alreadyGone: true })
+    return
+  }
+  if (row.account_id !== orgOwnerId && row.account_id !== managed.accountId) {
+    res.status(403).json({ error: "This domain belongs to another organization." })
+    return
+  }
+
+  const { error: delErr } = await service.from("platform_custom_email_domains").delete().eq("id", row.id)
+  if (delErr) {
+    res.status(400).json({ error: delErr.message })
+    return
+  }
+
+  res.status(200).json({ ok: true, removed: domain })
 }

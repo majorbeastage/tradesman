@@ -50,6 +50,7 @@ import { handleRecordOpsCustomerEvent } from "./_recordOpsCustomerEvent.js"
 import {
   handlePlatformEmailDomainClaim,
   handlePlatformEmailDomainRegister,
+  handlePlatformEmailDomainRemove,
   handlePlatformEmailDomainStatus,
   handlePlatformEmailDomainVerify,
 } from "./_platformEmailDomain.js"
@@ -1946,6 +1947,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
         "platform-email-domain-register",
         "platform-email-domain-verify",
         "platform-email-domain-claim",
+        "platform-email-domain-remove",
         "record-ops-customer-event",
       ],
     })
@@ -2023,6 +2025,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     }
     if (route === "platform-email-domain-claim") {
       await handlePlatformEmailDomainClaim(req, res)
+      return
+    }
+    if (route === "platform-email-domain-remove") {
+      await handlePlatformEmailDomainRemove(req, res)
       return
     }
     if (route === "record-ops-customer-event") {
