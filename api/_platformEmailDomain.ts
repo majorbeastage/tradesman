@@ -173,12 +173,23 @@ type ResendDomainPayload = {
   capabilities?: { sending?: string; receiving?: string }
 }
 
-function resendApiKey(): string {
-  return firstEnv("RESEND_API_KEY").trim()
+function resendDomainApiKey(): string {
+  return firstEnv("RESEND_DOMAINS_API_KEY", "RESEND_API_KEY").trim()
+}
+
+function resendRestrictedKeyMessage(json: unknown): string | null {
+  if (!json || typeof json !== "object") return null
+  const rec = json as { name?: unknown; message?: unknown }
+  const name = typeof rec.name === "string" ? rec.name : ""
+  const message = typeof rec.message === "string" ? rec.message : ""
+  if (name === "restricted_api_key" || /restricted to only send/i.test(message)) {
+    return "The sending API key cannot create domains. In Resend → API Keys, create a Full access key and set it on Vercel as RESEND_DOMAINS_API_KEY. Leave RESEND_API_KEY as the send-only key."
+  }
+  return null
 }
 
 async function resendFetch(path: string, init?: RequestInit): Promise<{ ok: boolean; status: number; json: unknown }> {
-  const apiKey = resendApiKey()
+  const apiKey = resendDomainApiKey()
   if (!apiKey) return { ok: false, status: 0, json: null }
   try {
     const res = await fetch(`https://api.resend.com${path}`, {
@@ -287,6 +298,8 @@ async function detectDnsHostLabel(domain: string): Promise<string | null> {
 }
 
 function resendErrorMessage(json: unknown, fallback: string): string {
+  const restricted = resendRestrictedKeyMessage(json)
+  if (restricted) return restricted
   if (json && typeof json === "object") {
     const message = (json as { message?: unknown }).message
     if (typeof message === "string" && message.trim()) return message.trim()
@@ -358,11 +371,12 @@ async function createResendDomain(domain: string, withReceiving: boolean) {
 }
 
 async function ensureResendReceivingDomain(domain: string): Promise<EnsureResendResult> {
-  if (!resendApiKey()) {
+  if (!resendDomainApiKey()) {
     return {
       id: null,
       records: [],
-      error: "RESEND_API_KEY is not set on the server, so mail records cannot be created yet.",
+      error:
+        "Set RESEND_DOMAINS_API_KEY on Vercel to a Resend Full access key (the send-only RESEND_API_KEY cannot create domains).",
     }
   }
 
