@@ -13,6 +13,7 @@
  * POST /api/platform-tools?__route=platform-assistant-route — Phase 2 LLM router for platform assistant (Bearer JWT)
  * POST /api/platform-tools?__route=platform-assistant-vocabulary-train — Admin AI coach for training phrases (Bearer JWT, admin role)
  * POST /api/platform-tools?__route=workflow-from-voice — Build workflow steps from voice/text description (Bearer JWT)
+ * POST /api/platform-tools?__route=admin-sole-workspace — Admin SOLE@tradesman-us.com workspace + encrypted site logins (Bearer JWT, admin)
  * POST /api/platform-tools?__route=helcim-js-return  — Helcim.js iframe POST (also routed as /api/helcim-js-return via vercel.json rewrite)
  * GET  /api/platform-tools?__route=sms-consent  — static SMS consent HTML (bundled public/sms-consent.html; legacy)
  * GET  /api/platform-tools?__route=legal-html&page=privacy|terms|sms  — HTML from platform_settings (crawlable; no JS)
@@ -58,6 +59,7 @@ import { handleBillingPortalConfigVercel } from "./_billingPortalConfigVercel.js
 import { handlePlatformAssistantRoute } from "./_platformAssistantRoute.js"
 import { handlePlatformAssistantVocabularyTrain } from "./_platformAssistantVocabularyTrain.js"
 import { handleWorkflowFromVoice } from "./_workflowFromVoice.js"
+import { handleAdminSoleWorkspace } from "./_adminSoleWorkspace.js"
 import { publicRequestOrigin } from "./_requestOrigin.js"
 import { renderPublicLegalHtmlPage } from "./_renderPublicLegalHtml.js"
 
@@ -2092,6 +2094,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       if (!auth) return
       const { handleShareOrgContact } = await import("./_shareOrgContact.js")
       await handleShareOrgContact(req, res, auth.userId)
+      return
+    }
+    if (route === "admin-sole-workspace") {
+      const auth = await getUserIdFromBearer(req, res)
+      if (!auth) return
+      await handleAdminSoleWorkspace(req, res, auth.userId)
       return
     }
     res.status(400).json({

@@ -15,6 +15,7 @@
     "preview": "vite preview",
     "mobile:sync": "npm run build && npx cap sync && node scripts/align-android-agp.cjs && node scripts/ios-fix-spm-paths.cjs && python scripts/ios-sanitize-info-plist.py",
     "mobile:build:android": "powershell -ExecutionPolicy Bypass -File ./scripts/build-android.ps1",
+    "mobile:build:android:messaging": "powershell -ExecutionPolicy Bypass -File ./scripts/build-messaging-android.ps1",
     "mobile:build:all": "npm run mobile:sync",
     "mobile:open:android": "npx cap open android",
     "mobile:open:ios": "npx cap open ios",

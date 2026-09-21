@@ -25,6 +25,7 @@ export type AdminPanelId =
   | "portal"
   | "tickets"
   | "about"
+  | "sole"
 
 export type PlatformPageIntent = {
   kind: "page"
@@ -67,6 +68,7 @@ export const ADMIN_PANEL_LABELS: Record<AdminPanelId, string> = {
   portal: "Portal builder",
   tickets: "Trouble tickets",
   about: "About us (admin)",
+  sole: "SOLE workspace",
 }
 
 /** Pages the assistant can open inside the user / office manager app shell. */
@@ -431,6 +433,13 @@ export const PLATFORM_ADMIN_INTENTS: PlatformAdminIntent[] = [
     label: ADMIN_PANEL_LABELS.about,
     description: "About us content for the public site",
     patterns: [/\babout\s+us\b/i, /\bcompany\s+info\b/i],
+  },
+  {
+    kind: "admin",
+    panel: "sole",
+    label: ADMIN_PANEL_LABELS.sole,
+    description: "Tradesman workspace for sole@tradesman-us.com and marketing site logins",
+    patterns: [/\bsole\b/i, /\bsole\s+workspace\b/i, /\bsole@tradesman/i],
   },
 ]
 

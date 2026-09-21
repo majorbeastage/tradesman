@@ -27,6 +27,7 @@ import AdminCampaignsSection from "./AdminCampaignsSection"
 import AdminGoogleReserveSection from "./AdminGoogleReserveSection"
 import AdminVoicePromptStudioSection from "./AdminVoicePromptStudioSection"
 import AdminConferenceSection from "./AdminConferenceSection"
+import AdminSoleWorkspaceSection from "./AdminSoleWorkspaceSection"
 import type { PortalConfig, PortalCustomItem, PageControl, PortalSettingItem, CustomActionButton } from "../../types/portal-builder"
 import {
   TAB_ID_LABELS,
@@ -565,7 +566,7 @@ function AdminAppInner() {
   /** When false, control items with hideFromAdmin are omitted from this list (toggle to edit them). */
   const [showPortalItemsHiddenFromAdmin, setShowPortalItemsHiddenFromAdmin] = useState(false)
   const [adminPanel, setAdminPanel] = useState<
-    "ops" | "traffic" | "campaigns" | "google_reserve" | "voice_studio" | "conference" | "signup" | "communications" | "users" | "billing" | "portal" | "tickets" | "about"
+    "ops" | "traffic" | "campaigns" | "google_reserve" | "voice_studio" | "conference" | "signup" | "communications" | "users" | "billing" | "portal" | "tickets" | "about" | "sole"
   >("ops")
   const [billingProblemCount, setBillingProblemCount] = useState(0)
 
@@ -589,7 +590,8 @@ function AdminAppInner() {
         pending === "billing" ||
         pending === "portal" ||
         pending === "tickets" ||
-        pending === "about"
+        pending === "about" ||
+        pending === "sole"
       ) {
         setAdminPanel(pending)
         sessionStorage.removeItem(ASSISTANT_ADMIN_PANEL_STORAGE_KEY)
@@ -1183,22 +1185,20 @@ function AdminAppInner() {
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
           <button
             type="button"
-            onClick={() => {
-              window.open("https://sole.systems/user/login", "_blank", "noopener,noreferrer")
-            }}
+            onClick={() => setAdminPanel("sole")}
             style={{
               padding: "8px 12px",
               borderRadius: 6,
               border: `1px solid rgba(255,255,255,0.35)`,
-              background: "rgba(0,0,0,0.2)",
+              background: adminPanel === "sole" ? "rgba(249,115,22,0.45)" : "rgba(0,0,0,0.2)",
               color: "white",
               fontSize: 13,
               cursor: "pointer",
-              fontWeight: 400,
+              fontWeight: adminPanel === "sole" ? 600 : 400,
               textAlign: "left",
             }}
           >
-            SOLE login
+            SOLE workspace
           </button>
           <button
             type="button"
@@ -1638,7 +1638,9 @@ function AdminAppInner() {
             </button>
           </div>
         ) : null}
-        {adminPanel === "ops" ? (
+        {adminPanel === "sole" ? (
+          <AdminSoleWorkspaceSection />
+        ) : adminPanel === "ops" ? (
           <AdminOpsInboxSection onOpenTickets={() => setAdminPanel("tickets")} onOpenUsers={() => setAdminPanel("users")} />
         ) : adminPanel === "traffic" ? (
           <AdminTrafficSection />
