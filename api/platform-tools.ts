@@ -14,6 +14,7 @@
  * POST /api/platform-tools?__route=platform-assistant-vocabulary-train — Admin AI coach for training phrases (Bearer JWT, admin role)
  * POST /api/platform-tools?__route=workflow-from-voice — Build workflow steps from voice/text description (Bearer JWT)
  * POST /api/platform-tools?__route=admin-sole-workspace — Admin SOLE@tradesman-us.com workspace + encrypted site logins (Bearer JWT, admin)
+ * POST /api/platform-tools?__route=growth-sole-applet — Issue or reopen this shop’s SOLE Client applet (Bearer JWT)
  * POST /api/platform-tools?__route=helcim-js-return  — Helcim.js iframe POST (also routed as /api/helcim-js-return via vercel.json rewrite)
  * GET  /api/platform-tools?__route=sms-consent  — static SMS consent HTML (bundled public/sms-consent.html; legacy)
  * GET  /api/platform-tools?__route=legal-html&page=privacy|terms|sms  — HTML from platform_settings (crawlable; no JS)
@@ -2100,6 +2101,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       const auth = await getUserIdFromBearer(req, res)
       if (!auth) return
       await handleAdminSoleWorkspace(req, res, auth.userId)
+      return
+    }
+    if (route === "growth-sole-applet") {
+      const auth = await getUserIdFromBearer(req, res)
+      if (!auth) return
+      const { handleGrowthSoleApplet } = await import("./_growthSoleApplet.js")
+      await handleGrowthSoleApplet(req, res, auth.userId)
       return
     }
     res.status(400).json({

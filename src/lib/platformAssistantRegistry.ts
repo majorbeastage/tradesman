@@ -214,7 +214,7 @@ export const PLATFORM_PAGE_INTENTS: PlatformPageIntent[] = [
     kind: "page",
     page: "growth",
     label: TAB_ID_LABELS.growth,
-    description: "Growth — lead acquisition, Google Business, reviews, attribution, ROI",
+    description: "Growth — SOLE Client applet to grant profile management, plus website, budget, and campaigns",
     platforms: ["user", "office_manager"],
     patterns: [
       /\bgrowth\b/i,

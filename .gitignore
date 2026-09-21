@@ -48,3 +48,7 @@ android/*.keystore
 android/app/google-services.json
 
 .vercel
+
+# Nested CRM experiment — not part of the Vercel app. Leaving it as a git
+# submodule made production clones fail.
+tradesman-crm/

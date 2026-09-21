@@ -40,6 +40,7 @@ import {
   type AdCampaignRow,
 } from "../../lib/adCampaigns"
 import { HostedWebsiteGrowthPanel } from "../../components/HostedWebsiteGrowthPanel"
+import GrowthSoleAppletPanel from "../../components/GrowthSoleAppletPanel"
 import {
   emptyHostedWebsiteDoc,
   mergeHostedWebsiteMetadata,
@@ -52,11 +53,12 @@ type Props = {
   setPage: (page: string) => void
 }
 
-type SectionId = "overview" | "profiles" | "grades" | "budget" | "campaigns" | "changes"
+type SectionId = "sole" | "overview" | "profiles" | "grades" | "budget" | "campaigns" | "changes"
 
 const SECTIONS: { id: SectionId; label: string }[] = [
-  { id: "overview", label: "Overview" },
-  { id: "profiles", label: "Business profiles" },
+  { id: "sole", label: "SOLE applet" },
+  { id: "overview", label: "Website & capture" },
+  { id: "profiles", label: "Saved URLs" },
   { id: "grades", label: "AI visibility" },
   { id: "budget", label: "Marketing budget" },
   { id: "campaigns", label: "Campaigns" },
@@ -69,7 +71,7 @@ export default function GrowthPage({ setPage }: Props) {
   const userId = useScopedUserId() ?? user?.id ?? null
   const [doc, setDoc] = useState<GrowthModuleDoc>(() => loadGrowthDocFromProfileMetadata(null))
   const [leadCaptureSlug, setLeadCaptureSlug] = useState("")
-  const [section, setSection] = useState<SectionId>("overview")
+  const [section, setSection] = useState<SectionId>("sole")
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [grading, setGrading] = useState(false)
@@ -326,6 +328,10 @@ export default function GrowthPage({ setPage }: Props) {
     <div className="scheme-page growth-page" style={{ maxWidth: 1100, margin: "0 auto", padding: "8px 4px 32px" }}>
       <header style={{ marginBottom: 20 }}>
         <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: portalTheme.text }}>Growth</h1>
+        <p style={{ margin: "8px 0 0", fontSize: 14, color: portalTheme.text, opacity: 0.75, maxWidth: 720 }}>
+          Growth is the SOLE Client applet for this shop. Connect profiles here. SOLE Admin holds SOLE’s own accounts
+          on those websites.
+        </p>
         {saving ? <div style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>Saving…</div> : null}
         {err ? <div style={{ marginTop: 8, fontSize: 12, color: "#b91c1c" }}>{err}</div> : null}
       </header>
@@ -337,6 +343,8 @@ export default function GrowthPage({ setPage }: Props) {
           </button>
         ))}
       </div>
+
+      {section === "sole" ? <GrowthSoleAppletPanel /> : null}
 
       {section === "overview" ? (
         <OverviewSection

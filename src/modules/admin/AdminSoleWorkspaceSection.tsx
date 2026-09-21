@@ -162,8 +162,12 @@ export default function AdminSoleWorkspaceSection() {
         <h1 style={{ color: theme.text, margin: "0 0 8px", fontSize: 22 }}>SOLE workspace</h1>
         <p style={{ color: theme.text, opacity: 0.8, margin: 0, fontSize: 14, lineHeight: 1.5 }}>
           This is the Tradesman home for <strong>{SOLE_TRADESMAN_PROFILE_EMAIL}</strong> — User zero on this platform.
-          Use it like any other contractor profile. Site logins below are for the marketing accounts that profile runs
-          (Meta, TikTok, Google, Yelp, and anything else you add).
+          SOLE’s own logins to Meta, Google, Yelp, and the other 18 sites live in{" "}
+          <strong>SOLE Admin</strong> at{" "}
+          <a href="https://sole.systems/ops" target="_blank" rel="noopener noreferrer">
+            sole.systems/ops
+          </a>
+          , not here. This shop then uses the Growth tab applet to grant SOLE management of Tradesman-US profiles.
         </p>
       </AdminSettingBlock>
 
@@ -184,8 +188,8 @@ export default function AdminSoleWorkspaceSection() {
               <button type="button" onClick={openTradesmanProfile} style={primaryBtn}>
                 Open this profile in Tradesman
               </button>
-              <a href="https://sole.systems/user/login" target="_blank" rel="noopener noreferrer" style={secondaryLink}>
-                Open sole.systems (separate)
+              <a href="https://sole.systems/ops" target="_blank" rel="noopener noreferrer" style={secondaryLink}>
+                Open SOLE Admin
               </a>
             </div>
           </div>
@@ -196,8 +200,8 @@ export default function AdminSoleWorkspaceSection() {
               (or change an existing profile’s email), then this workspace can open their dashboard, website, and
               conversations.
             </p>
-            <a href="https://sole.systems/user/login" target="_blank" rel="noopener noreferrer" style={secondaryLink}>
-              Open sole.systems (separate)
+            <a href="https://sole.systems/ops" target="_blank" rel="noopener noreferrer" style={secondaryLink}>
+              Open SOLE Admin
             </a>
           </div>
         )}
