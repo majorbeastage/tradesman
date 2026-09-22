@@ -7,6 +7,7 @@ import {
   normalizePhone,
 } from "./_communications.js"
 import { isPromotionalEmailAddress } from "./_customerContactKind.js"
+import { mergeCustomerTrafficSourceFirstTouch } from "./_customerTrafficSource.js"
 import { isSandboxProfileRow } from "./_sandboxEnvironment.js"
 import { DEFAULT_SANDBOX_DEMO_TEAM } from "./_sandboxDemoTeam.js"
 import {
@@ -433,7 +434,7 @@ export async function seedSandboxWorkspace(
 
   const customerIds: string[] = []
   for (const row of SEED_CUSTOMERS) {
-    const { customerId } = await getOrCreateCustomerByPhone(supabase, userId, row.phone)
+    const { customerId } = await getOrCreateCustomerByPhone(supabase, userId, row.phone, { kind: "sandbox" })
     customerIds.push(customerId)
     const idx = customerIds.length - 1
     const serviceAddress = `${row.name.split(" ").pop()} St, ${SANDBOX_CITY}, ${SANDBOX_STATE} ${SANDBOX_ZIP}`
@@ -447,11 +448,14 @@ export async function seedSandboxWorkspace(
         service_address: serviceAddress,
         service_lat: serviceLat,
         service_lng: serviceLng,
-        metadata: {
-          sandbox_seed: true,
-          contact_separated: true,
-          service_address: serviceAddress,
-        },
+        metadata: mergeCustomerTrafficSourceFirstTouch(
+          {
+            sandbox_seed: true,
+            contact_separated: true,
+            service_address: serviceAddress,
+          },
+          { kind: "sandbox" },
+        ),
         last_activity_at: hoursFromNow(-Math.floor(Math.random() * 72)),
       })
       .eq("id", customerId)
@@ -552,17 +556,20 @@ export async function seedSandboxWorkspace(
 
   for (const promo of PROMOTIONAL_SEED_SENDERS) {
     try {
-      const { customerId } = await getOrCreateCustomerByEmail(supabase, userId, promo.email)
+      const { customerId } = await getOrCreateCustomerByEmail(supabase, userId, promo.email, { kind: "sandbox" })
       await supabase
         .from("customers")
         .update({
           display_name: promo.name,
           last_activity_at: new Date().toISOString(),
-          metadata: {
-            sandbox_seed: true,
-            sandbox_promotional: true,
-            customer_hub_kind: "promotional",
-          },
+          metadata: mergeCustomerTrafficSourceFirstTouch(
+            {
+              sandbox_seed: true,
+              sandbox_promotional: true,
+              customer_hub_kind: "promotional",
+            },
+            { kind: "sandbox" },
+          ),
         })
         .eq("id", customerId)
         .eq("user_id", userId)
@@ -610,18 +617,21 @@ export async function injectSandboxLead(
   const scenario = LIVE_LEAD_SCENARIOS[idx]!
 
   if (scenario.channel === "email" && isPromotionalEmailAddress(scenario.email)) {
-    const { customerId } = await getOrCreateCustomerByEmail(supabase, userId, scenario.email)
+    const { customerId } = await getOrCreateCustomerByEmail(supabase, userId, scenario.email, { kind: "sandbox" })
     await supabase
       .from("customers")
       .update({
         display_name: scenario.name,
         last_activity_at: new Date().toISOString(),
-        metadata: {
-          sandbox_live: true,
-          sandbox_promotional: true,
-          customer_hub_kind: "promotional",
-          attribution_source: scenario.attribution ?? "email_campaign",
-        },
+        metadata: mergeCustomerTrafficSourceFirstTouch(
+          {
+            sandbox_live: true,
+            sandbox_promotional: true,
+            customer_hub_kind: "promotional",
+            attribution_source: scenario.attribution ?? "email_campaign",
+          },
+          { kind: "sandbox" },
+        ),
       })
       .eq("id", customerId)
       .eq("user_id", userId)
@@ -648,18 +658,21 @@ export async function injectSandboxLead(
     }
   }
 
-  const { customerId } = await getOrCreateCustomerByPhone(supabase, userId, scenario.phone)
+  const { customerId } = await getOrCreateCustomerByPhone(supabase, userId, scenario.phone, { kind: "sandbox" })
   await supabase
     .from("customers")
     .update({
       display_name: scenario.name,
       last_activity_at: new Date().toISOString(),
-      metadata: {
-        sandbox_live: true,
-        contact_separated: true,
-        attribution_source: scenario.attribution ?? "unknown",
-        service_address: `${100 + idx} Demo Lane, ${SANDBOX_CITY}, ${SANDBOX_STATE} ${SANDBOX_ZIP}`,
-      },
+      metadata: mergeCustomerTrafficSourceFirstTouch(
+        {
+          sandbox_live: true,
+          contact_separated: true,
+          attribution_source: scenario.attribution ?? "unknown",
+          service_address: `${100 + idx} Demo Lane, ${SANDBOX_CITY}, ${SANDBOX_STATE} ${SANDBOX_ZIP}`,
+        },
+        { kind: "sandbox" },
+      ),
     })
     .eq("id", customerId)
     .eq("user_id", userId)

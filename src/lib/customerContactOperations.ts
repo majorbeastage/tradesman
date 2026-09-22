@@ -17,6 +17,7 @@ import {
   formatCustomerContactLine,
   normalizeCustomerEmail as normalizeEmailIdent,
 } from "./customerIdentifiers"
+import { mergeCustomerTrafficSourceFirstTouch } from "./customerTrafficSource"
 
 export type CustomerMergeCandidate = {
   id: string
@@ -122,12 +123,15 @@ export async function separateCustomerContacts(
       user_id: userId,
       display_name: displayName,
       notes: null,
-      metadata: {
-        [CUSTOMER_SPLIT_FROM_META_KEY]: sourceCustomerId,
-        split_from_org_key:
-          typeof sourceMeta[CUSTOMER_ORG_GROUP_META_KEY] === "string" ? sourceMeta[CUSTOMER_ORG_GROUP_META_KEY] : null,
-        [CUSTOMER_CONTACT_SEPARATED_META_KEY]: true,
-      },
+      metadata: mergeCustomerTrafficSourceFirstTouch(
+        {
+          [CUSTOMER_SPLIT_FROM_META_KEY]: sourceCustomerId,
+          split_from_org_key:
+            typeof sourceMeta[CUSTOMER_ORG_GROUP_META_KEY] === "string" ? sourceMeta[CUSTOMER_ORG_GROUP_META_KEY] : null,
+          [CUSTOMER_CONTACT_SEPARATED_META_KEY]: true,
+        },
+        { kind: "split" },
+      ),
     })
     .select("id")
     .single()

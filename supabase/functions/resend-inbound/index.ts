@@ -223,6 +223,8 @@ async function getOrCreateCustomerByEmail(
     hubKind: classification.hubKind,
     orgGroupKey: classification.orgGroupKey,
   })
+  metadata.traffic_source = "inbound_email"
+  metadata.traffic_source_at = new Date().toISOString()
 
   const { data: customer, error: customerErr } = await supabase
     .from("customers")

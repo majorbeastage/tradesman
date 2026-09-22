@@ -16,6 +16,7 @@ import {
   resolveManualCustomerDisplayName,
 } from "./customerDisplayName"
 import { geocodeAddressToLatLng } from "./jobSiteLocation"
+import { mergeCustomerTrafficSourceFirstTouch } from "./customerTrafficSource"
 import { requiresManualSmsOptInRecord, type CommEventLite } from "./smsFirstOutboundCompliance"
 
 async function loadCustomerCommEventsLite(
@@ -194,12 +195,15 @@ export async function createCustomerRecord(
     email,
     classifiedDisplayName: emailClassification?.displayName,
   })
-  const customerMetadata = emailClassification
-    ? mergeCustomerHubMetadata(null, {
-        hubKind: emailClassification.hubKind,
-        orgGroupKey: emailClassification.orgGroupKey,
-      })
-    : undefined
+  const customerMetadata = mergeCustomerTrafficSourceFirstTouch(
+    emailClassification
+      ? mergeCustomerHubMetadata(null, {
+          hubKind: emailClassification.hubKind,
+          orgGroupKey: emailClassification.orgGroupKey,
+        })
+      : null,
+    { kind: "manual" },
+  )
 
   let lat: number | null = null
   let lng: number | null = null
@@ -226,7 +230,7 @@ export async function createCustomerRecord(
       service_lat: lat,
       service_lng: lng,
       last_activity_at: nowIso,
-      ...(customerMetadata ? { metadata: customerMetadata } : {}),
+      metadata: customerMetadata,
     })
     .select("id")
     .single()

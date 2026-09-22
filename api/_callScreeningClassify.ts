@@ -191,15 +191,13 @@ function heuristicClassify(
 
   let verdict: ScreeningVerdict = "uncertain"
   if (!spamScreenEnabled) {
-    verdict = live ? "good_lead" : "uncertain"
+    verdict = live || emptyCount === answers.length ? "good_lead" : "uncertain"
   } else if (caller?.knownCustomer || (caller?.priorInboundCalls ?? 0) > 0) {
     verdict = "good_lead"
-  } else if (emptyCount === answers.length && answers.length > 0) {
-    verdict = "cold_call"
-  } else if (live) {
-    verdict = "good_lead"
-  } else if (hasStrongBotOrCallCenter(combined) && emptyCount >= 2) {
+  } else if (hasStrongBotOrCallCenter(combined)) {
     verdict = "spam"
+  } else if (live || emptyCount === answers.length) {
+    verdict = "good_lead"
   }
 
   // Live speech always connects; product wording is ignored.
@@ -236,15 +234,17 @@ Return JSON: verdict (good_lead|spam|cold_call|uncertain), intentSummary (1-2 se
 Goal: CONNECT real people. Prefer good_lead whenever a human is answering in their own words.
 
 Mark spam or cold_call ONLY when evidence is strong:
-- Nobody speaks (empty / silence on every prompt) — likely a bot or abandoned dialer
 - Call-center / robocall behavior: "press 1", hold music language, "please hold", "let me transfer you", a second person joining after a pause, mass-dial scripts
 - Clear scam pitches (IRS, warranty, mortgage, SEO blast, student loan)
 
+Silence or no auto-attendant answers is NOT spam. Many shops have not turned on an attendant yet. Prefer good_lead so the call rings the shop.
+
 Do NOT mark spam because:
+- Nobody spoke / left a voicemail — still connect
 - The caller's job description does not match the contractor's product list or job types
 - They answered briefly ("yes", a first name, "leak", "water heater")
 - Their area code is outside the service area (that is a weak hint only)
-- You are unsure — use good_lead if they spoke, otherwise uncertain
+- You are unsure — use good_lead
 
 Known / returning customers must be good_lead.
 
@@ -267,10 +267,10 @@ function applyConnectSafety(
 
   if (returning) {
     if (verdict === "spam" || verdict === "cold_call") verdict = "good_lead"
-  } else if (answers.length > 0 && spokenAnswers(answers).length === 0) {
-    verdict = "cold_call"
   } else if (botty) {
     verdict = "spam"
+  } else if (answers.length > 0 && spokenAnswers(answers).length === 0) {
+    if (verdict === "spam" || verdict === "cold_call") verdict = "good_lead"
   } else if (live && (verdict === "spam" || verdict === "cold_call")) {
     verdict = "good_lead"
   }

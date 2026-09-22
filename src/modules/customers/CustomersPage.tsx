@@ -105,6 +105,7 @@ import {
   type CustomerOrgGroupingMaps,
 } from "../../lib/customerOrgGrouping"
 import { orgGroupSummaryLabel, parseCustomerHubKind, parseCustomerOrgGroupKey, customerBelongsInPromotionsHub, promotionalEmailFromEventMetadata, isCustomerManuallyArchived, mergeCustomerHubMetadata } from "../../lib/customerContactKind"
+import { formatCustomerTrafficSource } from "../../lib/customerTrafficSource"
 import {
   reassignCommunicationEventToPromotions,
   setCustomerHubKind,
@@ -2456,7 +2457,21 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                         background: isRowSelected ? "#bae6fd" : "transparent",
                       }}
                     >
-                      <td style={cellBase}>{c.display_name || "—"}</td>
+                      <td style={cellBase}>
+                        <div>{c.display_name || "—"}</div>
+                        {formatCustomerTrafficSource(c.metadata) ? (
+                          <div
+                            style={{
+                              fontSize: 11,
+                              fontWeight: 500,
+                              color: isRowSelected ? selectedRowText : "#6b7280",
+                              marginTop: 2,
+                            }}
+                          >
+                            Came from {formatCustomerTrafficSource(c.metadata)}
+                          </div>
+                        ) : null}
+                      </td>
                       <td
                         style={{ ...cellBase, maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis" }}
                         title={`${customerContactLine(c)}${displayBestContact(c) ? ` · Prefers: ${displayBestContact(c)}` : ""}`}
@@ -2515,6 +2530,11 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 16 }}>
                               <div>
                                 <h3 style={{ margin: 0, fontSize: 18, color: theme.text }}>{c.display_name || "Customer"}</h3>
+                                {formatCustomerTrafficSource(c.metadata) ? (
+                                  <p style={{ margin: "4px 0 0", fontSize: 12, color: "#475569" }}>
+                                    Came from {formatCustomerTrafficSource(c.metadata)}
+                                  </p>
+                                ) : null}
                                 {!CUSTOMER_LIST_COMPACT_DETAIL ? (
                                   <p style={{ margin: "6px 0 0", fontSize: 12, color: "#6b7280" }}>
                                     Edit contact, pipeline, and site details. Use Notes and call actions like Conversations. Click the same row again to close.
@@ -2942,6 +2962,12 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                     <div style={{ marginTop: 2 }}>{c.display_name || "—"}</div>
                                   )}
                                 </div>
+                                {formatCustomerTrafficSource(c.metadata) ? (
+                                  <div>
+                                    <span style={{ fontSize: 12, fontWeight: 600, color: "#64748b" }}>Came from</span>
+                                    <div style={{ marginTop: 2 }}>{formatCustomerTrafficSource(c.metadata)}</div>
+                                  </div>
+                                ) : null}
                                 <div>
                                   <span style={{ fontSize: 12, fontWeight: 600, color: "#64748b" }}>Best contact</span>
                                   {detailEditMode ? (
@@ -3255,7 +3281,7 @@ export default function CustomersPage({ setPage }: { setPage?: (page: string) =>
                                       type="button"
                                       onClick={() => void reGatherCustomerContact()}
                                       disabled={contactGatherBusy || !selectedCustomer?.id}
-                                      title="Search all calls, texts, and emails for phone, email, and address to fill empty profile fields."
+                                      title="Fill empty profile fields with pertinent contact info only. A real customer's own email-signature phone is used when this profile has no phone yet — spam and automated mail are ignored."
                                       style={{
                                         padding: "6px 10px",
                                         borderRadius: 6,

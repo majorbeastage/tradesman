@@ -1,6 +1,7 @@
 /**
  * Rules-first lead fit (hot / maybe / bad). Real inbound answers outrank job-type wording.
- * Bad is reserved for spam / silence — not catalog mismatch. Preferences: profiles.metadata.lead_filter_preferences.
+ * Bad is reserved for proven spam / robocall evidence — not silence or missing attendant answers.
+ * Preferences: profiles.metadata.lead_filter_preferences.
  */
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { maybeCreateConversationAfterLeadFitHot } from "./_ensureConversationFromLeadPolicy.js"
@@ -139,9 +140,9 @@ export function scoreInboundFit(signals: EngagementSignals): EvaluateLeadFitResu
   }
   if (signals.screeningQuestions > 0 && signals.screeningSpoken === 0) {
     return {
-      classification: "bad",
-      confidence: 0.82,
-      reason: "Caller did not answer the auto-attendant questions — treated as suspected spam.",
+      classification: "hot",
+      confidence: 0.72,
+      reason: "No auto-attendant answers yet. Treat the inbound ring as a real caller until spam evidence appears.",
       source: "rules",
     }
   }
@@ -175,9 +176,9 @@ export function scoreInboundFit(signals: EngagementSignals): EvaluateLeadFitResu
     }
   }
   return {
-    classification: "maybe",
-    confidence: 0.42,
-    reason: "Not enough inbound conversation yet to confirm a real person — kept for review.",
+    classification: "hot",
+    confidence: 0.74,
+    reason: "Inbound call with no voicemail or attendant detail yet. Assume a real caller and send it through until screening proves otherwise.",
     source: "rules",
   }
 }

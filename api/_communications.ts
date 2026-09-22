@@ -9,6 +9,10 @@ import {
   parseSplitOrgEmails,
 } from "./_customerContactKind.js"
 import { emitUserNotificationServer } from "./_userNotifications.js"
+import {
+  mergeCustomerTrafficSourceFirstTouch,
+  type CustomerTrafficSourceStamp,
+} from "./_customerTrafficSource.js"
 
 type JsonRecord = Record<string, unknown>
 
@@ -1215,7 +1219,8 @@ export async function insertCommunicationAttachmentRow(
 export async function getOrCreateCustomerByPhone(
   supabase: SupabaseClient,
   userId: string,
-  phone: string
+  phone: string,
+  traffic?: CustomerTrafficSourceStamp,
 ): Promise<{ customerId: string; previousCustomer: boolean }> {
   const normalizedPhone = normalizePhone(phone)
   const { data: existingIdentifier, error: identifierErr } = await supabase
@@ -1237,6 +1242,7 @@ export async function getOrCreateCustomerByPhone(
       user_id: userId,
       display_name: `Unknown (${normalizedPhone})`,
       notes: null,
+      metadata: mergeCustomerTrafficSourceFirstTouch(null, traffic ?? { kind: "inbound_phone" }),
       last_activity_at: new Date().toISOString(),
     })
     .select("id")
@@ -1391,7 +1397,8 @@ async function attachEmailIdentifierToCustomer(
 export async function getOrCreateCustomerByEmail(
   supabase: SupabaseClient,
   userId: string,
-  email: string
+  email: string,
+  traffic?: CustomerTrafficSourceStamp,
 ): Promise<{ customerId: string; previousCustomer: boolean }> {
   const normalizedEmail = normalizeCustomerEmail(email)
   if (!normalizedEmail) throw new Error("Email is required")
@@ -1424,10 +1431,13 @@ export async function getOrCreateCustomerByEmail(
     }
   }
 
-  const metadata = mergeCustomerHubMetadata(null, {
-    hubKind: classification.hubKind,
-    orgGroupKey: classification.orgGroupKey,
-  })
+  const metadata = mergeCustomerTrafficSourceFirstTouch(
+    mergeCustomerHubMetadata(null, {
+      hubKind: classification.hubKind,
+      orgGroupKey: classification.orgGroupKey,
+    }),
+    traffic ?? { kind: "inbound_email" },
+  )
 
   const { data: customer, error: customerErr } = await supabase
     .from("customers")

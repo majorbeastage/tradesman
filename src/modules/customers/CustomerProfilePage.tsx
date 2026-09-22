@@ -33,6 +33,7 @@ import CustomerContactSplitMergeModal from "../../components/CustomerContactSpli
 import CustomerRemoveFileModal from "../../components/CustomerRemoveFileModal"
 import { deleteCustomerFile } from "../../lib/customerContactOperations"
 import { isCustomerArchivedForHub } from "../../lib/customerContactKind"
+import { formatCustomerTrafficSource } from "../../lib/customerTrafficSource"
 import { geocodeAddressToLatLng } from "../../lib/jobSiteLocation"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { useSandboxTrainingMode } from "../../lib/sandboxTrainingUi"
@@ -1229,6 +1230,11 @@ export default function CustomerProfilePage({ setPage }: Props) {
                 <p style={{ margin: "8px 0 0", fontSize: 14, color: "#64748b", lineHeight: 1.5 }}>
                   {formatDisplayText(bundle.contactLine, "—")}
                 </p>
+                {formatCustomerTrafficSource(c.metadata) ? (
+                  <p style={{ margin: "6px 0 0", fontSize: 13, color: "#475569" }}>
+                    Came from {formatCustomerTrafficSource(c.metadata)}
+                  </p>
+                ) : null}
                 <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
                   <CommunicationUrgencyBadge
                     level={
@@ -1444,6 +1450,9 @@ export default function CustomerProfilePage({ setPage }: Props) {
                   <ProfileRow label="Email" value={formatDisplayText(bundle.email, "—")} />
                 )}
                 <ProfileRow label="Best contact" value={formatDisplayText(c.best_contact_method, "—")} />
+                {formatCustomerTrafficSource(c.metadata) ? (
+                  <ProfileRow label="Came from" value={formatCustomerTrafficSource(c.metadata) ?? ""} />
+                ) : null}
                 <ProfileRow label="Service address" value={formatDisplayText(c.service_address, "—")} />
                 {c.service_lat != null && c.service_lng != null ? (
                   <ProfileRow label="Coordinates" value={`${c.service_lat}, ${c.service_lng}`} />

@@ -98,7 +98,10 @@ export async function handlePublicBusinessProfileContact(req: VercelRequest, res
   const userId = owner.profile.id
   let customerId: string
   try {
-    const byEmail = await getOrCreateCustomerByEmail(supabase, userId, email)
+    const byEmail = await getOrCreateCustomerByEmail(supabase, userId, email, {
+      kind: "website_form",
+      detail: `Business website · ${slug}`,
+    })
     customerId = byEmail.customerId
     await supabase.from("customers").update({ display_name: name }).eq("id", customerId).eq("user_id", userId)
     if (phone) {

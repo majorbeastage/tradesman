@@ -67,7 +67,9 @@ export async function recordAdminOpsCustomerEvent(
   if (existing?.id) return { ok: true, skipped: true, adminUserId }
 
   try {
-    const { customerId, previousCustomer } = await getOrCreateCustomerByEmail(service, adminUserId, email)
+    const { customerId, previousCustomer } = await getOrCreateCustomerByEmail(service, adminUserId, email, {
+      kind: "admin",
+    })
     const displayName = params.displayName?.trim()
     if (displayName) {
       await service

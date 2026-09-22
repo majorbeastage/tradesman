@@ -1085,11 +1085,12 @@ async function handlePublicLead(req: VercelRequest, res: VercelResponse): Promis
   const userId = row.id
   let customerId: string
   try {
+    const websiteTraffic = { kind: "website_form" as const, detail: `Lead form · ${slug}` }
     if (phone) {
-      const c = await getOrCreateCustomerByPhone(supabase, userId, phone)
+      const c = await getOrCreateCustomerByPhone(supabase, userId, phone, websiteTraffic)
       customerId = c.customerId
     } else {
-      const c = await getOrCreateCustomerByEmail(supabase, userId, email)
+      const c = await getOrCreateCustomerByEmail(supabase, userId, email, websiteTraffic)
       customerId = c.customerId
     }
     if (name) {

@@ -107,12 +107,13 @@ function buildGatherStepTwiml(params: {
   }, params.promptText)
   const hintsAttr = params.speechHints?.trim() ? ` hints="${xmlEscape(params.speechHints.trim())}"` : ""
   const responseTimeout = Math.min(20, Math.max(5, Math.round(params.responseTimeoutSeconds ?? 12)))
+  const timeoutUrl = params.actionUrl.includes("?") ? `${params.actionUrl}&noSpeech=1` : `${params.actionUrl}?noSpeech=1`
   return (
     intro +
     `<Gather input="speech" speechTimeout="auto" timeout="${responseTimeout}" action="${xmlEscape(params.actionUrl)}" method="POST" language="en-US"${hintsAttr}>` +
     prompt +
     `</Gather>` +
-    `<Say ${SAY}>We did not hear a response. Goodbye.</Say><Hangup/>`
+    `<Redirect method="POST">${xmlEscape(timeoutUrl)}</Redirect>`
   )
 }
 
@@ -298,7 +299,19 @@ export async function callScreeningHandler(req: VercelRequest, res: VercelRespon
   }
 
   if (!channel?.user_id) {
-    sendTwiml(res, twimlResponse(`<Say ${SAY}>We could not route your call. Goodbye.</Say><Hangup/>`))
+    const origin = requestPublicOrigin(req)
+    const query = screeningBaseQuery(req, null, from, to)
+    const voicemailActionUrl = `${origin}/api/voicemail-result?${query.toString()}`
+    const transcribeUrl = `${voicemailActionUrl}&phase=transcribe`
+    sendTwiml(
+      res,
+      buildVoicemailTwiml({
+        recordAction: voicemailActionUrl,
+        transcribeCallback: transcribeUrl,
+        routingProfile: null,
+        preambleSay: "We could not connect this call. Please leave a message after the tone.",
+      }),
+    )
     return
   }
 
@@ -348,8 +361,10 @@ export async function callScreeningHandler(req: VercelRequest, res: VercelRespon
     }
   }
 
-  const gatherSpeech = pickFirstString(req.body?.SpeechResult, req.query?.SpeechResult)
-  const isGatherCallback = req.body?.SpeechResult !== undefined || req.query?.SpeechResult !== undefined
+  const noSpeech = pickFirstString(req.query?.noSpeech, req.body?.noSpeech) === "1"
+  const gatherSpeech = noSpeech ? "" : pickFirstString(req.body?.SpeechResult, req.query?.SpeechResult)
+  const isGatherCallback =
+    noSpeech || req.body?.SpeechResult !== undefined || req.query?.SpeechResult !== undefined
 
   // Gather callback — store answer and advance or finish screening
   if (isGatherCallback && steps[stepIndex]) {
@@ -494,9 +509,21 @@ export async function callScreeningHandler(req: VercelRequest, res: VercelRespon
     return
   }
 
-  // First prompt (step 0)
+  // First prompt (step 0). Never hang up — ring through if we can, otherwise voicemail.
   if (steps.length === 0) {
-    sendTwiml(res, twimlResponse(`<Say ${SAY}>Please hold while we connect you.</Say><Hangup/>`))
+    if (forwardTo) {
+      const dialInner = await buildForwardDialTwiml({ req, channel, from, to, forwardTo, settings })
+      sendTwiml(res, twimlResponse(dialInner))
+      return
+    }
+    sendTwiml(
+      res,
+      buildVoicemailTwiml({
+        recordAction: voicemailActionUrl,
+        transcribeCallback: transcribeUrl,
+        routingProfile,
+      }),
+    )
     return
   }
 

@@ -130,7 +130,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   let leadId: string | null = null
   let previousCustomer = false
   try {
-    const customer = await getOrCreateCustomerByPhone(supabase, targetUserId, from)
+    const customer = await getOrCreateCustomerByPhone(supabase, targetUserId, from, { kind: "inbound_sms" })
     customerId = customer.customerId
     previousCustomer = customer.previousCustomer
     const inConversations = await customerHasOpenConversation(supabase, targetUserId, customerId)
