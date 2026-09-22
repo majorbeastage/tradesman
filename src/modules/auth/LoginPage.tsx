@@ -190,6 +190,7 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: theme.background }}>
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <form onSubmit={handleSubmit} style={formStyle}>
+          {isIosNativeApp() ? null : (
           <button
             type="button"
             onClick={onBack}
@@ -197,6 +198,7 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
           >
             {t("login.backHome")}
           </button>
+          )}
           {!isAdminPortalLogin && (
             <div
               style={{
@@ -223,7 +225,9 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
               ? t("login.sub.admin")
               : mode === "forgot"
                 ? t("login.sub.forgot")
-                : t("login.sub.signin")}
+                : isIosNativeApp()
+                  ? "Sign in with the seat your company issued. This app does not sell Tradesman to individuals."
+                  : t("login.sub.signin")}
           </p>
 
           {accountAccessBlocked && (
@@ -361,8 +365,8 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
                 </button>
               ) : isIosNativeApp() ? (
                 <span style={{ display: "block", fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
-                  This app is only for people at a contracting organization that already has Tradesman. It is not for
-                  consumers or families, and you cannot create or buy an account here.
+                  Ask your company administrator for a seat. This App Store app does not create accounts or sell
+                  Tradesman to individuals, consumers, or families.
                 </span>
               ) : (
                 <>

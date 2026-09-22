@@ -220,9 +220,9 @@ function IosBusinessSignInOnly({ onLogin }: { onLogin: () => void }) {
       <div style={{ maxWidth: 440, display: "grid", gap: 14 }}>
         <h1 style={{ margin: 0, fontSize: 28, color: "#0f172a" }}>Tradesman</h1>
         <p style={{ margin: 0, fontSize: 15, lineHeight: 1.55, color: "#475569" }}>
-          This App Store app is only for people at a contracting organization that already has Tradesman — owners,
-          office staff, and field employees with a seat. It is not sold to consumers or families, and you cannot buy
-          a plan in this app.
+          This App Store app is for employees of a contracting company that already has a Tradesman organization
+          account. Ask your company administrator for a seat. The app does not sell Tradesman to individuals,
+          consumers, or families.
         </p>
         <button
           type="button"

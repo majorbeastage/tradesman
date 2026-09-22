@@ -11,6 +11,7 @@ import {
 } from "../lib/adCampaigns"
 import { theme } from "../styles/theme"
 import { useLocale } from "../i18n/LocaleContext"
+import { isIosNativeApp } from "../lib/publicSite"
 
 type Props = {
   /** Profile whose `metadata` billing fields we read (signed-in user or scoped managed user). */
@@ -66,6 +67,7 @@ export default function BillingDueDashboardBanner({
     }
   }, [profileUserId, separateBillingProfile])
 
+  if (isIosNativeApp()) return null
   if (!separateBillingProfile || (!notice && adBalanceDueCents <= 0)) return null
 
   const isPast = notice?.kind === "past_due"

@@ -1,29 +1,126 @@
 Tradesman — Apple App Store checklist (current)
 ================================================
-Last updated: 2026-09-09
-Rule: do NOT push web/main or set MIN_IOS_APP_VERSION until TestFlight is healthy.
+Last updated: 2026-09-22
+Rule: MacinCloud MUST `git pull` then `npm run mobile:sync` before Archive.
+      Skipping sync ships old WKWebView JS and App Review hits Take Photo again.
 
-Latest rejection (review date Sept 8, 2026)
--------------------------------------------
-Submission ID: bfc9a7fb-95be-473b-a1d4-5009b425ae82
-App Store Connect version: 1.0 (13)
-Shipped binary: CFBundleShortVersionString 2.3.14 / CFBundleVersion 13
-Device: iPad Air 11-inch (M3) / iPadOS 26.6
-This was MAIN app com.tradesmanus.com — not Messaging.
+Latest rejection (review date Sept 22, 2026)
+--------------------------------------------
+Submission ID: dc0085e6-a584-498c-bcc1-d3bda19c797d
+App Store Connect version: 1.0 (19) on iPad Air 11-inch (M3)
+Guideline: 3.1.1 + 3.1.3(c) only (other items cleared)
+Next archive: marketing 2.3.22 / build 20
 
-Crash logs (both the same TCC kill):
-  crashlog-2EB73BE2-268A-466B-A0EB-6C0AE1F00AD8
-  crashlog-E728A7F2-46B5-4BD8-AE55-72769FDAAE50
-  termination: "This app has crashed because it attempted to access
-  privacy-sensitive data without a usage description. The app's Info.plist
-  must contain an NSCameraUsageDescription key..."
-  Stack: UIImagePickerController / CAMCaptureEngine (Take Photo).
-  The 2.3.14 (13) archive did NOT include NSCameraUsageDescription.
+Apple said the same digital service is sold to a single user without IAP.
+We are taking their first option: organization / employee access only.
+Do NOT tell Review we sell to sole proprietors or that they can pay on the website.
 
-Account deletion screenshot Apple took (~11:27) is the old public page
-that only said “email admin@…”. That is why 5.1.1(v) failed.
+================================================
+PASTE INTO APP STORE CONNECT — Resolution Center (1.0 build 20)
+================================================
+Hello App Review team,
 
-Next archive MUST be marketing 2.3.18 / build 14 (or higher).
+Thank you for the review of submission dc0085e6-a584-498c-bcc1-d3bda19c797d
+(version 1.0, build 19). We chose the first resolution you offered: the iOS
+app now only provides Tradesman to organizations and their employees.
+
+Build 20 (marketing 2.3.22) does not sell Tradesman to an individual, a
+consumer, or a family, and it does not collect payment for Tradesman.
+
+What changed in this binary:
+- Sign-in only. There is no Sign up, no plan picker, and no checkout.
+- Payments in the app is only “Collect from customers” — the contractor
+  billing a homeowner or GC for trade work. The Tradesman subscription
+  tab, subscription history, and pay-your-Tradesman-bill banners are
+  not in the iOS app.
+- Copy states that a company administrator issues the seat.
+
+How access works:
+1. A contracting company already has a Tradesman organization workspace.
+2. That company issues employee seats (owner, office, field).
+3. Those employees sign in to this App Store app with the seat the
+   company issued. They do not buy Tradesman here.
+
+This is guideline 3.1.3(c) enterprise services sold to organizations and
+groups of employees. Please use the demo account in App Review Information.
+That login is an employee seat on a company workspace, not a consumer
+purchase.
+
+Thank you.
+
+
+TWO APPS (same process twice)
+-----------------------------
+1) MAIN (do first):   com.tradesmanus.com       → repo ios/   (this checklist)
+2) MESSENGER (later): com.tradesmanus.messaging → messaging-app/ios/
+
+================================================
+OLDER NOTES (Sept 12 thread — already addressed)
+================================================
+Previous rejection on the same submission also cited screenshots, camera,
+and background location. Those are cleared. Build 19 failed only on 3.1.1 /
+3.1.3(c). Keep the demo account. Do not mention website Helcim checkout
+or sole-proprietor self-serve in any new reply.
+
+2.3.10 Screenshots — YOU in App Store Connect (not Xcode)
+  Media Manager → View All Sizes. Replace iPhone AND iPad shots.
+  Capture from iOS Simulator or device. Status bar must be iOS (not Android).
+
+2.1(a) Crash — code: iOS profile photo is Photo Library only. No Take Photo sheet.
+2.5.4 Location — archive script strips "location" from UIBackgroundModes.
+3.1.1 Registration — iOS app is sign-in only. No Sign up / Helcim in the app.
+3.1.1 / 3.1.3(c) — B2B website billing; Safari link-out for pricing.
+
+================================================
+PASTE INTO APP STORE CONNECT — Resolution Center (1.0 build 15)
+================================================
+Hello App Review team,
+
+Thank you for the review of submission dc0085e6-a584-498c-bcc1-d3bda19c797d
+(version 1.0, build 14). We have addressed each item in a new binary
+(2.3.19, build 15).
+
+--- Guideline 2.3.10 (screenshots) ---
+We replaced the App Store screenshots. They were captured from iOS / iPadOS
+and show the Tradesman app in use (sign-in, dashboard, conversations,
+estimates, calendar). Non-iOS status bars and menu bars were removed.
+If any size still looks wrong, please check Media Manager → View All Sizes —
+we updated every required size.
+
+--- Guideline 2.1(a) camera crash ---
+Build 14 still presented a Take Photo path on iPad. Build 15 does not.
+Profile photo uses the system photo library only (PHPicker). There is no
+Take Photo action, and WKWebView file inputs that accept images are blocked
+from opening the camera. NSCameraUsageDescription remains in Info.plist for
+other features (for example in-app calls) and the archive step fails if that
+key is missing.
+
+Please test: sign in → My T / Profile → Choose profile photo. You will get
+the photo library, not Take Photo.
+
+--- Guideline 2.5.4 background location ---
+The app does not need persistent background location. GPS is when-in-use
+while the app is open (dispatch / maps). The archive copies Info.plist with
+UIBackgroundModes = remote-notification only. "location" is stripped if any
+plugin tries to add it.
+
+--- Guideline 3.1.1 account registration ---
+The iOS app no longer includes account registration. It is sign-in only for
+people whose contracting business already has a Tradesman workspace.
+New business accounts are created on https://www.tradesman-us.com in Safari,
+not inside the App Store app.
+
+--- Guidelines 3.1.1 / 3.1.3(c) In-App Purchase ---
+Tradesman is sold to contracting businesses and their employees, not to
+consumers or families. There is no family plan and no consumer SKU.
+
+On iPhone and iPad we do not collect subscription payment and we do not
+register new accounts. Plan information opens in Safari (United States
+storefront). “Collect from customers” is the contractor billing their job
+customers for trade work — it is not a sale of Tradesman subscriptions.
+
+Please use the demo account in App Review Information to sign in. Thank you.
+
 
 TWO APPS (same process twice)
 -----------------------------

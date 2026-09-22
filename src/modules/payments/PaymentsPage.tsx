@@ -114,7 +114,8 @@ export default function PaymentsPage() {
   const [adBalanceFromMetaCents, setAdBalanceFromMetaCents] = useState(0)
   /** Set when `billing-portal-config` fails (deploy, secret, or network) so we can explain beyond “missing Vite env”. */
   const [billingPortalConfigError, setBillingPortalConfigError] = useState<string | null>(null)
-  const [paymentsHubTab, setPaymentsHubTab] = useState<PaymentsHubTab>("subscription")
+  const iosWebBilling = isIosNativeApp()
+  const [paymentsHubTab, setPaymentsHubTab] = useState<PaymentsHubTab>(iosWebBilling ? "collect" : "subscription")
   const [collectionsBusy, setCollectionsBusy] = useState(false)
   const [collectionsRows, setCollectionsRows] = useState<CustomerPaymentCollectionsRow[]>([])
   const [collectionsError, setCollectionsError] = useState<string | null>(null)
@@ -131,7 +132,6 @@ export default function PaymentsPage() {
   const enrollAutopayRef = useRef(false)
   const checkoutRef = useRef<HTMLFormElement | null>(null)
 
-  const iosWebBilling = isIosNativeApp()
   const useHelcimJs = Boolean(ENV_JS_TOKEN) && !iosWebBilling
   const { ready: scriptReady, error: scriptError, retry: retryHelcimScript } = useHelcimJsScript(
     useHelcimJs,
@@ -209,6 +209,10 @@ export default function PaymentsPage() {
     Boolean(billingForPayments.billing_payment_due_date?.trim())
 
   useEffect(() => {
+    if (iosWebBilling && paymentsHubTab === "subscription") setPaymentsHubTab("collect")
+  }, [iosWebBilling, paymentsHubTab])
+
+  useEffect(() => {
     setHelcimOrderNumber(nextHelcimJsOrderNumber(helcimOrderKind, profileUserId))
   }, [helcimOrderKind, profileUserId])
 
@@ -234,6 +238,7 @@ export default function PaymentsPage() {
     setPaymentAmount((dueCents / 100).toFixed(2))
     setPaymentCampaignIds(ids)
     setPaymentMode("advertising")
+    if (iosWebBilling) return
     setPaymentsHubTab("subscription")
     window.requestAnimationFrame(() => checkoutRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }))
   }
@@ -565,6 +570,7 @@ export default function PaymentsPage() {
       <h1 style={{ fontSize: "1.75rem", fontWeight: 700, color: theme.text, marginBottom: 8 }}>Payments</h1>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+        {iosWebBilling ? null : (
         <button
           type="button"
           onClick={() => setPaymentsHubTab("subscription")}
@@ -576,6 +582,7 @@ export default function PaymentsPage() {
           <span style={{ fontWeight: 800, fontSize: 14 }}>Your Tradesman subscription</span>
           <span style={{ fontWeight: 500, fontSize: 12, color: "#475569" }}>Pay your office&apos;s Tradesman bill</span>
         </button>
+        )}
         <button
           type="button"
           onClick={() => setPaymentsHubTab("collect")}
@@ -596,7 +603,9 @@ export default function PaymentsPage() {
           }}
         >
           <span style={{ fontWeight: 800, fontSize: 14 }}>Payment history</span>
-          <span style={{ fontWeight: 500, fontSize: 12, color: "#475569" }}>Subscription & customer activity</span>
+          <span style={{ fontWeight: 500, fontSize: 12, color: "#475569" }}>
+            {iosWebBilling ? "Customer activity" : "Subscription & customer activity"}
+          </span>
         </button>
       </div>
 
@@ -608,13 +617,16 @@ export default function PaymentsPage() {
             </>
           ) : (
             <>
-              <strong style={{ color: theme.text }}>History</strong> — your subscription billing signals plus customer payment activity logged in Tradesman.
+              <strong style={{ color: theme.text }}>History</strong> —{" "}
+              {iosWebBilling
+                ? "customer payment activity logged in Tradesman."
+                : "your subscription billing signals plus customer payment activity logged in Tradesman."}
             </>
           )}
         </p>
       ) : null}
 
-      {paymentsHubTab === "subscription" ? (
+      {paymentsHubTab === "subscription" && !iosWebBilling ? (
       <>
       <h2 style={{ fontSize: "1rem", fontWeight: 800, color: "#94a3b8", letterSpacing: 0.03, margin: "0 0 14px", textTransform: "uppercase" }}>
         Subscription &amp; Tradesman billing
@@ -1212,6 +1224,8 @@ export default function PaymentsPage() {
 
       {paymentsHubTab === "history" ? (
         <>
+          {iosWebBilling ? null : (
+          <>
           <section
             style={{
               padding: 22,
@@ -1332,6 +1346,8 @@ export default function PaymentsPage() {
               </div>
             )}
           </section>
+          </>
+          )}
 
           <section
             style={{
