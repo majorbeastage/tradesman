@@ -1,6 +1,6 @@
-// Charge enrolled Autopay clients on/after their billing due date via Helcim Payment API (card token).
+// Charge enrolled Autopay clients on/after their billing due date via Stripe off-session PaymentIntents.
 // Deploy: supabase functions deploy billing-autopay --no-verify-jwt
-// Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, HELCIM_API_TOKEN,
+// Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, STRIPE_SECRET_KEY,
 //   BILLING_AUTOPAY_CRON_SECRET or NOTIFY_CRON_SECRET
 // Schedule daily (see supabase/billing-autopay-cron.sql). Header: x-cron-secret.
 
@@ -92,7 +92,7 @@ function applyReceived(
   const next: Record<string, unknown> = { ...prev, billing_last_success_at: patch.at }
   if (nextDue) next.billing_payment_due_date = nextDue
   if (typeof preferDay === "number") next.billing_payment_due_day = preferDay
-  const entry: Record<string, unknown> = { at: patch.at, note: "Helcim Autopay" }
+  const entry: Record<string, unknown> = { at: patch.at, note: "Stripe Autopay" }
   if (typeof patch.amountUsd === "number") entry.amountUsd = patch.amountUsd
   if (tx) entry.transactionId = tx
   if (patch.orderNumber?.trim()) entry.orderNumber = patch.orderNumber.trim()
@@ -162,9 +162,9 @@ Deno.serve(async (req) => {
     })
   }
 
-  const apiToken = Deno.env.get("HELCIM_API_TOKEN")?.trim()
-  if (!apiToken) {
-    return new Response(JSON.stringify({ error: "HELCIM_API_TOKEN is not set." }), {
+  const stripeKey = Deno.env.get("STRIPE_SECRET_KEY")?.trim() || Deno.env.get("STRIPE_API_SECRET_KEY")?.trim()
+  if (!stripeKey) {
+    return new Response(JSON.stringify({ error: "STRIPE_SECRET_KEY is not set." }), {
       status: 503,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
@@ -199,8 +199,16 @@ Deno.serve(async (req) => {
         : {}
     if (meta.billing_autopay_enabled !== true) continue
     if (meta.billing_automation_paused === true) continue
-    const token = typeof meta.billing_autopay_card_token === "string" ? meta.billing_autopay_card_token.trim() : ""
-    if (!token) continue
+    const stripeCustomer = typeof meta.billing_stripe_customer_id === "string" ? meta.billing_stripe_customer_id.trim() : ""
+    const stripePaymentMethod = typeof meta.billing_stripe_payment_method_id === "string" ? meta.billing_stripe_payment_method_id.trim() : ""
+    if (!stripeCustomer || !stripePaymentMethod) {
+      const missingNote = "Pay once with Stripe on the Payments page so Autopay can save a card."
+      if (meta.billing_autopay_last_error !== missingNote) {
+        meta.billing_autopay_last_error = missingNote
+        await admin.from("profiles").update({ metadata: meta, updated_at: nowIso }).eq("id", profileId)
+      }
+      continue
+    }
     const due = typeof meta.billing_payment_due_date === "string" ? meta.billing_payment_due_date.trim() : ""
     if (!/^\d{4}-\d{2}-\d{2}$/.test(due) || due > today) continue
     if (typeof meta.billing_autopay_last_charged_due === "string" && meta.billing_autopay_last_charged_due.trim() === due) {
@@ -212,49 +220,46 @@ Deno.serve(async (req) => {
     const amount = subscriptionAmountUsd(meta)
     if (!(amount > 0)) continue
 
-    const customerCode = typeof meta.billing_helcim_customer_code === "string" ? meta.billing_helcim_customer_code.trim() : ""
     const invoiceNumber = nextOrderNumber(profileId)
     const idem = await idempotencyKey(profileId, due)
 
     charged += 1
     meta.billing_autopay_last_attempt_at = nowIso
 
-    const body: Record<string, unknown> = {
-      ipAddress: "127.0.0.1",
-      ecommerce: true,
-      currency: "USD",
-      amount,
-      invoiceNumber,
-      cardData: { cardToken: token },
-    }
-    if (customerCode) body.customerCode = customerCode
-
-    const r = await fetch("https://api.helcim.com/v2/payment/purchase", {
+    const params = new URLSearchParams({
+      amount: String(Math.round(amount * 100)),
+      currency: "usd",
+      customer: stripeCustomer,
+      payment_method: stripePaymentMethod,
+      off_session: "true",
+      confirm: "true",
+      description: `Tradesman subscription ${due}`,
+      "metadata[purpose]": "tradesman_billing_autopay",
+      "metadata[profile_id]": profileId,
+    })
+    const r = await fetch("https://api.stripe.com/v1/payment_intents", {
       method: "POST",
       headers: {
-        "api-token": apiToken,
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        "idempotency-key": idem,
+        Authorization: `Bearer ${stripeKey}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Idempotency-Key": idem,
       },
-      body: JSON.stringify(body),
+      body: params.toString(),
     })
     const txJson = (await r.json().catch(() => ({}))) as Record<string, unknown>
-    const status = typeof txJson.status === "string" ? txJson.status.toUpperCase() : ""
-    const approved = r.ok && (status === "APPROVED" || status === "APPROVED (TEST)")
-    const txnId = txJson.transactionId != null ? String(txJson.transactionId).trim() : ""
+    const status = typeof txJson.status === "string" ? txJson.status : ""
+    const approved = r.ok && status === "succeeded"
+    const txnId = typeof txJson.id === "string" ? txJson.id.trim() : ""
 
     if (!approved) {
-      const errText =
-        (Array.isArray(txJson.errors) && txJson.errors.length ? String(txJson.errors[0]) : "") ||
-        (typeof txJson.message === "string" ? txJson.message : "") ||
-        `Helcim Autopay not approved (${r.status})`
+      const stripeErr = txJson.error && typeof txJson.error === "object" ? (txJson.error as { message?: string }).message : ""
+      const errText = stripeErr || `Stripe Autopay not approved (${r.status} ${status})`
       meta.billing_autopay_last_error = errText.slice(0, 240)
       await admin.from("profiles").update({ metadata: meta, updated_at: nowIso }).eq("id", profileId)
       await notifyAdmins(admin, {
         profileId,
         title: "Autopay charge failed",
-        body: `Autopay did not go through for this client (${errText.slice(0, 160)}). They were not locked out. Open Billing & Helcim.`,
+        body: `Autopay did not go through for this client (${errText.slice(0, 160)}). They were not locked out. Open Billing & Stripe.`,
       })
       results.push({ profileId, ok: false, error: errText })
       continue

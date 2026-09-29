@@ -26,11 +26,9 @@ import {
 } from "../../lib/billingPromoCodes"
 import { BILLING_PROMO_CODES_KEY, SIGNUP_PROMO_CODE_STORAGE_KEY, type BillingPromoCodesStore } from "../../types/billing-promo-codes"
 import type { BillingPromoCode } from "../../types/billing-promo-codes"
-import { SignupHelcimPaymentStep } from "../../components/SignupHelcimPaymentStep"
 import { isIosNativeApp } from "../../lib/publicSite"
 import SignupProductAdvisorPanel from "../../components/SignupProductAdvisorPanel"
 import SignupSupportCallout from "../../components/SignupSupportCallout"
-import type { HelcimJsReturnMessage } from "../../lib/helcimJsReturnMessage"
 import { PublicLegalNav } from "../public/PublicLegalNav"
 import { LEGAL_LINKS } from "../../lib/legalLinks"
 
@@ -96,8 +94,6 @@ type SyncProfileBody = {
   bill_day_of_month?: number
   signup_proration_usd?: number
   promo_code?: string | null
-  helcim_transaction_id?: string | null
-  helcim_approval_code?: string | null
   payment_completed_at?: string | null
 }
 
@@ -175,7 +171,7 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
   const [promoStore, setPromoStore] = useState<BillingPromoCodesStore>(() => parseBillingPromoCodesStore(null))
   const [ackBilling, setAckBilling] = useState(false)
   const [signupStep, setSignupStep] = useState<"account" | "payment">("account")
-  const [paymentResult, setPaymentResult] = useState<HelcimJsReturnMessage | null>(null)
+  const [stripeSignupBusy, setStripeSignupBusy] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
   const [message, setMessage] = useState("")
@@ -345,75 +341,75 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
     setPromoError("")
   }
 
-  async function createAccountAfterPayment(payment?: HelcimJsReturnMessage | null) {
+  async function createAccountAfterPayment(): Promise<boolean> {
     setError("")
     setMessage("")
     if (!supabase) {
       setError("App is not connected to Supabase. Check your .env configuration.")
-      return
+      return false
     }
     const em = email.trim()
     if (!em) {
       setError("Login email is required.")
-      return
+      return false
     }
     if (password.length < 6) {
       setError("Password must be at least 6 characters.")
-      return
+      return false
     }
     if (password !== password2) {
       setError("Passwords do not match.")
-      return
+      return false
     }
     const dn = displayName.trim() || em.split("@")[0] || "Account"
     if (req(signupCfg, "display_name") && !displayName.trim()) {
       setError("Business / display name is required.")
-      return
+      return false
     }
     if (req(signupCfg, "primary_phone") && !primaryPhone.trim()) {
       setError("Primary phone is required.")
-      return
+      return false
     }
     if (req(signupCfg, "best_contact_phone") && !bestContactPhone.trim()) {
       setError("Best contact phone is required.")
-      return
+      return false
     }
     if (req(signupCfg, "website_url") && !websiteUrl.trim()) {
       setError("Website URL is required.")
-      return
+      return false
     }
     if (req(signupCfg, "address")) {
       if (!addressLine1.trim() || !city.trim() || !state.trim() || !zip.trim()) {
         setError("Address line 1, city, state, and zip are required.")
-        return
+        return false
       }
     }
     if (req(signupCfg, "timezone") && !timezone.trim()) {
       setError("Timezone is required.")
-      return
+      return false
     }
     for (const f of signupCfg.custom_fields) {
       const v = (extras[f.id] ?? "").trim()
       if (f.required && !v) {
         setError(`Please fill in: ${f.label}`)
-        return
+        return false
       }
     }
     if (signupCfg.require_terms_ack && signupCfg.show_terms_link && !ackTerms) {
       setError("Please confirm that you agree to the Terms & Conditions.")
-      return
+      return false
     }
     if (signupCfg.require_privacy_ack && signupCfg.show_privacy_link && !ackPrivacy) {
       setError("Please confirm that you acknowledge the Privacy Policy.")
-      return
+      return false
     }
     if (signupCfg.require_sms_consent_ack && signupCfg.show_sms_consent_link && !ackSms) {
       setError("Please confirm SMS consent.")
-      return
+      return false
     }
     if (aiAutomationChoice === null) {
       setError("Please choose whether to allow AI-assisted features in your account.")
-      return
+      return false
     }
     const useAiAutomation = aiAutomationChoice === "allow"
 
@@ -444,7 +440,7 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
 
     if (requiresPaidSignup && !ackBilling) {
       setError("Please authorize recurring billing to continue with a paid plan.")
-      return
+      return false
     }
 
     setSubmitting(true)
@@ -456,7 +452,7 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
       })
       if (signErr) {
         setError(signErr.message)
-        return
+        return false
       }
       if (data.session) await registerAppSession(supabase, "main")
       const uid = data.user?.id ?? data.session?.user?.id
@@ -464,7 +460,7 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
         setError(
           "Could not create account (no user id from sign up). If this email is already registered, sign in instead; otherwise try again or contact support.",
         )
-        return
+        return false
       }
 
       const syncBody: SyncProfileBody = {
@@ -491,9 +487,7 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
         bill_day_of_month: requiresPaidSignup ? billDayOfMonth : undefined,
         signup_proration_usd: proration?.dueTodayUsd,
         promo_code: appliedPromo?.code ?? null,
-        helcim_transaction_id: payment?.transactionId ?? null,
-        helcim_approval_code: payment?.approvalCode ?? null,
-        payment_completed_at: payment ? new Date().toISOString() : null,
+        payment_completed_at: null,
       }
 
       const portalCfg = productPackageChoice
@@ -535,10 +529,10 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
             setError(
               `Account created but profile save failed: ${upErr.message}. ${edgeErr instanceof Error ? edgeErr.message : String(edgeErr)}`,
             )
-            return
+            return false
           }
           setMessage("Welcome! Your account is ready. Sign in with User Login anytime.")
-          return
+          return true
         }
         setError(
           edgeErr instanceof Error
@@ -546,7 +540,7 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
             : String(edgeErr),
         )
         setAwaitingEmailFor(em)
-        return
+        return false
       }
 
       if (edgeOutcome === "not_deployed") {
@@ -554,7 +548,7 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
           const { error: upErr } = await supabase.from("profiles").upsert(profilePayload, { onConflict: "id" })
           if (upErr) {
             setError(`Account created but profile save failed: ${upErr.message}`)
-            return
+            return false
           }
           setMessage("Welcome! Your account is ready. Sign in with User Login anytime.")
         } else {
@@ -563,18 +557,20 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
             "Confirmation email should be on the way. The profile server is not deployed — after you confirm your email, open Account (My T) to finish your details, or ask your admin to deploy the complete-signup function.",
           )
         }
-        return
+        return Boolean(data.session)
       }
 
       if (!data.session) {
         setAwaitingEmailFor(em)
-        setMessage("")
+        setMessage("Account created. Confirm your email, sign in, then pay from the Payments page.")
         setError("")
-      } else {
-        setMessage("Welcome! Your account is ready. Sign in with User Login anytime.")
+        return false
       }
+      setMessage("Welcome! Your account is ready. Sign in with User Login anytime.")
+      return true
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
+      return false
     } finally {
       setSubmitting(false)
     }
@@ -594,23 +590,50 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
         return
       }
       if (skipPaymentForPromo) {
-        await createAccountAfterPayment(null)
+        await createAccountAfterPayment()
         return
       }
       setSignupStep("payment")
       return
     }
-    await createAccountAfterPayment(paymentResult)
-  }
-
-  async function handlePaymentSuccess(result: HelcimJsReturnMessage) {
-    setPaymentResult(result)
-    await createAccountAfterPayment(result)
+    await createAccountAfterPayment()
   }
 
   async function handleSkipPaymentAndCreate() {
-    setPaymentResult(null)
-    await createAccountAfterPayment(null)
+    await createAccountAfterPayment()
+  }
+
+  async function handleStripeSignupPay() {
+    if (!proration || !supabase) return
+    setStripeSignupBusy(true)
+    setError("")
+    try {
+      const signedIn = await createAccountAfterPayment()
+      if (!signedIn) return
+      const { data } = await supabase.auth.getSession()
+      const token = data.session?.access_token
+      if (!token) {
+        setMessage("Account created. After you confirm your email and sign in, pay from the Payments page.")
+        return
+      }
+      const response = await fetch("/api/stripe-billing-checkout", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amountUsd: proration.dueTodayUsd,
+          coverMonths: 1,
+          autopay: true,
+          campaignIds: [],
+        }),
+      })
+      const payload = (await response.json().catch(() => ({}))) as { url?: string; error?: string }
+      if (!response.ok || !payload.url) throw new Error(payload.error || "Could not start Stripe checkout.")
+      window.location.href = payload.url
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not start Stripe checkout.")
+    } finally {
+      setStripeSignupBusy(false)
+    }
   }
 
   const inputStyle: React.CSSProperties = {
@@ -1233,15 +1256,54 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
                 </p>
               </div>
             ) : (
-              <SignupHelcimPaymentStep
-                dueTodayUsd={proration.dueTodayUsd}
-                monthlyUsd={proration.monthlyUsd}
-                billDateLabel={proration.billDateLabel}
-                orderEmail={email.trim()}
-                onPaymentSuccess={(r) => void handlePaymentSuccess(r)}
-                onSkip={() => void handleSkipPaymentAndCreate()}
-                allowSkip
-              />
+              <div
+                style={{
+                  padding: 14,
+                  borderRadius: 10,
+                  border: `1px solid ${theme.border}`,
+                  background: "#fff",
+                  display: "grid",
+                  gap: 10,
+                }}
+              >
+                <p style={{ margin: 0, fontWeight: 800, fontSize: 15, color: theme.text }}>Pay with Stripe</p>
+                <p style={{ margin: 0, fontSize: 14, color: theme.text, lineHeight: 1.55 }}>
+                  Due today: ${proration.dueTodayUsd.toFixed(2)}. Then {proration.monthlyUsd.toFixed(2)} on {proration.billDateLabel}. Stripe
+                  saves the card for the monthly charge.
+                </p>
+                <button
+                  type="button"
+                  disabled={submitting || stripeSignupBusy}
+                  onClick={() => void handleStripeSignupPay()}
+                  style={{
+                    padding: "12px 18px",
+                    background: theme.primary,
+                    color: "white",
+                    border: "none",
+                    borderRadius: 10,
+                    fontWeight: 700,
+                    width: "fit-content",
+                    cursor: submitting || stripeSignupBusy ? "wait" : "pointer",
+                  }}
+                >
+                  {submitting || stripeSignupBusy ? "Opening Stripe…" : "Create account and pay with Stripe"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleSkipPaymentAndCreate()}
+                  style={{
+                    padding: "8px 12px",
+                    background: "transparent",
+                    color: theme.text,
+                    border: "none",
+                    fontWeight: 600,
+                    width: "fit-content",
+                    cursor: "pointer",
+                  }}
+                >
+                  Create the account and pay later
+                </button>
+              </div>
             )
           ) : null}
 

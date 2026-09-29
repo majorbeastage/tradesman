@@ -76,7 +76,7 @@ verify_jwt = false
 [functions.notify-scheduled]
 verify_jwt = false
 
-# billing-autopay: daily cron charges enrolled Helcim card tokens. Auth is x-cron-secret.
+# billing-autopay: daily cron charges enrolled Stripe cards. Auth is x-cron-secret.
 [functions.billing-autopay]
 verify_jwt = false
 

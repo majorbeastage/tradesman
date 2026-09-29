@@ -1,19 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
-import { FunctionsHttpError } from "@supabase/supabase-js"
 import { supabase } from "../../lib/supabase"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
 import {
-  appendHelcimCustomerQueryToPayPortalUrl,
-  applyHelcimAutopayCard,
-  applyReceivedBillingPayment,
-  billingAutopayCardLabel,
-  helcimPayPortalUrlAllowsIframe,
-  last4FromMaskedCard,
+  clampBillingCoverMonths,
   mergeBillingIntoProfileMetadata,
-  normalizeHelcimPayPortalUrl,
   parseBillingMetadata,
-  resolveHelcimPayPortalBaseUrl,
   subscriptionBillAmountUsd,
   type BillingProfileMetadata,
 } from "../../lib/billingProfileMetadata"
@@ -23,16 +15,12 @@ import {
   AD_CAMPAIGN_SPEND_DISCLAIMER,
   AD_PAYMENT_LOAD_STORAGE_KEY,
   adBalanceDueCents,
-  adCampaignProcessingFeeCents,
   formatUsdFromCents,
   parseAdBillingMetadata,
   type AdCampaignPaymentRow,
   type AdCampaignRow,
 } from "../../lib/adCampaigns"
-import { isHelcimJsReturnMessage, type HelcimJsReturnMessage } from "../../lib/helcimJsReturnMessage"
 import { nextHelcimJsOrderNumber } from "../../lib/helcimJsOrderNumber"
-import { useHelcimJsScript } from "../../hooks/useHelcimJsScript"
-import { platformToolsFetchOrigins, platformToolsJsonBody } from "../../lib/platformToolsJsonBody"
 import {
   customerPaymentEventTypeLabel,
   customerPaymentMarkedDetail,
@@ -44,23 +32,6 @@ import {
 } from "../../lib/customerPaymentCollections"
 import PaymentRequestsWorkspace from "./PaymentRequestsWorkspace"
 import { isIosNativeApp } from "../../lib/publicSite"
-
-/** Must use `import.meta.env.VITE_*` directly so Vite inlines values at build time (cast/indirect access is left empty in production). */
-const ENV_PORTAL = String(import.meta.env.VITE_HELCIM_PAYMENT_PORTAL_URL ?? "").trim()
-const ENV_JS_TOKEN = String(import.meta.env.VITE_HELCIM_JS_TOKEN ?? "").trim()
-const HELCIM_RETURN_IFRAME_NAME = "tradesmanHelcimJsReturn"
-
-const inputStyle: CSSProperties = {
-  width: "100%",
-  maxWidth: 420,
-  boxSizing: "border-box",
-  padding: "10px 12px",
-  borderRadius: 8,
-  border: "1px solid #374151",
-  background: "#0f172a",
-  color: "#f9fafb",
-  fontSize: 15,
-}
 
 const quickLinkCardBaseStyle: CSSProperties = {
   display: "grid",
@@ -81,17 +52,6 @@ const quickLinkCardAltActiveStyle: CSSProperties = {
   boxShadow: "0 0 0 1px #bae6fd inset",
 }
 
-const smallLoadButtonStyle: CSSProperties = {
-  padding: "7px 10px",
-  borderRadius: 8,
-  border: "1px solid #f97316",
-  background: "#f97316",
-  color: "#fff",
-  fontSize: 12,
-  fontWeight: 800,
-  cursor: "pointer",
-}
-
 function formatProfilePaymentIso(iso: string | null | undefined): string {
   const s = typeof iso === "string" ? iso.trim() : ""
   if (!s) return "—"
@@ -104,16 +64,10 @@ type PaymentsHubTab = "subscription" | "collect" | "history"
 
 export default function PaymentsPage() {
   const profileUserId = useScopedUserId()
-  const [portalBaseUrl, setPortalBaseUrl] = useState<string | null>(null)
-  const [customerCode, setCustomerCode] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [origin, setOrigin] = useState("")
-  const [lastResult, setLastResult] = useState<HelcimJsReturnMessage | null>(null)
   const [billingForPayments, setBillingForPayments] = useState<BillingProfileMetadata>({})
   const [adCampaigns, setAdCampaigns] = useState<AdCampaignRow[]>([])
   const [adBalanceFromMetaCents, setAdBalanceFromMetaCents] = useState(0)
   /** Set when `billing-portal-config` fails (deploy, secret, or network) so we can explain beyond “missing Vite env”. */
-  const [billingPortalConfigError, setBillingPortalConfigError] = useState<string | null>(null)
   const iosWebBilling = isIosNativeApp()
   const [paymentsHubTab, setPaymentsHubTab] = useState<PaymentsHubTab>(iosWebBilling ? "collect" : "subscription")
   const [collectionsBusy, setCollectionsBusy] = useState(false)
@@ -125,23 +79,26 @@ export default function PaymentsPage() {
   const [paymentMode, setPaymentMode] = useState<"suggested" | "advertising" | "custom">("suggested")
   const [paymentCampaignIds, setPaymentCampaignIds] = useState<string[]>([])
   const [adPaymentHistory, setAdPaymentHistory] = useState<AdCampaignPaymentRow[]>([])
-  const [adPaymentReconcileMessage, setAdPaymentReconcileMessage] = useState("")
-  const [helcimOrderNumber, setHelcimOrderNumber] = useState("")
   const [enrollAutopay, setEnrollAutopay] = useState(false)
   const [autopayBusy, setAutopayBusy] = useState(false)
+  const [coverMonths, setCoverMonths] = useState(1)
+  const [stripePayBusy, setStripePayBusy] = useState(false)
+  const [stripePayError, setStripePayError] = useState("")
+  const [stripeNotice, setStripeNotice] = useState("")
   const enrollAutopayRef = useRef(false)
-  const checkoutRef = useRef<HTMLFormElement | null>(null)
-
-  const useHelcimJs = Boolean(ENV_JS_TOKEN) && !iosWebBilling
-  const { ready: scriptReady, error: scriptError, retry: retryHelcimScript } = useHelcimJsScript(
-    useHelcimJs,
-    "data-tradesman-helcim-js",
-  )
-  const helcimOrderKind = paymentMode === "advertising" ? "TMAD" : "TM"
+  const coverMonthsRef = useRef(1)
+  const paymentModeRef = useRef(paymentMode)
+  const checkoutRef = useRef<HTMLDivElement | null>(null)
+  const orderKind = paymentMode === "advertising" ? "TMAD" : "TM"
 
   useEffect(() => {
     enrollAutopayRef.current = enrollAutopay
   }, [enrollAutopay])
+
+  useEffect(() => {
+    coverMonthsRef.current = coverMonths
+    paymentModeRef.current = paymentMode
+  }, [coverMonths, paymentMode])
 
   async function saveAutopayPreference(enabled: boolean) {
     if (!supabase || !profileUserId) return
@@ -171,27 +128,95 @@ export default function PaymentsPage() {
     }
   }
 
+  async function saveCheckoutCover(orderNumber: string, months: number, expectedUsd: number) {
+    if (!supabase || !profileUserId) return
+    const { data: row, error: fetchErr } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
+    if (fetchErr) throw fetchErr
+    const prev =
+      row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? { ...(row.metadata as Record<string, unknown>) }
+        : {}
+    if (months <= 1) {
+      delete prev.billing_checkout_cover_months
+      delete prev.billing_checkout_cover_order
+      delete prev.billing_checkout_cover_expected_usd
+    } else {
+      prev.billing_checkout_cover_months = months
+      prev.billing_checkout_cover_order = orderNumber
+      prev.billing_checkout_cover_expected_usd = expectedUsd
+    }
+    const { error } = await supabase.from("profiles").update({ metadata: prev }).eq("id", profileUserId)
+    if (error) throw error
+  }
+
+  async function startStripeCheckout() {
+    if (!supabase) return
+    const amountUsd = Number.parseFloat(paymentAmount)
+    if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
+      setStripePayError("Enter a payment amount greater than zero.")
+      return
+    }
+    setStripePayBusy(true)
+    setStripePayError("")
+    try {
+      const { data: sessionData } = await supabase.auth.getSession()
+      const token = sessionData.session?.access_token
+      if (!token) throw new Error("Sign in again to pay.")
+      const billSubscription = paymentModeRef.current !== "advertising"
+      const months =
+        billSubscription && monthlyBillUsd > 0 ? clampBillingCoverMonths(coverMonthsRef.current) : 1
+      const order = nextHelcimJsOrderNumber(orderKind, profileUserId)
+      await saveCheckoutCover(order, months, amountUsd).catch((e) => console.warn("[billing] pay-ahead", e))
+      const response = await fetch("/api/stripe-billing-checkout", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amountUsd,
+          coverMonths: months,
+          billSubscription,
+          autopay: enrollAutopayRef.current,
+          campaignIds: paymentCampaignIds,
+        }),
+      })
+      const payload = (await response.json().catch(() => ({}))) as { url?: string; error?: string }
+      if (!response.ok || !payload.url) throw new Error(payload.error || "Could not start Stripe checkout.")
+      window.location.href = payload.url
+    } catch (e) {
+      setStripePayError(e instanceof Error ? e.message : "Could not start Stripe checkout.")
+      setStripePayBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const hash = window.location.hash
+    if (!hash.includes("stripe=success") && !hash.includes("stripe=cancel")) return
+    if (hash.includes("stripe=success")) {
+      setStripePayError("")
+      setStripeNotice("Stripe confirmed the return. Your due date updates as soon as the payment is recorded.")
+      setBillingRefreshNonce((n) => n + 1)
+    }
+    if (hash.includes("stripe=cancel")) setStripePayError("Stripe checkout was canceled. No charge was made.")
+  }, [])
+
   const adBalanceFromCampaignsCents = useMemo(
     () => adCampaigns.reduce((sum, c) => sum + adBalanceDueCents(c), 0),
     [adCampaigns],
   )
   const adBalanceDueCentsTotal = Math.max(adBalanceFromCampaignsCents, adBalanceFromMetaCents)
 
+  const monthlyBillUsd = useMemo(
+    () => subscriptionBillAmountUsd(billingForPayments),
+    [billingForPayments],
+  )
+
   const suggestedPaymentAmount = useMemo(() => {
-    const plan =
-      typeof billingForPayments.billing_custom_charge_usd === "number" &&
-      Number.isFinite(billingForPayments.billing_custom_charge_usd)
-        ? billingForPayments.billing_custom_charge_usd
-        : sumMonthlyBillingUsd(billingForPayments.billing_product_type, billingForPayments.billing_additional_products)
+    const months = paymentMode === "suggested" ? clampBillingCoverMonths(coverMonths) : 1
+    const plan = monthlyBillUsd * (monthlyBillUsd > 0 ? months : 1)
     const ads = adBalanceDueCentsTotal / 100
     const total = plan + ads
     return total > 0 ? total.toFixed(2) : ""
-  }, [
-    billingForPayments.billing_custom_charge_usd,
-    billingForPayments.billing_product_type,
-    billingForPayments.billing_additional_products,
-    adBalanceDueCentsTotal,
-  ])
+  }, [paymentMode, coverMonths, monthlyBillUsd, adBalanceDueCentsTotal])
 
   const openAdCampaigns = useMemo(
     () => adCampaigns.filter((c) => adBalanceDueCents(c) > 0),
@@ -202,19 +227,9 @@ export default function PaymentsPage() {
     () => sumMonthlyBillingUsd(billingForPayments.billing_product_type, billingForPayments.billing_additional_products),
     [billingForPayments.billing_product_type, billingForPayments.billing_additional_products],
   )
-  const hasBillingPlanSignals =
-    monthlyPlanTotal > 0 ||
-    adBalanceDueCentsTotal > 0 ||
-    Boolean(billingForPayments.billing_helcim_customer_code?.trim()) ||
-    Boolean(billingForPayments.billing_payment_due_date?.trim())
-
   useEffect(() => {
     if (iosWebBilling && paymentsHubTab === "subscription") setPaymentsHubTab("collect")
   }, [iosWebBilling, paymentsHubTab])
-
-  useEffect(() => {
-    setHelcimOrderNumber(nextHelcimJsOrderNumber(helcimOrderKind, profileUserId))
-  }, [helcimOrderKind, profileUserId])
 
   useEffect(() => {
     if (paymentMode === "suggested") setPaymentAmount(suggestedPaymentAmount)
@@ -257,130 +272,16 @@ export default function PaymentsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adBalanceDueCentsTotal])
 
-  const formAction = useMemo(() => {
-    const fromWindow = typeof window !== "undefined" ? window.location.origin.replace(/\/+$/, "") : ""
-    const fromState = origin.replace(/\/+$/, "")
-    const envOrigin = (import.meta.env.VITE_PUBLIC_APP_ORIGIN as string | undefined)?.replace(/\/+$/, "").trim()
-    /** Prefer the page you are actually on (custom domain, www, etc.) so the iframe return URL matches `postMessage` origin. */
-    const base = fromWindow || fromState || envOrigin
-    return base ? `${base}/api/helcim-js-return` : ""
-  }, [origin])
-
-  /** Origin that loads in the hidden iframe after POST (must match postMessage `ev.origin`). */
-  const helcimReturnOrigin = useMemo(() => {
-    if (!formAction) return ""
-    try {
-      return new URL(formAction).origin
-    } catch {
-      return ""
-    }
-  }, [formAction])
-
   useEffect(() => {
-    if (typeof window === "undefined") return
-    setOrigin(window.location.origin)
-  }, [])
-
-  useEffect(() => {
-    if (!supabase || !profileUserId) {
-      setLoading(false)
-      return
-    }
+    if (!supabase || !profileUserId) return
     let cancelled = false
     void (async () => {
       const sb = supabase
       if (!sb) return
-      let portalFromEdge = ""
-      if (!cancelled) setBillingPortalConfigError(null)
-      if (!ENV_PORTAL.trim()) {
-        let accessTok = (await sb.auth.getSession()).data.session?.access_token
-        if (!accessTok) {
-          const r = await sb.auth.refreshSession()
-          accessTok = r.data.session?.access_token ?? undefined
-        }
-
-        /** Same-origin Vercel route and Supabase Edge often both work; race them and take the first valid URL. */
-        if (accessTok) {
-          const portalBody = platformToolsJsonBody({})
-          const fetchFromHost = async (): Promise<string> => {
-            const bases = platformToolsFetchOrigins()
-            let lastDetail = ""
-            for (const originBase of bases) {
-              if (!originBase) continue
-              try {
-                const r = await fetch(`${originBase.replace(/\/+$/, "")}/api/billing-portal-config`, {
-                  method: "POST",
-                  headers: { Authorization: `Bearer ${accessTok}`, "Content-Type": "application/json" },
-                  body: portalBody,
-                })
-                const raw = await r.text()
-                if (r.ok && raw.trim()) {
-                  try {
-                    const j = JSON.parse(raw) as { portalUrl?: string | null; error?: string }
-                    if (typeof j.portalUrl === "string" && j.portalUrl.trim()) return j.portalUrl.trim()
-                    if (typeof j.error === "string" && j.error.trim()) lastDetail = j.error.trim()
-                  } catch {
-                    lastDetail = "Non-JSON response from billing-portal-config"
-                  }
-                } else {
-                  lastDetail = raw.trim() ? raw.trim().slice(0, 200) : `HTTP ${r.status} (empty body)`
-                }
-              } catch (e) {
-                lastDetail = e instanceof Error ? e.message : String(e)
-              }
-            }
-            if (lastDetail && typeof window !== "undefined" && !import.meta.env.PROD) {
-              console.warn("[billing-portal-config]", lastDetail)
-            }
-            return ""
-          }
-          const fetchFromEdge = async (): Promise<string> => {
-            try {
-              const { data: cfg, error: cfgErr } = await sb.functions.invoke("billing-portal-config", {
-                body: {},
-                headers: { Authorization: `Bearer ${accessTok}` },
-              })
-              let edgeBody: { error?: string; portalUrl?: string | null } | null =
-                cfg && typeof cfg === "object" ? (cfg as { error?: string; portalUrl?: string | null }) : null
-              if (cfgErr instanceof FunctionsHttpError) {
-                try {
-                  const errRaw = await cfgErr.context.text()
-                  if (errRaw.trim()) {
-                    const parsed = JSON.parse(errRaw) as Record<string, unknown>
-                    edgeBody = { ...edgeBody, ...parsed }
-                  }
-                } catch {
-                  /* ignore */
-                }
-              }
-              if (edgeBody && typeof edgeBody.portalUrl === "string" && edgeBody.portalUrl.trim()) {
-                return edgeBody.portalUrl.trim()
-              }
-            } catch {
-              /* ignore — host may have succeeded */
-            }
-            return ""
-          }
-          const [fromHost, fromEdge] = await Promise.all([fetchFromHost(), fetchFromEdge()])
-          portalFromEdge = (fromHost || fromEdge).trim()
-          if (!cancelled && portalFromEdge) {
-            setBillingPortalConfigError(null)
-          } else if (!cancelled && !portalFromEdge && !ENV_PORTAL.trim()) {
-            setBillingPortalConfigError(
-              "Could not load the payment portal link. Try refreshing. If it only fails on the live site: in Vercel set HELCIM_PAYMENT_PORTAL_URL (or VITE_HELCIM_PAYMENT_PORTAL_URL) and redeploy; Supabase URL/anon can come from server env or the app request body.",
-            )
-          }
-        } else if (!cancelled) {
-          setBillingPortalConfigError("Sign in again to load the payment portal.")
-        }
-      }
       const { data, error } = await sb.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
       if (cancelled) return
-      setLoading(false)
       if (error || !data) {
         setBillingForPayments({})
-        setPortalBaseUrl(resolveHelcimPayPortalBaseUrl(ENV_PORTAL.trim() || portalFromEdge || null, null))
-        setCustomerCode(null)
         return
       }
       const meta =
@@ -392,11 +293,6 @@ export default function PaymentsPage() {
       setEnrollAutopay(billing.billing_autopay_enabled === true)
       const adMeta = parseAdBillingMetadata(meta)
       setAdBalanceFromMetaCents(adMeta?.balance_due_cents ?? 0)
-      const envOrEdge = (ENV_PORTAL.trim() || portalFromEdge || "").trim() || null
-      const resolvedPortal = resolveHelcimPayPortalBaseUrl(envOrEdge, billing.helcim_pay_portal_url ?? null)
-      setPortalBaseUrl(resolvedPortal)
-      if (!cancelled && resolvedPortal) setBillingPortalConfigError(null)
-      setCustomerCode(billing.billing_helcim_customer_code?.trim() || null)
 
       const [campaignResult, paymentResult] = await Promise.all([
         sb.from("ad_campaigns").select("*").eq("profile_id", profileUserId).order("updated_at", { ascending: false }),
@@ -454,116 +350,6 @@ export default function PaymentsPage() {
     const tid = window.setTimeout(scrollToCustomerPay, 600)
     return () => window.clearTimeout(tid)
   }, [])
-
-  useEffect(() => {
-    if (!useHelcimJs || !helcimReturnOrigin) return
-    const onHelcimMessage = (ev: MessageEvent) => {
-      if (ev.origin !== helcimReturnOrigin) return
-      if (!isHelcimJsReturnMessage(ev.data)) return
-      setLastResult(ev.data)
-      if (ev.data.response === 1) {
-        if (paymentCampaignIds.length > 0 || adBalanceDueCentsTotal > 0) {
-          void reconcileAdvertisingPayment(ev.data)
-        } else {
-          void persistHelcimJsSubscriptionPayment(ev.data).then(() => setBillingRefreshNonce((n) => n + 1))
-        }
-      }
-    }
-    window.addEventListener("message", onHelcimMessage)
-    return () => window.removeEventListener("message", onHelcimMessage)
-  }, [useHelcimJs, helcimReturnOrigin, paymentCampaignIds, adBalanceDueCentsTotal])
-
-  async function persistHelcimJsSubscriptionPayment(result: HelcimJsReturnMessage) {
-    if (!supabase || !profileUserId || result.response !== 1) return
-    try {
-      const { data: row } = await supabase.from("profiles").select("metadata").eq("id", profileUserId).maybeSingle()
-      const prev =
-        row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
-          ? (row.metadata as Record<string, unknown>)
-          : {}
-      const amountUsd = Number.parseFloat(result.amount)
-      const nowIso = new Date().toISOString()
-      let nextMeta = applyReceivedBillingPayment(prev, {
-        at: nowIso,
-        amountUsd: Number.isFinite(amountUsd) ? amountUsd : undefined,
-        transactionId: result.transactionId || undefined,
-        orderNumber: result.orderNumber || undefined,
-        note: "Helcim.js checkout",
-      })
-      nextMeta = applyHelcimAutopayCard(nextMeta, {
-        cardToken: result.cardToken,
-        cardLast4: last4FromMaskedCard(result.cardNumberMasked),
-        cardBrand: result.cardType,
-        cardExpiry: result.cardExpiry,
-        enable: enrollAutopayRef.current,
-        at: nowIso,
-      })
-      const { error } = await supabase.from("profiles").update({ metadata: nextMeta }).eq("id", profileUserId)
-      if (error) console.warn("[helcim-js] could not save payment history", error.message)
-    } catch (e) {
-      console.warn("[helcim-js] could not save payment history", e instanceof Error ? e.message : e)
-    }
-  }
-
-  async function reconcileAdvertisingPayment(result: HelcimJsReturnMessage) {
-    if (!supabase || !profileUserId) return
-    setAdPaymentReconcileMessage("Verifying advertising payment with Helcim…")
-    try {
-      const token = (await supabase.auth.getSession()).data.session?.access_token
-      if (!token) throw new Error("Sign in again to verify this payment.")
-      const response = await fetch("/api/ad-campaign-payments", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          amount: result.amount || paymentAmount,
-          currency: result.currency || "USD",
-          transactionId: result.transactionId,
-          approvalCode: result.approvalCode,
-          cardToken: result.cardToken,
-          cardType: result.cardType,
-          cardNumberMasked: result.cardNumberMasked,
-          customerCode: result.customerCode,
-          date: result.date,
-          campaignIds: paymentCampaignIds,
-        }),
-      })
-      const payload = (await response.json().catch(() => ({}))) as {
-        error?: string
-        balanceDueCents?: number
-      }
-      if (!response.ok) throw new Error(payload.error || `Payment verification failed (${response.status}).`)
-      setAdPaymentReconcileMessage("Advertising payment verified. Admin campaigns and payment history are updated.")
-      setAdBalanceFromMetaCents(Math.max(0, Number(payload.balanceDueCents ?? 0)))
-      const [campaignResult, paymentResult] = await Promise.all([
-        supabase.from("ad_campaigns").select("*").eq("profile_id", profileUserId).order("updated_at", { ascending: false }),
-        supabase
-          .from("ad_campaign_payments")
-          .select("*")
-          .eq("profile_id", profileUserId)
-          .order("created_at", { ascending: false })
-          .limit(100),
-      ])
-      setAdCampaigns((campaignResult.data ?? []) as AdCampaignRow[])
-      setAdPaymentHistory((paymentResult.data ?? []) as AdCampaignPaymentRow[])
-      setPaymentCampaignIds([])
-      setPaymentMode("suggested")
-      setBillingRefreshNonce((n) => n + 1)
-    } catch (error) {
-      setAdPaymentReconcileMessage(
-        error instanceof Error
-          ? `Card approved, but campaign reconciliation is pending: ${error.message}`
-          : "Card approved, but campaign reconciliation is pending.",
-      )
-    }
-  }
-
-  const withCustomer = portalBaseUrl ? appendHelcimCustomerQueryToPayPortalUrl(portalBaseUrl, customerCode) : null
-  const normalizedPortal = withCustomer ? normalizeHelcimPayPortalUrl(withCustomer) : null
-  const iframeUrl = normalizedPortal && helcimPayPortalUrlAllowsIframe(normalizedPortal) ? normalizedPortal : null
-  const openInTabUrl = normalizedPortal && !iframeUrl ? normalizedPortal : null
-  const invalidPortal = Boolean(portalBaseUrl?.trim()) && !normalizedPortal
-
-  const helcimJsHttpsOk = typeof window !== "undefined" && window.location.protocol === "https:"
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
@@ -667,554 +453,71 @@ export default function PaymentsPage() {
         </div>
       ) : null}
 
-      {useHelcimJs ? (
-        <div
-          style={{
-            margin: "0 0 16px",
-            padding: "14px 16px",
-            borderRadius: 12,
-            border: billingForPayments.billing_autopay_enabled ? "1px solid #047857" : `1px solid ${theme.border}`,
-            background: billingForPayments.billing_autopay_enabled ? "#ecfdf5" : "#f8fafc",
-          }}
-        >
-          <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: autopayBusy ? "wait" : "pointer" }}>
-            <input
-              type="checkbox"
-              checked={enrollAutopay}
-              disabled={autopayBusy}
-              onChange={(e) => {
-                const next = e.target.checked
-                setEnrollAutopay(next)
-                void saveAutopayPreference(next)
-              }}
-              style={{ marginTop: 3 }}
-            />
-            <span>
-              <strong style={{ display: "block", fontSize: 14, color: theme.text }}>Autopay each month</strong>
-              <span style={{ display: "block", marginTop: 4, fontSize: 13, color: "#475569", lineHeight: 1.45 }}>
-                Charge the card saved with Helcim on your due date for the monthly Tradesman bill
-                {subscriptionBillAmountUsd(billingForPayments) > 0
-                  ? ` (${formatUsdMonthly(subscriptionBillAmountUsd(billingForPayments))})`
-                  : ""}
-                . Advertising balances are not included — pay those separately below.
-              </span>
-              {billingAutopayCardLabel(billingForPayments) ? (
-                <span style={{ display: "block", marginTop: 6, fontSize: 13, fontWeight: 700, color: theme.text }}>
-                  {billingAutopayCardLabel(billingForPayments)}
-                  {billingForPayments.billing_autopay_enabled ? " · on" : " · saved, Autopay off"}
-                </span>
-              ) : enrollAutopay ? (
-                <span style={{ display: "block", marginTop: 6, fontSize: 13, color: "#92400e" }}>
-                  Pay once with the Helcim form below to save your card. Autopay starts on the next due date after that.
-                </span>
-              ) : null}
-              {billingForPayments.billing_autopay_last_error ? (
-                <span style={{ display: "block", marginTop: 6, fontSize: 13, color: "#b91c1c" }}>
-                  Last Autopay attempt: {billingForPayments.billing_autopay_last_error}
-                </span>
-              ) : null}
-            </span>
-          </label>
-        </div>
-      ) : null}
-
-      {openAdCampaigns.length > 0 || adBalanceDueCentsTotal > 0 ? (
-        <div
-          style={{
-            marginBottom: 16,
-            padding: 16,
-            borderRadius: 12,
-            border: "1px solid #fed7aa",
-            background: "#fff7ed",
-            color: "#0f172a",
-          }}
-        >
-          <div style={{ fontWeight: 800, fontSize: 15, color: "#9a3412" }}>Advertising &amp; campaigns</div>
-          <p style={{ margin: "6px 0 12px", fontSize: 13, color: "#9a3412", lineHeight: 1.45 }}>
-            Managed ads budget and spend from Tradesman Growth. Open balance is included in the suggested Helcim payment amount below.
-          </p>
-          <p style={{ margin: "0 0 12px", fontSize: 12, color: "#9a3412", lineHeight: 1.5 }}>
-            {AD_CAMPAIGN_SPEND_DISCLAIMER} {AD_CAMPAIGN_FEE_DISCLOSURE}
-          </p>
-          {openAdCampaigns.length === 0 ? (
-            <p style={{ margin: 0, fontSize: 13, color: "#c2410c" }}>
-              Open advertising balance: <strong>{formatUsdFromCents(adBalanceDueCentsTotal)}</strong>
-            </p>
-          ) : (
-            <div style={{ display: "grid", gap: 8 }}>
-              {openAdCampaigns.map((c) => (
-                <div
-                  key={c.id}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr auto",
-                    gap: 8,
-                    padding: "10px 12px",
-                    borderRadius: 10,
-                    background: "#fff",
-                    border: "1px solid #fdba74",
-                    fontSize: 13,
-                  }}
-                >
-                  <div>
-                    <div style={{ fontWeight: 800 }}>{c.name}</div>
-                    <div style={{ color: "#9a3412", marginTop: 2 }}>
-                      Requested {formatUsdFromCents(c.requested_budget_cents)} · Spent {formatUsdFromCents(c.spent_cents)} · Billed{" "}
-                      {formatUsdFromCents(c.billed_cents)}
-                    </div>
-                    {c.spent_cents > 0 ? (
-                      <div style={{ color: "#9a3412", marginTop: 2 }}>
-                        Processing fee {formatUsdFromCents(adCampaignProcessingFeeCents(c.spent_cents))}
-                      </div>
-                    ) : null}
-                    {c.request_details?.trim() ? (
-                      <div style={{ marginTop: 4, color: "#78716c", whiteSpace: "pre-wrap" }}>{c.request_details.slice(0, 220)}</div>
-                    ) : null}
-                  </div>
-                  <div style={{ textAlign: "right", fontWeight: 900, color: adBalanceDueCents(c) > 0 ? "#c2410c" : "#15803d" }}>
-                    <div>{adBalanceDueCents(c) > 0 ? `Due ${formatUsdFromCents(adBalanceDueCents(c))}` : "Paid up"}</div>
-                    {adBalanceDueCents(c) > 0 ? (
-                      <button
-                        type="button"
-                        onClick={() => loadAdvertisingIntoCheckout(c)}
-                        style={{ ...smallLoadButtonStyle, marginTop: 6 }}
-                      >
-                        Load bill
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
+      <div ref={checkoutRef} style={{ padding: 16, borderRadius: 12, border: "1px solid #1d4ed8", background: "#f8fafc", display: "grid", gap: 10 }}>
+        <strong style={{ fontSize: 15, color: theme.text }}>Pay with Stripe</strong>
+        <p style={{ margin: 0, fontSize: 13, color: "#475569", lineHeight: 1.5 }}>
+          Tradesman subscription and advertising charges are collected by Stripe. Autopay still charges one month on the due date after a card is saved.
+        </p>
+        {paymentMode === "suggested" && monthlyBillUsd > 0 ? (
+          <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 700, color: theme.text }}>
+            Months to pay
+            <select
+              value={coverMonths}
+              onChange={(e) => setCoverMonths(clampBillingCoverMonths(e.target.value))}
+              style={{ maxWidth: 220, padding: "8px 10px", borderRadius: 8, border: `1px solid ${theme.border}`, fontSize: 14 }}
+            >
+              {[1, 2, 3, 6, 12].map((months) => (
+                <option key={months} value={months}>
+                  {months === 1 ? "1 month" : `${months} months`}
+                </option>
               ))}
-              <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                <div style={{ fontWeight: 800, fontSize: 14, color: "#9a3412" }}>
-                  Total advertising due: {formatUsdFromCents(adBalanceDueCentsTotal)}
-                </div>
-                {adBalanceDueCentsTotal > 0 ? (
-                  <button type="button" onClick={() => loadAdvertisingIntoCheckout()} style={smallLoadButtonStyle}>
-                    Load total into payment tool
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          )}
-        </div>
-      ) : null}
-
-      {useHelcimJs ? (
-        <>
-          {!helcimJsHttpsOk ? (
-            <div
-              style={{
-                marginBottom: 16,
-                padding: 14,
-                borderRadius: 10,
-                border: "1px solid #92400e",
-                background: "#451a03",
-                color: "#fde68a",
-                fontSize: 14,
-              }}
-            >
-              Card payments need a secure (https) connection. Use your normal production link in the browser when paying with a live card.
-            </div>
-          ) : null}
-          {scriptError ? (
-            <div
-              style={{
-                marginBottom: 16,
-                padding: 14,
-                borderRadius: 10,
-                border: "1px solid #92400e",
-                background: "#451a03",
-                color: "#fde68a",
-                fontSize: 14,
-                lineHeight: 1.5,
-              }}
-            >
-              <p style={{ margin: "0 0 10px" }}>{scriptError}</p>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-                <button
-                  type="button"
-                  onClick={retryHelcimScript}
-                  style={{
-                    padding: "8px 14px",
-                    borderRadius: 8,
-                    border: "none",
-                    background: "#f59e0b",
-                    color: "#111827",
-                    fontWeight: 800,
-                    cursor: "pointer",
-                  }}
-                >
-                  Retry Helcim checkout
-                </button>
-                {iframeUrl || openInTabUrl ? (
-                  <a
-                    href={iframeUrl || openInTabUrl || undefined}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{ color: "#fde68a", fontWeight: 700 }}
-                  >
-                    Open hosted Helcim page instead
-                  </a>
-                ) : null}
-              </div>
-              <p style={{ margin: "10px 0 0", fontSize: 12, opacity: 0.9 }}>
-                The Pay button waits for Helcim&apos;s checkout script from secure.myhelcim.com. Try another browser or turn
-                off ad blockers if this keeps happening.
-              </p>
-            </div>
-          ) : null}
-          {loading ? (
-            <p style={{ color: "#9ca3af" }}>Loading…</p>
-          ) : !formAction ? (
-            <p style={{ color: "#9ca3af" }}>Preparing checkout…</p>
-          ) : (
-            <>
-              {lastResult ? (
-                <div
-                  style={{
-                    marginBottom: 16,
-                    padding: 14,
-                    borderRadius: 10,
-                    border: `1px solid ${lastResult.response === 1 ? "#047857" : "#b91c1c"}`,
-                    background: lastResult.response === 1 ? "#064e3b" : "#450a0a",
-                    color: lastResult.response === 1 ? "#d1fae5" : "#fecaca",
-                    fontSize: 14,
-                    lineHeight: 1.5,
-                  }}
-                >
-                  <strong>{lastResult.response === 1 ? "Approved" : "Not approved"}</strong>
-                  {lastResult.responseMessage ? ` — ${lastResult.responseMessage}` : ""}
-                  {lastResult.transactionId ? (
-                    <div style={{ marginTop: 8, fontSize: 13, opacity: 0.95 }}>
-                      <>Reference: {lastResult.transactionId}</>
-                      {lastResult.amount ? (
-                        <>
-                          {" "}
-                          · Amount: {lastResult.amount} {lastResult.currency || ""}
-                        </>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  {lastResult.noticeMessage ? (
-                    <div style={{ marginTop: 6, fontSize: 12, opacity: 0.9 }}>{lastResult.noticeMessage}</div>
-                  ) : null}
-                </div>
-              ) : null}
-              {adPaymentReconcileMessage ? (
-                <div
-                  style={{
-                    marginBottom: 16,
-                    padding: 12,
-                    borderRadius: 10,
-                    border: `1px solid ${adPaymentReconcileMessage.includes("pending") ? "#f59e0b" : "#10b981"}`,
-                    background: adPaymentReconcileMessage.includes("pending") ? "#fffbeb" : "#ecfdf5",
-                    color: adPaymentReconcileMessage.includes("pending") ? "#92400e" : "#065f46",
-                    fontSize: 13,
-                  }}
-                >
-                  {adPaymentReconcileMessage}
-                </div>
-              ) : null}
-
-              <iframe
-                name={HELCIM_RETURN_IFRAME_NAME}
-                title="Helcim payment result"
-                style={{ position: "absolute", width: 0, height: 0, border: "none", visibility: "hidden" }}
-                aria-hidden
-              />
-
-              <form
-                ref={checkoutRef}
-                name="helcimForm"
-                id="helcimForm"
-                method="POST"
-                action={formAction}
-                target={HELCIM_RETURN_IFRAME_NAME}
-                style={{
-                  maxWidth: 520,
-                  padding: 20,
-                  borderRadius: 12,
-                  border: "1px solid #374151",
-                  background: "#111827",
-                }}
-              >
-                <div id="helcimResults" style={{ marginBottom: 16, minHeight: 4, fontSize: 13, color: "#fca5a5" }} />
-
-                <input type="hidden" id="token" value={ENV_JS_TOKEN} />
-
-                <div style={{ display: "grid", gap: 14 }}>
-                  <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>
-                    Amount
-                    <input
-                      type="text"
-                      id="amount"
-                      value={paymentAmount}
-                      onChange={(event) => {
-                        setPaymentAmount(event.target.value)
-                        setPaymentMode("custom")
-                        setPaymentCampaignIds([])
-                      }}
-                      placeholder="0.00"
-                      autoComplete="off"
-                      style={inputStyle}
-                    />
-                    <span style={{ fontWeight: 400, fontSize: 12, color: "#9ca3af" }}>
-                      For Verify-only flows your Helcim.js config may ignore amount.
-                    </span>
-                  </label>
-
-                  <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>
-                    Cardholder name
-                    <input type="text" id="cardHolderName" defaultValue="" autoComplete="cc-name" style={inputStyle} />
-                  </label>
-                  <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>
-                    Billing street address
-                    <input
-                      type="text"
-                      id="cardHolderAddress"
-                      defaultValue=""
-                      placeholder="Street address (AVS)"
-                      autoComplete="street-address"
-                      style={inputStyle}
-                    />
-                  </label>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-                    <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb", flex: "1 1 180px" }}>
-                      Billing city
-                      <input
-                        type="text"
-                        id="billing_city"
-                        defaultValue=""
-                        placeholder="City"
-                        autoComplete="address-level2"
-                        style={inputStyle}
-                      />
-                    </label>
-                    <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb", flex: "1 1 140px" }}>
-                      Billing state / province
-                      <input
-                        type="text"
-                        id="billing_province"
-                        defaultValue=""
-                        placeholder="State or province"
-                        autoComplete="address-level1"
-                        style={inputStyle}
-                      />
-                    </label>
-                  </div>
-                  <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>
-                    Billing postal / ZIP code
-                    <input
-                      type="text"
-                      id="cardHolderPostalCode"
-                      defaultValue=""
-                      placeholder="Postal or ZIP"
-                      autoComplete="postal-code"
-                      style={inputStyle}
-                    />
-                  </label>
-                  <p style={{ margin: 0, fontSize: 12, color: "#9ca3af", lineHeight: 1.45 }}>
-                    Use the same billing address your bank has on file for this card.
-                  </p>
-
-                  <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb" }}>
-                    Card number
-                    <input type="text" id="cardNumber" defaultValue="" inputMode="numeric" autoComplete="cc-number" style={inputStyle} />
-                  </label>
-
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-                    <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb", flex: "1 1 100px" }}>
-                      Expiry (MM)
-                      <input type="text" id="cardExpiryMonth" defaultValue="" placeholder="MM" autoComplete="cc-exp-month" style={inputStyle} />
-                    </label>
-                    <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb", flex: "1 1 100px" }}>
-                      Expiry (YY)
-                      <input type="text" id="cardExpiryYear" defaultValue="" placeholder="YY" autoComplete="cc-exp-year" style={inputStyle} />
-                    </label>
-                    <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: "#e5e7eb", flex: "1 1 100px" }}>
-                      CVV
-                      <input type="text" id="cardCVV" defaultValue="" inputMode="numeric" autoComplete="cc-csc" style={inputStyle} />
-                    </label>
-                  </div>
-
-                  <input type="hidden" id="customerCode" value={customerCode ?? ""} />
-                  <input type="hidden" id="orderNumber" value={helcimOrderNumber} />
-                  <input type="hidden" id="tradesmanCampaignIds" value={paymentCampaignIds.join(",")} />
-
-                  <label style={{ display: "flex", alignItems: "flex-start", gap: 8, color: "#e5e7eb", fontSize: 13, cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={enrollAutopay}
-                      onChange={(e) => {
-                        const next = e.target.checked
-                        setEnrollAutopay(next)
-                        void saveAutopayPreference(next)
-                      }}
-                      style={{ marginTop: 2 }}
-                    />
-                    <span>
-                      Save this card for Autopay — charge my monthly Tradesman bill on the due date. You can turn this off anytime.
-                    </span>
-                  </label>
-
-                  <input
-                    type="button"
-                    id="buttonProcess"
-                    value={scriptReady ? "Pay with Helcim" : scriptError ? "Helcim unavailable" : "Loading Helcim…"}
-                    disabled={!scriptReady}
-                    onClick={() => {
-                      setLastResult(null)
-                      const next = nextHelcimJsOrderNumber(helcimOrderKind, profileUserId)
-                      setHelcimOrderNumber(next)
-                      const orderInput = document.getElementById("orderNumber") as HTMLInputElement | null
-                      if (orderInput) orderInput.value = next
-                      window.helcimProcess?.()
-                    }}
-                    style={{
-                      marginTop: 4,
-                      padding: "12px 20px",
-                      borderRadius: 8,
-                      border: "none",
-                      background: scriptReady ? theme.primary : "#4b5563",
-                      color: "#fff",
-                      fontWeight: 700,
-                      fontSize: 15,
-                      cursor: scriptReady ? "pointer" : "not-allowed",
-                      width: "fit-content",
-                    }}
-                  />
-                </div>
-              </form>
-
-            </>
-          )}
-        </>
-      ) : iosWebBilling ? null : (
-        <>
-          <p style={{ color: theme.text, marginBottom: 16, lineHeight: 1.5, fontSize: 14 }}>
-            Your secure payment window loads below when your organization has turned on online payments.
+            </select>
+          </label>
+        ) : null}
+        {coverMonths > 1 && typeof billingForPayments.billing_custom_charge_usd === "number" && billingForPayments.billing_custom_charge_usd > 0 ? (
+          <p style={{ margin: 0, fontSize: 13, color: "#92400e", lineHeight: 1.45 }}>
+            The custom bill amount is one month and will be multiplied. If that number was already a multi-month total, set it back to one month before paying.
           </p>
-          {iframeUrl && !customerCode ? (
-            <p style={{ color: "#9ca3af", fontSize: 12, marginTop: -8, marginBottom: 12 }}>
-              No Helcim customer code on file — the shared portal may not pre-select your account. Ask your admin to add it under Billing
-              &amp; Helcim.
-            </p>
-          ) : null}
-          {loading ? (
-            <p style={{ color: "#9ca3af" }}>Loading…</p>
-          ) : iframeUrl ? (
-            <div
-              style={{
-                borderRadius: 10,
-                overflow: "hidden",
-                border: "1px solid #374151",
-                background: "#111827",
-                minHeight: 560,
-              }}
-            >
-              <iframe
-                title="Helcim payments"
-                src={iframeUrl}
-                style={{ width: "100%", height: "min(78vh, 720px)", border: "none", display: "block" }}
-                sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-same-origin"
-                referrerPolicy="strict-origin-when-cross-origin"
-              />
-            </div>
-          ) : openInTabUrl ? (
-            <div
-              style={{
-                padding: 20,
-                borderRadius: 10,
-                border: "1px solid #1d4ed8",
-                background: "#172554",
-                color: "#bfdbfe",
-                fontSize: 14,
-                lineHeight: 1.55,
-              }}
-            >
-              <p style={{ margin: "0 0 12px" }}>
-                This payment portal link is not <strong>https</strong>, so it cannot be embedded here (browser security). Open it in a
-                new tab:
-              </p>
-              <a
-                href={openInTabUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ color: "#93c5fd", fontWeight: 600, wordBreak: "break-all" }}
-              >
-                {openInTabUrl}
-              </a>
-            </div>
-          ) : invalidPortal ? (
-            <div
-              style={{
-                padding: 20,
-                borderRadius: 10,
-                border: "1px solid #92400e",
-                background: "#451a03",
-                color: "#fde68a",
-                fontSize: 14,
-                lineHeight: 1.55,
-              }}
-            >
-              <strong>Payment portal URL is not valid.</strong> Ask your administrator to update the payment link under Admin → Billing
-              &amp; Helcim (it must be a full <code style={{ color: "#fef3c7" }}>https://</code> address).
-            </div>
-          ) : hasBillingPlanSignals ? (
-            <div
-              style={{
-                padding: 20,
-                borderRadius: 10,
-                border: "1px solid #1d4ed8",
-                background: "#172554",
-                color: "#bfdbfe",
-                fontSize: 14,
-                lineHeight: 1.55,
-              }}
-            >
-              <strong>Your billing plan is on file, but we couldn&apos;t open the payment portal this session.</strong>
-              {billingPortalConfigError ? (
-                <p style={{ margin: "10px 0 0", fontSize: 13, opacity: 0.95 }}>
-                  {billingPortalConfigError}
-                </p>
-              ) : null}
-              <p style={{ margin: "12px 0 0", fontSize: 13, opacity: 0.95, lineHeight: 1.5 }}>
-                Try refreshing the page. Your administrator can confirm the pay link under <strong>Admin → Billing &amp; Helcim</strong>, or
-                set a <strong>Pay portal URL</strong> on your profile there if your office uses a custom link.
-              </p>
-              {monthlyPlanTotal > 0 ? (
-                <p style={{ margin: "14px 0 0", fontWeight: 600 }}>
-                  Catalog monthly total (before tax): {formatUsdMonthly(monthlyPlanTotal)}
-                  {billingForPayments.billing_payment_due_date ? (
-                    <> · Next due date on file: {billingForPayments.billing_payment_due_date}</>
-                  ) : null}
-                </p>
-              ) : null}
-              <p style={{ margin: "12px 0 0", fontSize: 13, opacity: 0.95 }}>
-                When your <strong>Helcim customer code</strong> is on file, matching charges can update <strong>Last paid</strong>{" "}
-                automatically. Your administrator can also record cash or check payments from Admin → Billing.
-              </p>
-            </div>
-          ) : (
-            <div
-              style={{
-                padding: 20,
-                borderRadius: 10,
-                border: "1px solid #92400e",
-                background: "#451a03",
-                color: "#fde68a",
-                fontSize: 14,
-                lineHeight: 1.55,
-              }}
-            >
-              <strong>Online payments aren&apos;t connected on this screen yet.</strong> Your Tradesman billing plan is on file, but this
-              site still needs a Helcim payment portal URL (Vercel <code style={{ color: "#fef3c7" }}>VITE_HELCIM_PAYMENT_PORTAL_URL</code>{" "}
-              or Admin → Billing &amp; Helcim) so customers can open the pay window. Customer codes alone are not enough.
-            </div>
-          )}
-        </>
-      )}
+        ) : null}
+        <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13, color: theme.text }}>
+          <input
+            type="checkbox"
+            checked={enrollAutopay}
+            disabled={autopayBusy}
+            onChange={(e) => void saveAutopayPreference(e.target.checked)}
+            style={{ marginTop: 2 }}
+          />
+          <span>Turn on Autopay. Stripe saves the card from this checkout and charges one month when the due date arrives.</span>
+        </label>
+        <div style={{ fontSize: 18, fontWeight: 800, color: theme.text }}>
+          {paymentAmount ? `Amount: $${Number.parseFloat(paymentAmount).toFixed(2)}` : "No amount due right now"}
+        </div>
+        {adBalanceDueCentsTotal > 0 ? (
+          <>
+            <p style={{ margin: 0, fontSize: 12, color: "#475569", lineHeight: 1.45 }}>{AD_CAMPAIGN_FEE_DISCLOSURE}</p>
+            <p style={{ margin: 0, fontSize: 12, color: "#475569", lineHeight: 1.45 }}>{AD_CAMPAIGN_SPEND_DISCLAIMER}</p>
+          </>
+        ) : null}
+        {stripeNotice ? <p style={{ margin: 0, fontSize: 13, color: "#047857" }}>{stripeNotice}</p> : null}
+        {stripePayError ? <p style={{ margin: 0, fontSize: 13, color: "#b91c1c" }}>{stripePayError}</p> : null}
+        <button
+          type="button"
+          disabled={stripePayBusy || !paymentAmount}
+          onClick={() => void startStripeCheckout()}
+          style={{
+            padding: "12px 20px",
+            borderRadius: 8,
+            border: "none",
+            background: theme.primary,
+            color: "#fff",
+            fontWeight: 700,
+            width: "fit-content",
+            cursor: stripePayBusy ? "wait" : "pointer",
+          }}
+        >
+          {stripePayBusy ? "Opening Stripe…" : "Pay with Stripe"}
+        </button>
+      </div>
       </>
       ) : null}
 
@@ -1238,8 +541,7 @@ export default function PaymentsPage() {
               Previous payments (subscription)
             </h2>
             <p style={{ margin: "0 0 16px", fontSize: 14, color: "#475569", lineHeight: 1.55 }}>
-              This page reflects metadata we store on your profile. Use Admin → Billing &amp; Helcim and your processor &apos;s dashboard for a
-              full statement.
+              This page reflects payments stored on your profile. Stripe is the processor for Tradesman billing. Use the Stripe dashboard for the bank deposit.
             </p>
             <ul style={{ margin: 0, paddingLeft: 20, fontSize: 14, color: theme.text, lineHeight: 1.65 }}>
               {(billingForPayments.billing_payment_history_v1 ?? []).filter((entry) => !entry.revertedAt).length > 0 ? (
@@ -1266,43 +568,7 @@ export default function PaymentsPage() {
                 <strong>Catalog monthly total</strong> (before tax):{" "}
                 {monthlyPlanTotal > 0 ? formatUsdMonthly(monthlyPlanTotal) : "—"}
               </li>
-              <li>
-                <strong>Helcim customer code</strong>: {customerCode?.trim() || "—"}
-              </li>
             </ul>
-            {lastResult ? (
-              <div
-                style={{
-                  marginTop: 18,
-                  padding: 14,
-                  borderRadius: 10,
-                  border: `1px solid ${lastResult.response === 1 ? "#047857" : "#b91c1c"}`,
-                  background: lastResult.response === 1 ? "#ecfdf5" : "#fef2f2",
-                  fontSize: 14,
-                  lineHeight: 1.5,
-                }}
-              >
-                <strong style={{ display: "block", marginBottom: 6 }}>Latest attempt this session (embedded checkout)</strong>
-                <span>{lastResult.response === 1 ? "Approved" : "Not approved"}</span>
-                {lastResult.responseMessage ? ` — ${lastResult.responseMessage}` : ""}
-                {lastResult.transactionId ? (
-                  <div style={{ marginTop: 6, fontSize: 13 }}>
-                    Reference: {lastResult.transactionId}
-                    {lastResult.amount ? (
-                      <>
-                        {" "}
-                        · Amount: {lastResult.amount} {lastResult.currency || ""}
-                      </>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-            ) : (
-              <p style={{ margin: "16px 0 0", fontSize: 13, color: "#64748b" }}>
-                Pay from the <strong>Manage Payments to Tradesman</strong> tab to see a live result here after you submit a card in this
-                browser.
-              </p>
-            )}
           </section>
 
           <section

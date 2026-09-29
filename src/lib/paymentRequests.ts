@@ -6,7 +6,7 @@ import { invoiceSubtotal, loadInvoicesFromProfile, type InvoiceRecord } from "./
 export type PaymentRequestStatus = "draft" | "sent" | "paid" | "failed" | "canceled"
 export type PaymentProviderId = "helcim" | "square" | "clover" | "stripe" | "manual"
 
-export const PAYMENT_PROVIDER_IDS: PaymentProviderId[] = ["helcim", "square", "clover", "stripe", "manual"]
+export const PAYMENT_PROVIDER_IDS: PaymentProviderId[] = ["stripe", "square", "clover", "manual", "helcim"]
 
 export function paymentProviderLabel(id: PaymentProviderId): string {
   switch (id) {

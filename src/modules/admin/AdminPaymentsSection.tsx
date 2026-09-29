@@ -104,7 +104,6 @@ function draftFromBilling(b: BillingProfileMetadata): BillingDraft {
 
 export default function AdminPaymentsSection() {
   const { session } = useAuth()
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? ""
   const [rows, setRows] = useState<BillingRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
@@ -113,13 +112,9 @@ export default function AdminPaymentsSection() {
   const [searchQuery, setSearchQuery] = useState("")
   /** When true, row shows full billing fields. */
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
-  const [helcimMatchBusy, setHelcimMatchBusy] = useState(false)
-  const [helcimMatchMsg, setHelcimMatchMsg] = useState<string | null>(null)
-  const [helcimOverwriteCodes, setHelcimOverwriteCodes] = useState(false)
   const [collectionsByUser, setCollectionsByUser] = useState<Record<string, CollectionsState>>({})
   const [adsByUser, setAdsByUser] = useState<Record<string, AdsState>>({})
 
-  const webhookUrl = supabaseUrl ? `${supabaseUrl.replace(/\/$/, "")}/functions/v1/billing-webhook` : ""
 
   const load = useCallback(async () => {
     if (!supabase) {
@@ -438,32 +433,22 @@ export default function AdminPaymentsSection() {
   return (
     <div>
       <AdminSettingBlock id="admin:billing:intro">
-        <h1 style={{ color: theme.charcoal, margin: "0 0 8px", fontSize: 22, fontWeight: 800 }}>Billing &amp; Helcim</h1>
+        <h1 style={{ color: theme.charcoal, margin: "0 0 8px", fontSize: 22, fontWeight: 800 }}>Billing &amp; Stripe</h1>
         <p style={{ color: theme.charcoal, margin: "0 0 12px", fontSize: 14, lineHeight: 1.55, maxWidth: 820, opacity: 0.95 }}>
-          <strong>Hands-off billing:</strong> set <code>VITE_HELCIM_PAYMENT_PORTAL_URL</code> once on your web/mobile build so every user
-          shares the same Helcim hosted page (or set <code>VITE_HELCIM_JS_TOKEN</code> for an embedded Helcim.js checkout on the Payments
-          tab); you do <strong>not</strong> need a different pay URL per row. Map each Tradesman user to a{" "}
-          <strong>Helcim customer code</strong> so webhooks and the in-app pay link can associate activity with the right profile. The
-          app appends <code>customerCode=…</code> to the portal URL when supported — confirm with Helcim that your page template accepts
-          that query (or adjust after your support call). Per-user <strong>Pay portal URL</strong> below is optional override only.
-          Webhooks reactivate or deactivate the portal (<code>profiles.account_disabled</code>) for <strong>user</strong> roles only —{" "}
-          <strong>admin</strong>, <strong>office_manager</strong>, and <strong>demo_user</strong> are exempt (events still log). Use{" "}
-          <strong>Pause billing automation</strong> for grace periods. Deploy <code>billing-webhook</code> and run{" "}
-          <code>supabase-billing-helcim.sql</code>. Contractors on an office manager <strong>bundled</strong> plan should keep the
-          Payments tab off for their login and leave <strong>Helcim customer code</strong> empty so they do not get a separate billing
-          profile or dashboard payment alerts.
+          Tradesman subscription payments are collected with Stripe. Set <code>STRIPE_SECRET_KEY</code> and{" "}
+          <code>STRIPE_WEBHOOK_SECRET</code> on the server. Clients pay from the Payments page. A successful checkout saves the Stripe
+          customer and, when Autopay is on, the card for the next due date. Webhooks still update <code>profiles.account_disabled</code>{" "}
+          for regular users. Admin, office manager, and demo logins stay exempt. Use <strong>Pause billing automation</strong> for a grace
+          period. Helcim is no longer used for Tradesman billing. A tradesman can still connect their own Helcim account under customer
+          payment provider settings.
         </p>
-        {webhookUrl ? (
-          <p style={{ margin: 0, fontSize: 13, color: theme.charcoal, opacity: 0.95 }}>
-            <strong>Helcim webhook URL:</strong>{" "}
-            <code style={{ wordBreak: "break-all", fontSize: 12 }}>{webhookUrl}</code>
-          </p>
-        ) : null}
+        <p style={{ margin: 0, fontSize: 13, color: theme.charcoal, opacity: 0.95 }}>
+          <strong>Stripe webhook URL:</strong>{" "}
+          <code style={{ wordBreak: "break-all", fontSize: 12 }}>https://www.tradesman-us.com/api/stripe-billing-webhook</code>
+        </p>
         <p style={{ margin: "12px 0 0", fontSize: 12, color: theme.charcoal, opacity: 0.9, lineHeight: 1.45 }}>
-          Paste the URL above into the processor webhook &quot;Deliver URL&quot; field (path is <code>billing-webhook</code> so the URL does not
-          contain their brand name — otherwise their API returns <strong>400</strong> and save fails). Set <code>HELCIM_WEBHOOK_VERIFIER_TOKEN</code>{" "}
-          and <code>HELCIM_API_TOKEN</code> on the Edge function. If the verifier won&apos;t copy from their UI, select-all in the dialog, paste into
-          Notes, then copy from there.
+          In Stripe, add an endpoint for <code>checkout.session.completed</code> and put the signing secret in{" "}
+          <code>STRIPE_WEBHOOK_SECRET</code>. Autopay charges use <code>STRIPE_SECRET_KEY</code> on the billing-autopay function as well.
         </p>
         {problemClients.length > 0 ? (
           <div
@@ -478,7 +463,7 @@ export default function AdminPaymentsSection() {
               lineHeight: 1.5,
             }}
           >
-            <strong>Helcim payment problem</strong> on {problemClients.length} client
+            <strong>Payment problem</strong> on {problemClients.length} client
             {problemClients.length === 1 ? "" : "s"}:{" "}
             {problemClients
               .slice(0, 6)
@@ -493,63 +478,11 @@ export default function AdminPaymentsSection() {
       <AdminPromoCodesSection />
 
       <AdminSettingBlock id="admin:billing:helcim-sync">
-        <h2 style={{ color: theme.charcoal, margin: "0 0 8px", fontSize: 17, fontWeight: 800 }}>Helcim customer codes (bulk)</h2>
+        <h2 style={{ color: theme.charcoal, margin: "0 0 8px", fontSize: 17, fontWeight: 800 }}>Legacy Helcim customer codes</h2>
         <p style={{ color: theme.charcoal, margin: "0 0 12px", fontSize: 13, lineHeight: 1.55, maxWidth: 820, opacity: 0.95 }}>
-          Fetches customers from the Helcim API and fills <code>billing_helcim_customer_code</code> on Tradesman profiles when the profile{" "}
-          <strong>email</strong> matches the Helcim customer&apos;s email (same spelling, case ignored). Requires{" "}
-          <code>HELCIM_API_TOKEN</code> on the <code>helcim-match-customers</code> Edge function (same token family as{" "}
-          <code>billing-webhook</code>). By default only rows with an <strong>empty</strong> code are updated.
+          Bulk matching against Helcim is turned off. Tradesman billing uses Stripe, and a Stripe customer is created the next time that
+          client pays. Old Helcim codes can stay on the profile for history.
         </p>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: theme.charcoal, cursor: "pointer", marginBottom: 10 }}>
-          <input type="checkbox" checked={helcimOverwriteCodes} onChange={(e) => setHelcimOverwriteCodes(e.target.checked)} />
-          Overwrite existing Helcim customer codes when email matches
-        </label>
-        <button
-          type="button"
-          disabled={helcimMatchBusy || !supabase}
-          onClick={async () => {
-            if (!supabase) return
-            setHelcimMatchBusy(true)
-            setHelcimMatchMsg(null)
-            try {
-              const { data, error } = await supabase.functions.invoke("helcim-match-customers", {
-                body: { overwriteExisting: helcimOverwriteCodes },
-              })
-              if (error) {
-                setHelcimMatchMsg(error.message)
-                return
-              }
-              const d = data as {
-                updated?: number
-                helcimCustomerCount?: number
-                skippedHasCode?: number
-                skippedNoMatch?: number
-                note?: string
-              }
-              setHelcimMatchMsg(
-                `Updated ${d?.updated ?? 0} profile(s). Helcim customers loaded: ${d?.helcimCustomerCount ?? "?"}. Skipped (already had code): ${d?.skippedHasCode ?? "?"}. No email match: ${d?.skippedNoMatch ?? "?"}. ${d?.note ?? ""}`,
-              )
-              await load()
-            } finally {
-              setHelcimMatchBusy(false)
-            }
-          }}
-          style={{
-            padding: "10px 18px",
-            borderRadius: 8,
-            border: "none",
-            background: theme.primary,
-            color: "white",
-            cursor: helcimMatchBusy ? "wait" : "pointer",
-            fontWeight: 700,
-            fontSize: 14,
-          }}
-        >
-          {helcimMatchBusy ? "Running…" : "Match Helcim customer codes from Helcim (by email)"}
-        </button>
-        {helcimMatchMsg ? (
-          <p style={{ margin: "12px 0 0", fontSize: 13, color: theme.charcoal, whiteSpace: "pre-wrap", maxWidth: 900 }}>{helcimMatchMsg}</p>
-        ) : null}
       </AdminSettingBlock>
 
       {error ? (
@@ -812,7 +745,7 @@ export default function AdminPaymentsSection() {
 
                         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14 }}>
                           <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 700, color: theme.charcoal }}>
-                            Helcim customer code
+                            Legacy processor code (not used for billing)
                             <input
                               value={d.billing_helcim_customer_code}
                               onChange={(e) => setDraft(r.id, { billing_helcim_customer_code: e.target.value })}
@@ -821,7 +754,7 @@ export default function AdminPaymentsSection() {
                             />
                           </label>
                           <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 700, color: theme.charcoal }}>
-                            Pay portal URL override (optional)
+                            Legacy pay portal URL (not used)
                             <input
                               value={d.helcim_pay_portal_url}
                               onChange={(e) => setDraft(r.id, { helcim_pay_portal_url: e.target.value })}

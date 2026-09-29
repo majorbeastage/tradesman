@@ -6,7 +6,7 @@ import { firstEnv } from "./_communications.js"
 
 export type PaymentProviderId = "helcim" | "square" | "clover" | "stripe" | "manual"
 
-export const PAYMENT_PROVIDER_IDS: PaymentProviderId[] = ["helcim", "square", "clover", "stripe", "manual"]
+export const PAYMENT_PROVIDER_IDS: PaymentProviderId[] = ["stripe", "square", "clover", "manual", "helcim"]
 
 export type CreatePaymentLinkInput = {
   userId: string
@@ -67,10 +67,7 @@ export class ManualPaymentProvider implements PaymentProvider {
   id: PaymentProviderId = "manual"
 
   async createPaymentLink(input: CreatePaymentLinkInput): Promise<CreatePaymentLinkResult> {
-    const template =
-      input.credentials?.manualPaymentUrlTemplate?.trim() ||
-      input.hostedPayPortalUrl?.trim() ||
-      firstEnv("HELCIM_PAYMENT_PORTAL_URL", "VITE_HELCIM_PAYMENT_PORTAL_URL")
+    const template = input.credentials?.manualPaymentUrlTemplate?.trim() || input.hostedPayPortalUrl?.trim() || ""
     if (!template) {
       throw new Error(
         "No hosted payment URL configured. Save a manual pay link under Payments provider settings.",
@@ -99,8 +96,7 @@ export class HelcimPaymentProvider implements PaymentProvider {
   id: PaymentProviderId = "helcim"
 
   async createPaymentLink(input: CreatePaymentLinkInput): Promise<CreatePaymentLinkResult> {
-    const token =
-      input.credentials?.helcimApiToken?.trim() || firstEnv("HELCIM_API_TOKEN", "HELCIM_MERCHANT_API_TOKEN")
+    const token = input.credentials?.helcimApiToken?.trim() || ""
     if (token) {
       try {
         const result = await createHelcimHostedLink(token, input)
@@ -114,7 +110,7 @@ export class HelcimPaymentProvider implements PaymentProvider {
     return {
       ...fallback,
       provider: "helcim",
-      note: "Using hosted portal fallback. Add HELCIM_API_TOKEN on the server for native payment links.",
+      note: "Using this account's hosted pay link. Helcim links use the token saved under Provider settings.",
     }
   }
 }
@@ -309,8 +305,7 @@ export class StripePaymentProvider implements PaymentProvider {
   id: PaymentProviderId = "stripe"
 
   async createPaymentLink(input: CreatePaymentLinkInput): Promise<CreatePaymentLinkResult> {
-    const secretKey =
-      input.credentials?.stripeSecretKey?.trim() || firstEnv("STRIPE_SECRET_KEY", "STRIPE_API_SECRET_KEY")
+    const secretKey = input.credentials?.stripeSecretKey?.trim() || ""
     if (!secretKey) {
       throw new Error(
         "Stripe is not connected yet. Save your Stripe secret key under Provider settings.",

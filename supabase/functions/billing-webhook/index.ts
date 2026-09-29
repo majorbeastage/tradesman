@@ -93,8 +93,36 @@ function addCalendarMonthsYmd(dueDate: string | undefined, months: number, prefe
   return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`
 }
 
-function advanceDueDate(dueDate: string | undefined, preferDay?: number): string | undefined {
-  return addCalendarMonthsYmd(dueDate, 1, preferDay) ?? dueDate
+function advanceDueDate(dueDate: string | undefined, preferDay?: number, months = 1): string | undefined {
+  const n = Number.isFinite(months) ? Math.min(24, Math.max(1, Math.floor(months))) : 1
+  return addCalendarMonthsYmd(dueDate, n, preferDay) ?? dueDate
+}
+
+function clampCoverMonths(raw: unknown): number {
+  const n = typeof raw === "number" ? raw : typeof raw === "string" ? parseInt(raw.trim(), 10) : NaN
+  if (!Number.isFinite(n)) return 1
+  return Math.min(24, Math.max(1, Math.floor(n)))
+}
+
+/** Months chosen on the Payments page for this checkout. Autopay and unrelated charges stay at 1. */
+function resolveCheckoutCoverMonths(prev: Record<string, unknown>, orderNumber: string, amountUsd?: number): number {
+  const months = clampCoverMonths(prev.billing_checkout_cover_months)
+  if (months <= 1) return 1
+  const pendingOrder = typeof prev.billing_checkout_cover_order === "string" ? prev.billing_checkout_cover_order.trim() : ""
+  const order = orderNumber.trim()
+  if (pendingOrder && order && pendingOrder === order) return months
+  const expectedRaw = prev.billing_checkout_cover_expected_usd
+  const expected = typeof expectedRaw === "number" ? expectedRaw : typeof expectedRaw === "string" ? Number.parseFloat(expectedRaw) : NaN
+  if (
+    (!order || !pendingOrder) &&
+    typeof amountUsd === "number" &&
+    Number.isFinite(amountUsd) &&
+    Number.isFinite(expected) &&
+    Math.abs(expected - amountUsd) <= 1.5
+  ) {
+    return months
+  }
+  return 1
 }
 
 type HistoryRow = Record<string, unknown>
@@ -122,7 +150,7 @@ function alreadyRecordedOpenPayment(hist: HistoryRow[], transactionId: string, o
 /** Same as Admin "received": last paid + next month due date. No-op if this Helcim txn/order is already on file. */
 function applyReceivedBillingPayment(
   prev: Record<string, unknown>,
-  patch: { at: string; amountUsd?: number; transactionId?: string; orderNumber?: string; note?: string },
+  patch: { at: string; amountUsd?: number; transactionId?: string; orderNumber?: string; note?: string; coverMonths?: number },
 ): { next: Record<string, unknown>; already: boolean } {
   const hist = historyRows(prev)
   const tx = (patch.transactionId ?? "").trim()
@@ -142,13 +170,20 @@ function applyReceivedBillingPayment(
           ? Number(paidYmd.slice(8, 10))
           : undefined
   const base = dueRaw || paidYmd || undefined
-  const nextDue = advanceDueDate(base, preferDay)
+  const months = clampCoverMonths(patch.coverMonths ?? 1)
+  const nextDue = advanceDueDate(base, preferDay, months)
   const next: Record<string, unknown> = { ...prev, billing_last_success_at: patch.at }
   if (nextDue) next.billing_payment_due_date = nextDue
   if (typeof preferDay === "number" && Number.isInteger(preferDay)) next.billing_payment_due_day = preferDay
+  if (months > 1) {
+    delete next.billing_checkout_cover_months
+    delete next.billing_checkout_cover_order
+    delete next.billing_checkout_cover_expected_usd
+  }
+  const noteBase = patch.note || "Helcim webhook"
   const entry: HistoryRow = {
     at: patch.at,
-    note: patch.note || "Helcim webhook",
+    note: months > 1 ? `${noteBase} · ${months} months` : noteBase,
   }
   if (typeof patch.amountUsd === "number" && Number.isFinite(patch.amountUsd)) entry.amountUsd = patch.amountUsd
   if (tx) entry.transactionId = tx
@@ -418,12 +453,15 @@ Deno.serve(async (req) => {
 
   /** Last successful payment date is useful for every role (dashboard, Payments). Account lock/unlock stays exempt for staff. */
   if (approved === true && moneyIn) {
+    const amountUsd = amountCents != null ? amountCents / 100 : undefined
+    const coverMonths = resolveCheckoutCoverMonths(meta, orderNumber || "", amountUsd)
     const { next } = applyReceivedBillingPayment(meta, {
       at: nowIso,
-      amountUsd: amountCents != null ? amountCents / 100 : undefined,
+      amountUsd,
       transactionId: txId || undefined,
       orderNumber: orderNumber || undefined,
       note: "Helcim webhook",
+      coverMonths,
     })
     const patch: Record<string, unknown> = { metadata: next, updated_at: nowIso }
     if (!exemptFromHelcimProfileUpdates) {

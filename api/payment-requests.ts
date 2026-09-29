@@ -87,7 +87,7 @@ async function loadProfilePaymentContext(sb: SupabaseClient, userId: string) {
     typeof meta.payment_default_provider === "string" &&
     PAYMENT_PROVIDER_IDS.includes(meta.payment_default_provider as PaymentProviderId)
       ? (meta.payment_default_provider as PaymentProviderId)
-      : "helcim"
+      : "stripe"
   return { customerPayLink, helcimCode, autoReceipt, defaultProvider, metadata: meta }
 }
 
@@ -218,7 +218,7 @@ async function handleCreateLink(req: VercelRequest, res: VercelResponse) {
   const customerId = String(body.customerId ?? "").trim()
   const amount = Number(body.amount)
   const description = String(body.description ?? "").trim() || "Payment"
-  const provider = (String(body.provider ?? "helcim").trim() as PaymentProviderId) || "helcim"
+  const provider = (String(body.provider ?? "stripe").trim() as PaymentProviderId) || "stripe"
   const quoteId = String(body.quoteId ?? "").trim() || null
   const calendarEventId = String(body.calendarEventId ?? "").trim() || null
   const invoiceId = String(body.invoiceId ?? "").trim() || null
@@ -368,14 +368,14 @@ async function handleProviderStatus(req: VercelRequest, res: VercelResponse) {
       p === "manual"
         ? Boolean(creds?.manualPaymentUrlTemplate)
         : p === "helcim"
-          ? Boolean(creds?.helcimApiToken || firstEnv("HELCIM_API_TOKEN"))
+          ? Boolean(creds?.helcimApiToken)
           : p === "clover"
             ? Boolean(
                 (creds?.cloverMerchantId && creds?.cloverPrivateKey) ||
                   (firstEnv("CLOVER_MERCHANT_ID", "CLOVER_MID") && firstEnv("CLOVER_PRIVATE_KEY", "CLOVER_API_PRIVATE_KEY")),
               )
             : p === "stripe"
-              ? Boolean(creds?.stripeSecretKey || firstEnv("STRIPE_SECRET_KEY", "STRIPE_API_SECRET_KEY"))
+              ? Boolean(creds?.stripeSecretKey)
               : Boolean(creds?.squareAccessToken && creds?.squareLocationId)
     status[p] = { connected, accountLabel: data?.account_label ?? null }
   }

@@ -389,6 +389,13 @@ export function advanceBillingDueDate(dueDate: string | undefined, preferDay?: n
   return addCalendarMonthsYmd(dueDate, 1, preferDay) ?? dueDate
 }
 
+/** Months a checkout is allowed to prepay (1–24). */
+export function clampBillingCoverMonths(raw: unknown): number {
+  const n = typeof raw === "number" ? raw : typeof raw === "string" ? parseInt(raw.trim(), 10) : NaN
+  if (!Number.isFinite(n)) return 1
+  return Math.min(24, Math.max(1, Math.floor(n)))
+}
+
 export function rollbackBillingDueDate(dueDate: string | undefined, preferDay?: number): string | undefined {
   return addCalendarMonthsYmd(dueDate, -1, preferDay) ?? dueDate
 }
@@ -424,10 +431,10 @@ export function appendBillingPaymentHistory(
   return mergeBillingIntoProfileMetadata(prev, { billing_payment_history_v1: hist })
 }
 
-/** Mark a Tradesman bill paid: last paid, advance due date one calendar month, append history. No-op if this Helcim txn is already on file. */
+/** Mark a Tradesman bill paid: last paid, advance the due date, append history. No-op if this Helcim txn is already on file. */
 export function applyReceivedBillingPayment(
   prev: Record<string, unknown>,
-  entry: Omit<BillingPaymentHistoryEntry, "dueDateBefore"> & { at: string },
+  entry: Omit<BillingPaymentHistoryEntry, "dueDateBefore"> & { at: string; coverMonths?: number },
 ): Record<string, unknown> {
   const billing = parseBillingMetadata(prev)
   if (alreadyRecordedOpenPayment(billing.billing_payment_history_v1 ?? [], entry)) {
@@ -440,14 +447,25 @@ export function applyReceivedBillingPayment(
     ymdParts(dueBefore ?? "")?.d ??
     ymdParts(paidYmd ?? "")?.d
   const base = dueBefore || paidYmd
-  const nextDue = advanceBillingDueDate(base, preferDay)
+  const months = clampBillingCoverMonths(entry.coverMonths ?? 1)
+  const nextDue = addCalendarMonthsYmd(base, months, preferDay) ?? base
   const next = mergeBillingIntoProfileMetadata(prev, {
     billing_last_success_at: entry.at,
     ...(nextDue ? { billing_payment_due_date: nextDue } : {}),
     ...(typeof preferDay === "number" ? { billing_payment_due_day: preferDay } : {}),
   })
+  if (months > 1) {
+    delete next.billing_checkout_cover_months
+    delete next.billing_checkout_cover_order
+    delete next.billing_checkout_cover_expected_usd
+  }
+  const baseNote = entry.note || (months > 1 ? "Payment" : "")
+  const note = months > 1 && !/\d+\s+months/i.test(baseNote) ? `${baseNote} · ${months} months` : baseNote || entry.note
+  const { coverMonths: _coverMonths, ...historyEntry } = entry
+  void _coverMonths
   return appendBillingPaymentHistory(next, {
-    ...entry,
+    ...historyEntry,
+    ...(note ? { note } : {}),
     ...(dueBefore ? { dueDateBefore: dueBefore } : {}),
   })
 }

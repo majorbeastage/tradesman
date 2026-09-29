@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useAuth } from "../../contexts/AuthContext"
 import { useScopedUserId } from "../../contexts/OfficeManagerScopeContext"
 import { theme } from "../../styles/theme"
 import { supabase } from "../../lib/supabase"
 import { loadCustomersForCustomReceipt, type CustomerReceiptPickerRow } from "../../lib/customReceipt"
+import CustomerSearchPicker from "../../components/CustomerSearchPicker"
 import {
   createPaymentRequestLink,
   fetchPaymentProviderStatus,
@@ -39,14 +40,13 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
   const accessToken = session?.access_token ?? null
 
   const [customers, setCustomers] = useState<CustomerReceiptPickerRow[]>([])
-  const [customerSearch, setCustomerSearch] = useState("")
   const [customerId, setCustomerId] = useState("")
   const [quoteId, setQuoteId] = useState("")
   const [invoiceId, setInvoiceId] = useState("")
   const [eventId, setEventId] = useState("")
   const [amount, setAmount] = useState("")
   const [description, setDescription] = useState("")
-  const [provider, setProvider] = useState<PaymentProviderId>("helcim")
+  const [provider, setProvider] = useState<PaymentProviderId>("stripe")
   const [quotes, setQuotes] = useState<Awaited<ReturnType<typeof loadPaymentSourceQuotes>>>([])
   const [invoices, setInvoices] = useState<Awaited<ReturnType<typeof loadPaymentSourceInvoices>>>([])
   const [events, setEvents] = useState<Awaited<ReturnType<typeof loadPaymentSourceEvents>>>([])
@@ -57,7 +57,7 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
   const [providerStatus, setProviderStatus] = useState<Record<PaymentProviderId, { connected: boolean }> | null>(null)
 
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [settingsProvider, setSettingsProvider] = useState<PaymentProviderId>("helcim")
+  const [settingsProvider, setSettingsProvider] = useState<PaymentProviderId>("stripe")
   const [settingsLabel, setSettingsLabel] = useState("")
   const [helcimToken, setHelcimToken] = useState("")
   const [squareToken, setSquareToken] = useState("")
@@ -74,17 +74,6 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
   const pendingQuotePrefillRef = useRef<string | null>(null)
   const pendingInvoicePrefillRef = useRef<string | null>(null)
   const [editingRequest, setEditingRequest] = useState<PaymentRequestRow | null>(null)
-
-  const filteredCustomers = useMemo(() => {
-    const q = customerSearch.trim().toLowerCase()
-    if (!q) return customers
-    return customers.filter(
-      (c) =>
-        c.display_name.toLowerCase().includes(q) ||
-        c.phone.toLowerCase().includes(q) ||
-        c.email.toLowerCase().includes(q),
-    )
-  }, [customers, customerSearch])
 
   const reloadRequests = useCallback(async () => {
     if (!userId) return
@@ -314,7 +303,7 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
         <div>
           <h2 style={{ margin: "0 0 6px", fontSize: "1.25rem", fontWeight: 800, color: theme.text }}>Collect from customers</h2>
           <p style={{ margin: 0, fontSize: 14, color: "#64748b", lineHeight: 1.5, maxWidth: 560 }}>
-            Create per-job payment links and send them by SMS or email. Connect Helcim, Clover, Stripe, Square, or a manual hosted page under Provider settings.
+            Create per-job payment links and send them by SMS or email. Connect Stripe, Square, or Clover under Provider settings. Helcim remains available if you already use it for customer payments.
           </p>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -368,7 +357,7 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
         <section id="payment-provider-settings" style={card}>
           <h3 style={{ margin: "0 0 12px", fontSize: 16, fontWeight: 800 }}>Provider settings</h3>
           <p style={{ margin: "0 0 12px", fontSize: 13, color: "#64748b" }}>
-            API keys are saved server-only. Connect Helcim, Clover, Stripe, or Square for dynamic links, or save a hosted pay URL as fallback.
+            API keys are saved server-only and stay on that tradesman’s own account. Stripe is the processor to connect. Square, Clover, a manual pay link, or an existing Helcim account can still be used for customer payments.
           </p>
           <div style={{ display: "grid", gap: 12, maxWidth: 480 }}>
             <label style={labelStyle}>
@@ -377,7 +366,7 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
                 value={fallbackPayUrl}
                 onChange={(e) => setFallbackPayUrl(e.target.value)}
                 style={inputStyle}
-                placeholder="https://pay.myhelcim.com/..."
+                placeholder="https://pay.example.com/..."
               />
             </label>
             <label style={labelStyle}>
@@ -397,6 +386,9 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
             {settingsProvider === "helcim" ? (
               <label style={labelStyle}>
                 Helcim API token
+                <span style={{ fontWeight: 500, color: "#64748b" }}>
+                  Only for customer payments on a Helcim account you already have. Tradesman subscription billing uses Stripe.
+                </span>
                 <input type="password" value={helcimToken} onChange={(e) => setHelcimToken(e.target.value)} style={inputStyle} placeholder="Paste new token to update" />
               </label>
             ) : null}
@@ -484,18 +476,12 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
         <div style={{ display: "grid", gap: 12, maxWidth: 520 }}>
           <label style={labelStyle}>
             Customer
-            {customers.length > 12 ? (
-              <input value={customerSearch} onChange={(e) => setCustomerSearch(e.target.value)} placeholder="Search…" style={inputStyle} />
-            ) : null}
-            <select value={customerId} onChange={(e) => setCustomerId(e.target.value)} style={inputStyle}>
-              <option value="">Select customer</option>
-              {filteredCustomers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.display_name}
-                  {c.phone ? ` · ${c.phone}` : ""}
-                </option>
-              ))}
-            </select>
+            <CustomerSearchPicker
+              label=""
+              customers={customers}
+              value={customerId}
+              onChange={(id) => setCustomerId(id)}
+            />
           </label>
 
           {customerId ? (
