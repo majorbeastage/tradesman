@@ -1,4 +1,4 @@
-import { isBillingProductTypeId, sumMonthlyBillingUsd, type BillingProductTypeId } from "./billingProductTypes"
+import { isBillingProductTypeId, sumMonthlyBillingUsd, type BillingProductTypeId } from "./billingProductTypes.js"
 
 /** Billing / Helcim fields stored on `profiles.metadata` (JSON). */
 
