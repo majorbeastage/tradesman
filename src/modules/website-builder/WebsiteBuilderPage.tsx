@@ -34,16 +34,21 @@ import {
   WEBSITE_FONT_SIZE_OPTIONS,
   WEBSITE_FREEFORM_DESIGN_WIDTH,
   WEBSITE_HOME_SECTION_OPTIONS,
+  WEBSITE_IMAGE_SLOT_OPTIONS,
+  WEBSITE_SHAPE_KINDS,
   WEBSITE_SOCIAL_PLATFORM_OPTIONS,
   businessWebProfilePublicUrl,
   businessWebProfileSlugFromName,
+  defaultWebsiteCalendarToolSettings,
   defaultWebsiteNavBar,
+  resolveWebsiteSlotImage,
   emptyBusinessPublicProfileSettings,
   mergeBusinessPublicProfileMetadata,
   parseBusinessProfileListField,
   parseBusinessPublicProfileSettings,
   randomizeBusinessProfileTheme,
   canvasItemOnAllEnabledPages,
+  canvasItemVisibleOnPage,
   enabledWebsitePublicPageIds,
   isWebsiteImageFreeScale,
   type BusinessProfileTemplateId,
@@ -51,6 +56,7 @@ import {
   type WebsiteBuiltInLinkTarget,
   type WebsiteCanvasItem,
   type WebsiteHomeSectionId,
+  type WebsiteShapeKind,
   type WebsiteImageSlotId,
   type WebsitePublicPageId,
   type WebsiteSavedDraft,
@@ -61,6 +67,7 @@ import {
 import { mergeHostedWebsiteMetadata, parseHostedWebsiteDoc, VERCEL_DNS_INSTRUCTIONS } from "../../lib/hostedWebsite"
 import { mergeSocialPresenceIntoMetadata, readSocialPresenceFromMetadata } from "../../lib/socialPresenceSync"
 import PlatformBadge from "../../components/PlatformBadge"
+import { WebsiteCalendarSettingsPanel } from "../../components/WebsiteCalendarTool"
 import { BusinessProfileTemplatePicker } from "../../components/BusinessProfileTemplatePicker"
 import {
   getCanvasItemIdFromTarget,
@@ -75,6 +82,7 @@ import {
   setWebsiteTextValue,
   showSectionInSettings,
   showWebsiteEditTarget,
+  WEBSITE_EDIT_TARGET_META,
   websiteEditTargetKind,
   websiteEditTargetLabel,
 } from "../../lib/websiteBuilderEdit"
@@ -459,11 +467,13 @@ export default function WebsiteBuilderPage() {
       subPages: settings.subPages,
       customPages: settings.customPages,
       canvasItems: settings.canvasItems,
+      websiteCalendar: settings.websiteCalendar,
       featureCards: settings.featureCards,
       serviceCards: settings.serviceCards,
       textStyles: settings.textStyles,
       textStylesMobile: settings.textStylesMobile,
       homeSectionOrder: settings.homeSectionOrder,
+      layerOrder: settings.layerOrder,
       fixedBackground: settings.fixedBackground,
       footerCopyright: settings.footerCopyright || undefined,
       showPoweredBy: settings.showPoweredBy === true,
@@ -535,37 +545,55 @@ export default function WebsiteBuilderPage() {
     setSettings((s) => patchWebsiteLayoutStyle(s, previewDevice, targetId, patch))
   }
 
-  function moveSection(fromId: WebsiteHomeSectionId, direction: -1 | 1) {
-    setSettings((s) => {
-      const order = [...s.homeSectionOrder]
-      const idx = order.indexOf(fromId)
-      if (idx < 0) return s
-      const next = idx + direction
-      if (next < 0 || next >= order.length) return s
-      const tmp = order[idx]!
-      order[idx] = order[next]!
-      order[next] = tmp
-      return { ...s, homeSectionOrder: order }
+  function layerIdsFor(s: BusinessPublicProfileSettings): string[] {
+    const styles = previewDevice === "mobile" ? s.textStylesMobile : s.textStyles
+    const hidden = new Set(hiddenWebsiteEditTargetIds(styles))
+    const front: string[] = []
+    const canvas = s.canvasItems.filter((item) => canvasItemVisibleOnPage(item, previewPage, s.tagline))
+    for (let i = canvas.length - 1; i >= 0; i -= 1) front.push(`canvas.${canvas[i]!.id}`)
+    const rest: string[] = []
+    for (const meta of Object.values(WEBSITE_EDIT_TARGET_META)) {
+      if (meta?.kind === "text" && !hidden.has(meta.id)) rest.push(meta.id)
+    }
+    s.featureCards.forEach((_, i) => {
+      for (const suffix of ["title", "body"] as const) {
+        const id = `feature.${i}.${suffix}`
+        if (!hidden.has(id)) rest.push(id)
+      }
     })
+    s.serviceCards.forEach((_, i) => {
+      for (const suffix of ["title", "body"] as const) {
+        const id = `service.${i}.${suffix}`
+        if (!hidden.has(id)) rest.push(id)
+      }
+    })
+    for (const slot of WEBSITE_IMAGE_SLOT_OPTIONS) {
+      if (slot.id === "background") continue
+      if (!hidden.has(`slot.${slot.id}`)) rest.push(`slot.${slot.id}`)
+    }
+    for (const id of s.homeSectionOrder) {
+      if (s.homeSections[id] === false) continue
+      rest.push(`section.${id}`)
+    }
+    rest.push("slot.background")
+    const base = [...front, ...rest]
+    if (!s.layerOrder?.length) return base
+    const known = new Set(base)
+    const kept = s.layerOrder.filter((id) => known.has(id))
+    const missing = base.filter((id) => !kept.includes(id))
+    return [...missing, ...kept]
   }
 
-  function onSectionListDragStart(id: WebsiteHomeSectionId, e: DragEvent) {
-    e.dataTransfer.setData("text/section-id", id)
-    e.dataTransfer.effectAllowed = "move"
-  }
-
-  function onSectionListDrop(toId: WebsiteHomeSectionId, e: DragEvent) {
-    e.preventDefault()
-    const fromId = e.dataTransfer.getData("text/section-id") as WebsiteHomeSectionId
-    if (!fromId || fromId === toId) return
+  function moveLayer(id: string, dir: -1 | 1) {
     setSettings((s) => {
-      const order = [...s.homeSectionOrder]
-      const from = order.indexOf(fromId)
-      const to = order.indexOf(toId)
-      if (from < 0 || to < 0) return s
-      order.splice(from, 1)
-      order.splice(to, 0, fromId)
-      return { ...s, homeSectionOrder: order }
+      const order = layerIdsFor(s)
+      const index = order.indexOf(id)
+      const nextIndex = index + dir
+      if (index < 0 || nextIndex < 0 || nextIndex >= order.length) return s
+      const next = order.slice()
+      const [row] = next.splice(index, 1)
+      next.splice(nextIndex, 0, row!)
+      return { ...s, layerOrder: next }
     })
   }
 
@@ -711,7 +739,7 @@ export default function WebsiteBuilderPage() {
     e.target.value = ""
     const files = picked.filter((f) => isWebsiteImageFile(f))
     if (!files.length) {
-      setError("Choose an image file (JPEG, PNG, or WebP).")
+      setError("Choose an image file (JPEG, PNG, WebP, or HEIC).")
       return
     }
     const room = BUSINESS_WEB_PROFILE_WORK_PHOTOS_MAX - settings.workPhotoUrls.length
@@ -920,6 +948,76 @@ export default function WebsiteBuilderPage() {
     addPhotoFieldAt(null, 40 + (stack % 3) * 24, 60 + stack * 28)
   }
 
+  function addShapeField(shape: WebsiteShapeKind = "rectangle") {
+    const id = `s_${Date.now().toString(36)}`
+    const targetId = `canvas.${id}`
+    const stack = settings.canvasItems.length
+    const page = previewPage
+    setSettings((s) =>
+      seedCanvasStyleBothLayouts(
+        {
+          ...s,
+          canvasItems: [
+            ...s.canvasItems,
+            { id, kind: "shape" as const, shape, fillColor: s.theme.primaryColor || "#1B4F72", pages: [page] },
+          ].slice(0, WEBSITE_CANVAS_ITEMS_MAX),
+        },
+        targetId,
+        { offsetX: 0, offsetY: 80 + stack * 24, maxWidth: 180, imageSize: 140 },
+      ),
+    )
+    setSelectedTargetId(targetId)
+    setMessage("Shape added — drag the side and corner handles to resize it.")
+  }
+
+  function addToolField(tool: "contact" | "calendar") {
+    const id = `tool_${Date.now().toString(36)}`
+    const targetId = `canvas.${id}`
+    const stack = settings.canvasItems.length
+    const page = previewPage
+    setSettings((s) =>
+      seedCanvasStyleBothLayouts(
+        {
+          ...s,
+          showContactForm: tool === "contact" ? true : s.showContactForm,
+          websiteCalendar: s.websiteCalendar ?? defaultWebsiteCalendarToolSettings(),
+          canvasItems: [
+            ...s.canvasItems,
+            { id, kind: "tool" as const, tool, pages: [page] },
+          ].slice(0, WEBSITE_CANVAS_ITEMS_MAX),
+        },
+        targetId,
+        { offsetX: 0, offsetY: 120 + stack * 20, maxWidth: 420, imageSize: tool === "calendar" ? 640 : 560 },
+      ),
+    )
+    setSelectedTargetId(targetId)
+    setMessage(tool === "calendar" ? "Custom calendar added — set days, times, and required fields in the inspector." : "Contact form added — messages email this Tradesman profile.")
+  }
+
+  function patchCanvasItem(itemId: string, patch: Partial<WebsiteCanvasItem>) {
+    setSettings((s) => ({
+      ...s,
+      canvasItems: s.canvasItems.map((c) => (c.id === itemId ? { ...c, ...patch } : c)),
+    }))
+  }
+
+  function selectLayer(targetId: string) {
+    setSelectedTargetId(targetId)
+    setContextMenu(null)
+    requestAnimationFrame(() => {
+      const preview = document.querySelector(".wb-preview")
+      const el = preview?.querySelector(`[data-layer-target="${CSS.escape(targetId)}"]`) as HTMLElement | null
+      el?.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" })
+    })
+  }
+
+  function openFieldInspector(targetId: string) {
+    selectLayer(targetId)
+    requestAnimationFrame(() => {
+      document.getElementById("website-field-inspector")?.scrollIntoView({ behavior: "smooth", block: "nearest" })
+    })
+  }
+
   function onCreatePhotoAtDrop(imageUrl: string, offsetX: number, offsetY: number) {
     addPhotoFieldAt(imageUrl, offsetX, offsetY)
     setContextMenu(null)
@@ -949,19 +1047,6 @@ export default function WebsiteBuilderPage() {
         ...s,
         canvasItems: s.canvasItems.map((c) => (c.id === itemId ? { ...c, pages } : c)),
       }
-    })
-  }
-
-  function moveCanvasItem(itemId: string, dir: -1 | 1) {
-    setSettings((s) => {
-      const list = [...s.canvasItems]
-      const from = list.findIndex((c) => c.id === itemId)
-      const to = from + dir
-      if (from < 0 || to < 0 || to >= list.length) return s
-      const tmp = list[from]
-      list[from] = list[to]
-      list[to] = tmp
-      return { ...s, canvasItems: list }
     })
   }
 
@@ -1216,16 +1301,26 @@ export default function WebsiteBuilderPage() {
       <style>{`
         .wb-root {
           display: grid;
-          grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
-          height: calc(100vh - 64px);
-          max-height: calc(100vh - 64px);
+          grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+          height: calc(100dvh - 132px);
+          max-height: calc(100dvh - 132px);
           overflow: hidden;
+          min-height: 0;
+        }
+        .wb-root > .wb-editor,
+        .wb-root > .wb-preview {
+          min-height: 0;
+          min-width: 0;
+          max-height: 100%;
         }
         .wb-editor {
           color: ${EDITOR_INK};
-          min-height: 0;
           height: 100%;
-          overflow: auto;
+          max-height: 100%;
+          min-height: 0;
+          overflow-x: hidden;
+          overflow-y: auto;
+          overscroll-behavior: contain;
         }
         .wb-editor input, .wb-editor textarea, .wb-editor select, .wb-editor button { color: ${EDITOR_INK}; }
         .wb-preview {
@@ -1336,7 +1431,7 @@ export default function WebsiteBuilderPage() {
         {showTemplatesAtTop ? renderTemplatesCard(false) : null}
 
         {selectedTargetId && selectedKind === "text" ? (
-          <div style={{ ...sectionCard, borderColor: "#2563eb", boxShadow: "0 0 0 1px rgba(37,99,235,0.2)" }}>
+          <div id="website-field-inspector" style={{ ...sectionCard, borderColor: "#2563eb", boxShadow: "0 0 0 1px rgba(37,99,235,0.2)" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
               <div style={{ fontSize: 12, fontWeight: 900 }}>
                 {selectedCanvasItem ? "Custom text field" : websiteEditTargetLabel(selectedTargetId)}
@@ -1570,7 +1665,7 @@ export default function WebsiteBuilderPage() {
             </p>
           </div>
         ) : selectedTargetId && selectedKind === "section" ? (
-          <div style={{ ...sectionCard, borderColor: "#2563eb" }}>
+          <div id="website-field-inspector" style={{ ...sectionCard, borderColor: "#2563eb" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
               <div style={{ fontSize: 12, fontWeight: 900 }}>{websiteEditTargetLabel(selectedTargetId)}</div>
               <button
@@ -1609,11 +1704,69 @@ export default function WebsiteBuilderPage() {
               Remove section
             </button>
           </div>
+        ) : selectedTargetId && (selectedKind === "shape" || selectedKind === "tool") && selectedCanvasItem ? (
+          <div id="website-field-inspector" style={{ ...sectionCard, borderColor: "#2563eb", boxShadow: "0 0 0 1px rgba(37,99,235,0.2)" }}>
+            <div style={{ fontSize: 12, fontWeight: 900 }}>
+              {selectedKind === "shape" ? "Shape" : selectedCanvasItem.tool === "calendar" ? "Custom calendar" : "Contact us form"}
+            </div>
+            {canvasPageScopeControl(selectedCanvasItem)}
+            {selectedKind === "shape" ? (
+              <>
+                <label style={{ display: "grid", gap: 4, fontSize: 12, fontWeight: 800 }}>
+                  Shape type
+                  <select
+                    value={selectedCanvasItem.shape || "rectangle"}
+                    onChange={(e) => patchCanvasItem(selectedCanvasItem.id, { shape: e.target.value as WebsiteShapeKind })}
+                    style={field}
+                  >
+                    {WEBSITE_SHAPE_KINDS.map((shape) => (
+                      <option key={shape} value={shape}>
+                        {shape === "rounded" ? "Rounded rectangle" : shape[0].toUpperCase() + shape.slice(1)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, fontWeight: 800 }}>
+                  Color
+                  <input
+                    type="color"
+                    value={selectedCanvasItem.fillColor || "#1B4F72"}
+                    onChange={(e) => patchCanvasItem(selectedCanvasItem.id, { fillColor: e.target.value })}
+                  />
+                </label>
+                <p style={{ margin: 0, fontSize: 11, color: "#64748b" }}>
+                  On the page, drag the side handles to change width or height, and the corner handles to change both.
+                </p>
+              </>
+            ) : selectedCanvasItem.tool === "calendar" ? (
+              <>
+                <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+                  Visitors pick an open day and time. The request is emailed to this Tradesman profile and saved as a lead.
+                </p>
+                <WebsiteCalendarSettingsPanel
+                  value={settings.websiteCalendar ?? defaultWebsiteCalendarToolSettings()}
+                  userId={userId}
+                  onChange={(websiteCalendar) => setSettings((s) => ({ ...s, websiteCalendar }))}
+                />
+              </>
+            ) : (
+              <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+                This form emails the address on the client’s Tradesman profile and saves the message as a lead.
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={() => removeCanvasItem(selectedCanvasItem.id)}
+              style={{ padding: "8px 10px", borderRadius: 8, border: `1px solid ${theme.border}`, background: "#fff", fontWeight: 800, cursor: "pointer" }}
+            >
+              Remove
+            </button>
+          </div>
         ) : selectedTargetId && selectedKind === "image" ? (
-          <div style={{ ...sectionCard, borderColor: "#2563eb", boxShadow: "0 0 0 1px rgba(37,99,235,0.2)" }}>
+          <div id="website-field-inspector" style={{ ...sectionCard, borderColor: "#2563eb", boxShadow: "0 0 0 1px rgba(37,99,235,0.2)" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
               <div style={{ fontSize: 12, fontWeight: 900 }}>
-                {selectedCanvasItem ? "Custom photo field" : websiteEditTargetLabel(selectedTargetId)}
+                {selectedCanvasItem ? "Photo" : websiteEditTargetLabel(selectedTargetId)}
               </div>
               <button
                 type="button"
@@ -1634,6 +1787,15 @@ export default function WebsiteBuilderPage() {
                 ×
               </button>
             </div>
+            {selectedCanvasItem?.kind === "photo" && selectedCanvasItem.imageUrl ? (
+              <img src={selectedCanvasItem.imageUrl} alt="" style={{ width: "100%", maxHeight: 120, objectFit: "cover", borderRadius: 8 }} />
+            ) : selectedTargetId.startsWith("slot.") ? (
+              (() => {
+                const slotId = selectedTargetId.slice("slot.".length) as WebsiteImageSlotId
+                const src = resolveWebsiteSlotImage(settings.imageSlots, slotId, settings.workPhotoUrls, settings.profilePhotoUrl)
+                return src ? <img src={src} alt="" style={{ width: "100%", maxHeight: 120, objectFit: "cover", borderRadius: 8 }} /> : null
+              })()
+            ) : null}
             {selectedCanvasItem ? canvasPageScopeControl(selectedCanvasItem) : null}
             {selectedTargetId === "slot.background" ? (
             <p style={{ margin: 0, fontSize: 12, color: "#475569" }}>
@@ -2024,6 +2186,9 @@ export default function WebsiteBuilderPage() {
               [
                 ["Add a text field", addTextField],
                 ["Add photo field", addPhotoField],
+                ["Add shape", () => addShapeField("rectangle")],
+                ["Contact us", () => addToolField("contact")],
+                ["Custom calendar", () => addToolField("calendar")],
                 ["Add new sub-page", addSubPage],
               ] as const
             ).map(([label, fn]) => (
@@ -2398,7 +2563,7 @@ export default function WebsiteBuilderPage() {
               {uploading ? "Uploading…" : "+ Photo"}
               <input
                 type="file"
-                accept="image/*"
+                accept="image/*,.heic,.heif,image/heic,image/heif"
                 multiple
                 hidden
                 onChange={(e) => void onPhotoUpload(e)}
@@ -2566,133 +2731,93 @@ export default function WebsiteBuilderPage() {
           </label>
         </details>
 
-        <details style={sectionCard}>
-          <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 900, color: EDITOR_INK }}>Section order</summary>
+        <details open style={sectionCard}>
+          <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 900, color: EDITOR_INK }}>Layers</summary>
+          <p style={{ margin: 0, fontSize: 11, color: "#64748b", lineHeight: 1.4 }}>
+            Top of this list sits in front when pieces overlap. Dragging on the page still moves them. This list does not change where sections sit from top to bottom.
+          </p>
           <div style={{ display: "grid", gap: 6 }}>
-            {settings.homeSectionOrder.map((id) => {
-              const opt = WEBSITE_HOME_SECTION_OPTIONS.find((o) => o.id === id)
-              const on = settings.homeSections[id] !== false
+            {layerIdsFor(settings).map((id) => {
+              const canvasId = id.startsWith("canvas.") ? id.slice("canvas.".length) : ""
+              const item = canvasId ? settings.canvasItems.find((c) => c.id === canvasId) : undefined
+              const slotId = id.startsWith("slot.") ? (id.slice("slot.".length) as WebsiteImageSlotId) : null
+              const sectionId = id.startsWith("section.") ? id.slice("section.".length) : ""
+              const label = item
+                ? item.kind === "text"
+                  ? (item.text || "Text").replace(/\s+/g, " ").trim().slice(0, 42) || "Text"
+                  : item.kind === "shape"
+                    ? item.shape === "circle"
+                      ? "Circle"
+                      : item.shape === "triangle"
+                        ? "Triangle"
+                        : item.shape === "rounded"
+                          ? "Rounded shape"
+                          : "Rectangle"
+                    : item.kind === "tool"
+                      ? item.tool === "calendar"
+                        ? "Custom calendar"
+                        : "Contact us form"
+                      : item.imageUrl
+                        ? "Photo"
+                        : "Empty photo"
+                : id === "slot.background"
+                  ? "Page background"
+                  : slotId
+                    ? WEBSITE_IMAGE_SLOT_OPTIONS.find((slot) => slot.id === slotId)?.label ?? slotId
+                    : sectionId
+                      ? WEBSITE_HOME_SECTION_OPTIONS.find((opt) => opt.id === sectionId)?.label ?? sectionId
+                      : websiteEditTargetLabel(id)
+              const thumb = item?.kind === "photo" ? item.imageUrl : slotId ? resolveWebsiteSlotImage(settings.imageSlots, slotId, settings.workPhotoUrls, settings.profilePhotoUrl) : null
+              const swatch = item?.kind === "shape" ? item.fillColor || "#1B4F72" : ""
               return (
                 <div
                   key={id}
-                  draggable
-                  onDragStart={(e) => onSectionListDragStart(id, e)}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => onSectionListDrop(id, e)}
-                  onClick={() => {
-                    const targetId = `section.${id}`
-                    setSelectedTargetId(targetId)
-                    setContextMenu(null)
-                    requestAnimationFrame(() => {
-                      const el = document.querySelector(`[data-edit-target="${targetId}"]`) as HTMLElement | null
-                      el?.scrollIntoView({ behavior: "smooth", block: "center" })
-                    })
-                    setMessage(`Selected ${opt?.label ?? id} — use the inspector options above for this section.`)
-                  }}
+                  onClick={() => selectLayer(id)}
                   style={{
                     display: "flex",
                     alignItems: "center",
                     gap: 8,
-                    padding: "8px 10px",
+                    padding: "6px 8px",
                     borderRadius: 8,
-                    border: `1px solid ${theme.border}`,
-                    background: on ? "#fff" : "#f1f5f9",
-                    color: EDITOR_INK,
+                    border: selectedTargetId === id ? "2px solid #2563eb" : `1px solid ${theme.border}`,
+                    background: selectedTargetId === id ? "#dbeafe" : "#fff",
+                    boxShadow: selectedTargetId === id ? "0 0 0 3px rgba(37,99,235,0.2)" : undefined,
                     cursor: "pointer",
-                    opacity: on ? 1 : 0.65,
                   }}
                 >
-                  <span style={{ fontWeight: 900, fontSize: 12, color: "#64748b" }}>⋮⋮</span>
-                  <span style={{ flex: 1, fontSize: 12, fontWeight: 800, color: EDITOR_INK }}>{opt?.label ?? id}</span>
+                  {thumb ? (
+                    <img src={thumb} alt="" style={{ width: 36, height: 36, objectFit: "cover", borderRadius: swatch ? 6 : 6, flexShrink: 0 }} />
+                  ) : swatch ? (
+                    <span style={{ width: 36, height: 36, borderRadius: item?.shape === "circle" ? "50%" : 6, background: swatch, flexShrink: 0 }} />
+                  ) : (
+                    <span style={{ width: 36, height: 36, borderRadius: 6, background: "#e2e8f0", flexShrink: 0 }} />
+                  )}
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 800, color: EDITOR_INK }}>{label}</span>
+                  <button type="button" title="Bring forward" onClick={(e) => { e.stopPropagation(); moveLayer(id, -1) }} style={{ border: "none", background: "transparent", cursor: "pointer", color: EDITOR_INK, fontWeight: 900 }}>↑</button>
+                  <button type="button" title="Send backward" onClick={(e) => { e.stopPropagation(); moveLayer(id, 1) }} style={{ border: "none", background: "transparent", cursor: "pointer", color: EDITOR_INK, fontWeight: 900 }}>↓</button>
+                  <button type="button" onClick={(e) => { e.stopPropagation(); openFieldInspector(id) }} style={{ border: `1px solid ${theme.border}`, background: "#fff", borderRadius: 6, padding: "2px 6px", cursor: "pointer", color: EDITOR_INK, fontWeight: 800, fontSize: 11 }}>Edit</button>
                   <button
                     type="button"
-                    title="Move up"
-                    onClick={() => moveSection(id, -1)}
-                    style={{ border: "none", background: "transparent", cursor: "pointer", color: EDITOR_INK, fontWeight: 900 }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (item) removeCanvasItem(item.id)
+                      else if (sectionId) setSettings((s) => hideSectionFromSettings(s, sectionId as WebsiteHomeSectionId))
+                      else if (slotId) {
+                        assignSlot(slotId, null)
+                        setSettings((s) => hideWebsiteEditTarget(s, id, previewDevice))
+                      } else {
+                        setSettings((s) => hideWebsiteEditTarget(s, id, previewDevice))
+                      }
+                      if (selectedTargetId === id) setSelectedTargetId(null)
+                    }}
+                    style={{ border: `1px solid ${theme.border}`, background: "#fff", borderRadius: 6, padding: "2px 6px", cursor: "pointer", color: EDITOR_INK, fontWeight: 800, fontSize: 11 }}
                   >
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    title="Move down"
-                    onClick={() => moveSection(id, 1)}
-                    style={{ border: "none", background: "transparent", cursor: "pointer", color: EDITOR_INK, fontWeight: 900 }}
-                  >
-                    ↓
+                    Remove
                   </button>
                 </div>
               )
             })}
           </div>
-          {settings.canvasItems.length ? (
-            <>
-              <div style={{ fontSize: 12, fontWeight: 900, color: EDITOR_INK, marginTop: 10 }}>Custom fields</div>
-              <div style={{ display: "grid", gap: 6 }}>
-                {settings.canvasItems.map((item) => {
-                  const label =
-                    item.kind === "text"
-                      ? (item.text || "Text field").replace(/\s+/g, " ").trim().slice(0, 42) || "Text field"
-                      : "Photo field"
-                  const pages = item.pages && item.pages.length ? item.pages : enabledWebsitePublicPageIds(settings)
-                  const scope =
-                    !item.pages || item.pages.length === 0 || canvasItemOnAllEnabledPages(item, enabledWebsitePublicPageIds(settings))
-                      ? "All pages"
-                      : pages.length === 1
-                        ? "This page"
-                        : `${pages.length} pages`
-                  return (
-                    <div
-                      key={item.id}
-                      onClick={() => {
-                        const targetId = `canvas.${item.id}`
-                        setSelectedTargetId(targetId)
-                        setContextMenu(null)
-                      }}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        padding: "8px 10px",
-                        borderRadius: 8,
-                        border: `1px solid ${theme.border}`,
-                        background: selectedTargetId === `canvas.${item.id}` ? "#eff6ff" : "#fff",
-                        color: EDITOR_INK,
-                        cursor: "pointer",
-                      }}
-                    >
-                      <span style={{ fontWeight: 900, fontSize: 12, color: "#64748b" }}>⋮⋮</span>
-                      <span style={{ flex: 1, fontSize: 12, fontWeight: 800, color: EDITOR_INK }}>
-                        {label}
-                        <span style={{ display: "block", fontSize: 10, fontWeight: 700, color: "#64748b" }}>{scope}</span>
-                      </span>
-                      <button
-                        type="button"
-                        title="Move up"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          moveCanvasItem(item.id, -1)
-                        }}
-                        style={{ border: "none", background: "transparent", cursor: "pointer", color: EDITOR_INK, fontWeight: 900 }}
-                      >
-                        ↑
-                      </button>
-                      <button
-                        type="button"
-                        title="Move down"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          moveCanvasItem(item.id, 1)
-                        }}
-                        style={{ border: "none", background: "transparent", cursor: "pointer", color: EDITOR_INK, fontWeight: 900 }}
-                      >
-                        ↓
-                      </button>
-                    </div>
-                  )
-                })}
-              </div>
-            </>
-          ) : null}
           <div style={{ fontSize: 12, fontWeight: 900, color: EDITOR_INK, marginTop: 10 }}>Add / restore sections</div>
           {hiddenSections.length === 0 ? (
             <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>All sections are on the page.</p>

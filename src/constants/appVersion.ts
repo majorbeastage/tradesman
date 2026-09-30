@@ -42,6 +42,7 @@
  * **2.3.16** — App Store review: iOS camera/mic/photo privacy strings, no background location, in-app account deletion, iPad media capture fallbacks.
  * **2.3.17** — Customers Full profile opens the full profile page; large-shop customer load timeout fallback; website mobile/desktop layouts; auto-attendant WAV + editable opening line.
  * **2.3.22** — My T photo/logo uses the same iOS system Take Photo / Photo Library sheet as the rest of the app.
+ * **2.3.23** — Website builder layers, shapes, and contact/calendar tools. Receipt settings include Basic section order.
  *
  * @see CopyrightVersionFooter
  */

@@ -27,6 +27,36 @@ export function isCustomerEligibleForSchedulePicker(customer: {
   return true
 }
 
+export const RECEIPT_SECTION_IDS = ["description", "payment_method", "job_details", "date", "line_items", "footer"] as const
+
+export type ReceiptSectionId = (typeof RECEIPT_SECTION_IDS)[number]
+
+export const RECEIPT_SECTION_LABELS: Record<ReceiptSectionId, string> = {
+  description: "Description",
+  payment_method: "Payment method",
+  job_details: "Job details",
+  date: "Date",
+  line_items: "Line items",
+  footer: "Thank you",
+}
+
+export function parseReceiptSectionOrder(raw: unknown): ReceiptSectionId[] {
+  const all = [...RECEIPT_SECTION_IDS]
+  const seen = new Set<string>()
+  const out: ReceiptSectionId[] = []
+  if (Array.isArray(raw)) {
+    for (const id of raw) {
+      if (typeof id !== "string" || !(all as string[]).includes(id) || seen.has(id)) continue
+      seen.add(id)
+      out.push(id as ReceiptSectionId)
+    }
+  }
+  for (const id of all) {
+    if (!seen.has(id)) out.push(id)
+  }
+  return out
+}
+
 export type CustomReceiptLineItem = ReceiptAdditionalLine
 
 export type CustomReceiptDraft = {
@@ -68,6 +98,8 @@ export type CustomReceiptTemplateSettings = {
   includeJob: boolean
   includeNotes: boolean
   includePaymentMethod: boolean
+  /** Top-to-bottom order for the Basic receipt. */
+  sectionOrder: ReceiptSectionId[]
   /** Set when custom receipt numbering is turned on. */
   receiptNumber: string | null
 }
@@ -334,6 +366,7 @@ export async function loadReceiptTemplateSettings(
     includeJob: meta.receipt_template_include_job !== false,
     includeNotes: meta.receipt_template_include_notes !== false,
     includePaymentMethod: meta.receipt_template_include_payment_method !== false,
+    sectionOrder: parseReceiptSectionOrder(meta.receipt_template_section_order),
     receiptNumber,
   }
 }
@@ -416,14 +449,13 @@ export async function buildCustomReceiptPdfBytes(
     form.customerEmail.trim() ? `Email: ${form.customerEmail.trim()}` : "",
     form.customerAddress.trim() ? `Address: ${form.customerAddress.trim()}` : "",
     template.receiptNumber ? `Receipt ${template.receiptNumber}` : "",
-    template.includePaymentMethod && form.paymentMethod.trim() ? `Payment method: ${form.paymentMethod.trim()}` : "",
     sourceBits.length ? sourceBits.join(" · ") : "",
   ].filter(Boolean)
   const jobTitle = template.includeJob ? form.jobTitle.trim() || "Custom receipt" : "Receipt"
   const completedAtLabel = formatReceiptDateLabel(form.receiptDate)
   const amountLabel = buildAmountLabel(form, subtotal)
-  const headerNote = template.includeNotes ? form.notes.trim() || null : null
-  const templateHeader = [template.templateHeader, headerNote].filter(Boolean).join("\n\n") || null
+  const paymentMethodLine =
+    template.includePaymentMethod && form.paymentMethod.trim() ? `Payment method: ${form.paymentMethod.trim()}` : null
 
   return buildReceiptPdfBytes({
     businessLabel: template.businessLabel,
@@ -432,20 +464,22 @@ export async function buildCustomReceiptPdfBytes(
     jobTitle,
     completedAtLabel,
     amountLabel,
-    templateHeader,
+    templateHeader: template.templateHeader,
+    notes: template.includeNotes ? form.notes.trim() || null : null,
+    paymentMethodLine,
     templateFooter: template.templateFooter,
     logo: template.logo,
     quoteLineItems: quoteLines,
-    lineSubtotalLabel:
-      subtotal > 0
-        ? form.useManualAmount
-          ? `Line items subtotal: $${subtotal.toFixed(2)}`
-          : `Line items subtotal: $${subtotal.toFixed(2)}`
-        : null,
+    lineSubtotalLabel: subtotal > 0 ? `Line items subtotal: $${subtotal.toFixed(2)}` : null,
     receiptItemizeMode: template.itemize,
     documentTitle: "Receipt",
     jobLabel: "Description",
     completedLabel: "Date",
+    sectionOrder: template.sectionOrder,
+    showDate: template.includeDate,
+    showJob: template.includeJob,
+    showNotes: template.includeNotes,
+    showPaymentMethod: template.includePaymentMethod,
     sandboxWatermark: opts?.sandboxWatermark,
   })
 }

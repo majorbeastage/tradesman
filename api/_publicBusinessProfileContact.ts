@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node"
 import {
   createServiceSupabase,
   ensureOpenLeadForInbound,
+  firstEnv,
   getOrCreateCustomerByEmail,
   normalizePhone,
 } from "./_communications.js"
@@ -164,6 +165,34 @@ export async function handlePublicBusinessProfileContact(req: VercelRequest, res
   } catch (e) {
     res.status(500).json({ ok: false, error: e instanceof Error ? e.message : "Could not create lead." })
     return
+  }
+
+  const profileEmail = typeof owner.profile.email === "string" ? owner.profile.email.trim() : ""
+  if (profileEmail.includes("@")) {
+    const apiKey = firstEnv("RESEND_API_KEY")
+    const from = firstEnv("RESEND_FROM_EMAIL")
+    if (apiKey && from) {
+      const business = (owner.profile.display_name || slug).toString()
+      try {
+        const sendRes = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            from,
+            to: [profileEmail],
+            reply_to: email,
+            subject: `Website message for ${business}`.slice(0, 180),
+            text: description,
+          }),
+        })
+        if (!sendRes.ok) {
+          const t = await sendRes.text()
+          console.warn("[public-business-profile-contact] email", sendRes.status, t.slice(0, 300))
+        }
+      } catch (emailErr) {
+        console.warn("[public-business-profile-contact] email", emailErr instanceof Error ? emailErr.message : emailErr)
+      }
+    }
   }
 
   if (preferredContact === "sms" && smsOptIn && phone) {

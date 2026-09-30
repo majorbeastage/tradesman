@@ -432,6 +432,16 @@ export async function buildReceiptPdfBytes(params: {
   mileageLabel?: string | null
   /** When true, first block is titled "Itemized charges"; checklist block is "Supplies checklist". */
   receiptItemizeMode?: boolean
+  /** Custom receipt notes, drawn with the description section when sectionOrder is set. */
+  notes?: string | null
+  /** Own line for the payment method section. Omitted from customer contact lines by the caller. */
+  paymentMethodLine?: string | null
+  showDate?: boolean
+  showJob?: boolean
+  showNotes?: boolean
+  showPaymentMethod?: boolean
+  /** Top-to-bottom body order for the Basic receipt. Header and customer stay in place. */
+  sectionOrder?: Array<"description" | "payment_method" | "job_details" | "date" | "line_items" | "footer">
   sandboxWatermark?: boolean
 }): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
@@ -492,63 +502,124 @@ export async function buildReceiptPdfBytes(params: {
     flush()
   }
 
+  const drawParagraphs = (text: string, size: number, gray: number, limit: number) => {
+    for (const para of text.trim().split(/\n+/).slice(0, limit)) {
+      if (!para.trim()) continue
+      drawWrapped(para.trim(), size, gray)
+    }
+  }
+
+  const drawDescription = () => {
+    const parts = [params.templateHeader?.trim() || ""]
+    if (params.showNotes !== false && params.notes?.trim()) parts.push(params.notes.trim())
+    const text = parts.filter(Boolean).join("\n\n")
+    if (!text) return
+    drawParagraphs(text, 10, 0.32, 12)
+    y -= 4
+  }
+
+  const drawCustomer = () => {
+    draw(`Customer: ${params.customerName}`, 12, true, 0.2)
+    for (const line of params.customerContactLines?.filter((s) => s.trim()) ?? []) {
+      draw(line.trim().slice(0, 200), 10, false, 0.28)
+    }
+  }
+
+  const drawPayment = () => {
+    if (params.showPaymentMethod === false) return
+    const line = params.paymentMethodLine?.trim()
+    if (!line) return
+    draw(line.slice(0, 200), 11, false, 0.25)
+  }
+
+  const drawJob = () => {
+    if (params.showJob === false) return
+    draw(`${params.jobLabel?.trim() || "Job"}: ${params.jobTitle}`, 11, false, 0.25)
+  }
+
+  const drawDate = () => {
+    if (params.showDate === false) return
+    draw(`${params.completedLabel?.trim() || "Completed"}: ${params.completedAtLabel}`, 11, false, 0.25)
+    if (params.scheduledDurationLabel?.trim()) draw(params.scheduledDurationLabel.trim(), 11, false, 0.24)
+    if (params.mileageLabel?.trim()) draw(params.mileageLabel.trim(), 11, false, 0.22)
+  }
+
+  const drawLineItems = () => {
+    if (params.amountLabel) draw(params.amountLabel, 12, true, 0.15)
+    const quoteItems = params.quoteLineItems?.filter((s) => s.trim()) ?? []
+    if (quoteItems.length > 0) {
+      y -= 6
+      draw("Line items (quote & receipt)", 12, true, 0.15)
+      y -= 2
+      for (const raw of quoteItems.slice(0, 45)) {
+        const t = raw.trim()
+        if (!t) continue
+        drawWrapped(`• ${t}`, 10, 0.28)
+      }
+      if (params.lineSubtotalLabel?.trim()) {
+        y -= 2
+        draw(params.lineSubtotalLabel.trim(), 11, true, 0.18)
+      }
+    }
+    const checklist = params.materialsChecklistLines?.filter((s) => s.trim()) ?? []
+    if (params.includeMaterialsChecklist && checklist.length > 0) {
+      y -= 6
+      draw(params.receiptItemizeMode ? "Supplies checklist" : "Materials checklist", 12, true, 0.15)
+      y -= 2
+      for (const raw of checklist.slice(0, 40)) {
+        const t = raw.trim()
+        if (!t) continue
+        drawWrapped(`• ${t}`, 10, 0.28)
+      }
+    }
+  }
+
+  const drawFooter = () => {
+    y -= 10
+    draw("Thank you for your business.", 11, false, 0.35)
+    if (params.templateFooter?.trim()) {
+      y -= 12
+      drawParagraphs(params.templateFooter, 9, 0.45, 15)
+      y -= 4
+    }
+  }
+
   draw((params.documentTitle?.trim() || "Receipt / job complete").slice(0, 120), 18, true, 0.12)
   draw(params.businessLabel, 11, false, 0.35)
   y -= 8
-  if (params.templateHeader?.trim()) {
-    for (const para of params.templateHeader.trim().split(/\n+/).slice(0, 10)) {
-      if (!para.trim()) continue
-      drawWrapped(para.trim(), 10, 0.32)
-    }
-    y -= 4
-  }
-  draw(`Customer: ${params.customerName}`, 12, true, 0.2)
-  for (const line of params.customerContactLines?.filter((s) => s.trim()) ?? []) {
-    draw(line.trim().slice(0, 200), 10, false, 0.28)
-  }
-  draw(`${params.jobLabel?.trim() || "Job"}: ${params.jobTitle}`, 11, false, 0.25)
-  draw(`${params.completedLabel?.trim() || "Completed"}: ${params.completedAtLabel}`, 11, false, 0.25)
-  if (params.scheduledDurationLabel?.trim()) draw(params.scheduledDurationLabel.trim(), 11, false, 0.24)
-  if (params.mileageLabel?.trim()) draw(params.mileageLabel.trim(), 11, false, 0.22)
-  if (params.amountLabel) draw(params.amountLabel, 12, true, 0.15)
 
-  const quoteItems = params.quoteLineItems?.filter((s) => s.trim()) ?? []
-  if (quoteItems.length > 0) {
-    y -= 6
-    draw("Line items (quote & receipt)", 12, true, 0.15)
-    y -= 2
-    for (const raw of quoteItems.slice(0, 45)) {
-      const t = raw.trim()
-      if (!t) continue
-      drawWrapped(`• ${t}`, 10, 0.28)
+  if (!params.sectionOrder?.length) {
+    if (params.templateHeader?.trim()) {
+      drawParagraphs(params.templateHeader, 10, 0.32, 10)
+      y -= 4
     }
-    if (params.lineSubtotalLabel?.trim()) {
-      y -= 2
-      draw(params.lineSubtotalLabel.trim(), 11, true, 0.18)
+    drawCustomer()
+    draw(`${params.jobLabel?.trim() || "Job"}: ${params.jobTitle}`, 11, false, 0.25)
+    draw(`${params.completedLabel?.trim() || "Completed"}: ${params.completedAtLabel}`, 11, false, 0.25)
+    if (params.scheduledDurationLabel?.trim()) draw(params.scheduledDurationLabel.trim(), 11, false, 0.24)
+    if (params.mileageLabel?.trim()) draw(params.mileageLabel.trim(), 11, false, 0.22)
+    drawLineItems()
+    drawFooter()
+  } else {
+    let customerDrawn = false
+    const ensureCustomer = () => {
+      if (customerDrawn) return
+      drawCustomer()
+      customerDrawn = true
     }
-  }
-
-  const checklist = params.materialsChecklistLines?.filter((s) => s.trim()) ?? []
-  if (params.includeMaterialsChecklist && checklist.length > 0) {
-    y -= 6
-    draw(params.receiptItemizeMode ? "Supplies checklist" : "Materials checklist", 12, true, 0.15)
-    y -= 2
-    for (const raw of checklist.slice(0, 40)) {
-      const t = raw.trim()
-      if (!t) continue
-      drawWrapped(`• ${t}`, 10, 0.28)
+    for (const id of params.sectionOrder) {
+      if (id === "description") {
+        drawDescription()
+        continue
+      }
+      ensureCustomer()
+      if (id === "payment_method") drawPayment()
+      else if (id === "job_details") drawJob()
+      else if (id === "date") drawDate()
+      else if (id === "line_items") drawLineItems()
+      else if (id === "footer") drawFooter()
     }
-  }
-
-  y -= 10
-  draw("Thank you for your business.", 11, false, 0.35)
-  if (params.templateFooter?.trim()) {
-    y -= 12
-    for (const para of params.templateFooter.trim().split(/\n+/).slice(0, 15)) {
-      if (!para.trim()) continue
-      drawWrapped(para.trim(), 9, 0.45)
-    }
-    y -= 4
+    ensureCustomer()
   }
 
   return finalizePdfBytes(await doc.save(), { sandboxWatermark: params.sandboxWatermark })

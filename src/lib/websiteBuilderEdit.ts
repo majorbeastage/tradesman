@@ -37,7 +37,7 @@ export type WebsiteEditTargetId =
   | "slot.service_2"
   | "slot.service_3"
 
-export type WebsiteEditTargetKind = "text" | "section" | "image"
+export type WebsiteEditTargetKind = "text" | "section" | "image" | "shape" | "tool"
 
 export type WebsiteEditTargetMeta = {
   id: WebsiteEditTargetId
@@ -97,14 +97,17 @@ export function websiteEditTargetKind(id: string): WebsiteEditTargetKind {
 
 export function resolveWebsiteEditTargetKind(
   id: string,
-  canvasItems: Array<{ id: string; kind: "text" | "photo" }>,
+  canvasItems: Array<{ id: string; kind: "text" | "photo" | "shape" | "tool" }>,
 ): WebsiteEditTargetKind {
   if (id.startsWith("section.")) return "section"
   if (id.startsWith("slot.")) return "image"
   const canvasId = getCanvasItemIdFromTarget(id)
   if (canvasId) {
     const item = canvasItems.find((c) => c.id === canvasId)
-    return item?.kind === "photo" ? "image" : "text"
+    if (item?.kind === "photo") return "image"
+    if (item?.kind === "shape") return "shape"
+    if (item?.kind === "tool") return "tool"
+    return "text"
   }
   return "text"
 }

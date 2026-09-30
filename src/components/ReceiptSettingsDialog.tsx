@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { theme } from "../styles/theme"
+import { AdminSortableRow } from "./admin/AdminSortableRow"
+import { reorderByIndex } from "../lib/reorderArray"
 import {
   DOCUMENT_NUMBER_DIGIT_OPTIONS,
   applyDocumentNumberSettingsToMeta,
@@ -15,6 +17,12 @@ import {
   type DocumentVisualStyle,
 } from "../lib/documentVisualTemplate"
 import { CustomerAccountNumberFields, DocumentVisualTemplateFields } from "./DocumentTemplateSettingFields"
+import {
+  RECEIPT_SECTION_IDS,
+  RECEIPT_SECTION_LABELS,
+  parseReceiptSectionOrder,
+  type ReceiptSectionId,
+} from "../lib/customReceipt"
 
 type Props = {
   open: boolean
@@ -36,6 +44,7 @@ export default function ReceiptSettingsDialog({ open, onClose, supabase, userId,
   const [includeJob, setIncludeJob] = useState(true)
   const [includeNotes, setIncludeNotes] = useState(true)
   const [includePaymentMethod, setIncludePaymentMethod] = useState(true)
+  const [sectionOrder, setSectionOrder] = useState<ReceiptSectionId[]>([...RECEIPT_SECTION_IDS])
   const [layout, setLayout] = useState<DocumentVisualStyle>("basic")
   const [primaryColor, setPrimaryColor] = useState("#1B4F72")
   const [secondaryColor, setSecondaryColor] = useState("#5DADE2")
@@ -66,6 +75,7 @@ export default function ReceiptSettingsDialog({ open, onClose, supabase, userId,
       setIncludeJob(meta.receipt_template_include_job !== false)
       setIncludeNotes(meta.receipt_template_include_notes !== false)
       setIncludePaymentMethod(meta.receipt_template_include_payment_method !== false)
+      setSectionOrder(parseReceiptSectionOrder(meta.receipt_template_section_order))
       setLayout(visual.style)
       setPrimaryColor(visual.primaryColor)
       setSecondaryColor(visual.secondaryColor)
@@ -117,6 +127,7 @@ export default function ReceiptSettingsDialog({ open, onClose, supabase, userId,
       next.receipt_template_include_job = includeJob
       next.receipt_template_include_notes = includeNotes
       next.receipt_template_include_payment_method = includePaymentMethod
+      next.receipt_template_section_order = sectionOrder
       const { error: upErr } = await supabase.from("profiles").update({ metadata: next }).eq("id", userId)
       if (upErr) throw upErr
       onSaved?.("Receipt settings saved.")
@@ -221,6 +232,38 @@ export default function ReceiptSettingsDialog({ open, onClose, supabase, userId,
               <input type="checkbox" checked={includePaymentMethod} onChange={(e) => setIncludePaymentMethod(e.target.checked)} />
               Payment method
             </label>
+          </div>
+        </details>
+
+        <details open style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: "10px 12px" }}>
+          <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Section order</summary>
+          <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+            <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>
+              Drag to set the order on the Basic receipt.
+            </p>
+            {sectionOrder
+              .filter((id) => {
+                if (id === "date") return includeDate
+                if (id === "job_details") return includeJob
+                if (id === "description") return includeNotes
+                if (id === "payment_method") return includePaymentMethod
+                return true
+              })
+              .map((id, idx, arr) => (
+                <AdminSortableRow
+                  key={id}
+                  scope="receipt-section-order"
+                  index={idx}
+                  onReorder={(from, to) => {
+                    const nextVisible = reorderByIndex(arr, from, to)
+                    const hidden = sectionOrder.filter((x) => !arr.includes(x))
+                    setSectionOrder(parseReceiptSectionOrder([...nextVisible, ...hidden]))
+                  }}
+                  rowStyle={{ padding: "8px 10px", borderRadius: 8, border: `1px solid ${theme.border}`, background: "#fff" }}
+                >
+                  <span style={{ fontSize: 13, fontWeight: 600 }}>{RECEIPT_SECTION_LABELS[id]}</span>
+                </AdminSortableRow>
+              ))}
           </div>
         </details>
 

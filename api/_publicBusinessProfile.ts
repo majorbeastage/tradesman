@@ -79,10 +79,13 @@ type BusinessPublicProfileSettings = {
   customPages: Array<{ id: string; enabled: boolean; title: string; body: string }>
   canvasItems: Array<{
     id: string
-    kind: "text" | "photo"
+    kind: "text" | "photo" | "shape" | "tool"
     text?: string
     imageUrl?: string | null
     pages?: string[]
+    shape?: "rectangle" | "rounded" | "circle" | "triangle"
+    fillColor?: string
+    tool?: "contact" | "calendar"
   }>
   featureCards: Array<{ id: string; title: string; body: string }>
   serviceCards: Array<{ id: string; title: string; body: string }>
@@ -438,39 +441,34 @@ function parseSettings(metadata: unknown): BusinessPublicProfileSettings {
   }
 }
 
-function parseCanvasItems(raw: unknown): Array<{
-  id: string
-  kind: "text" | "photo"
-  text?: string
-  imageUrl?: string | null
-  pages?: string[]
-}> {
+function parseCanvasItems(raw: unknown): BusinessPublicProfileSettings["canvasItems"] {
   if (!Array.isArray(raw)) return []
-  const out: Array<{
-    id: string
-    kind: "text" | "photo"
-    text?: string
-    imageUrl?: string | null
-    pages?: string[]
-  }> = []
+  const out: BusinessPublicProfileSettings["canvasItems"] = []
   for (const item of raw.slice(0, 48)) {
     if (!item || typeof item !== "object" || Array.isArray(item)) continue
     const c = item as Record<string, unknown>
     const id = typeof c.id === "string" && c.id.trim() ? c.id.trim().replace(/[^a-z0-9_-]/gi, "").slice(0, 40) : ""
     if (!id) continue
-    const kind = c.kind === "photo" ? "photo" : c.kind === "text" ? "text" : null
+    const kind =
+      c.kind === "photo" ? "photo" : c.kind === "shape" ? "shape" : c.kind === "tool" ? "tool" : c.kind === "text" ? "text" : null
     if (!kind) continue
     const pages = Array.isArray(c.pages)
       ? c.pages
           .filter((p): p is string => typeof p === "string" && (p === "home" || p === "about" || p === "contact" || p.startsWith("custom:")))
           .slice(0, 12)
       : undefined
+    const shape =
+      c.shape === "rounded" || c.shape === "circle" || c.shape === "triangle" || c.shape === "rectangle" ? c.shape : "rectangle"
+    const fillColor = typeof c.fillColor === "string" && /^#[0-9a-fA-F]{6}$/.test(c.fillColor.trim()) ? c.fillColor.trim() : "#1B4F72"
     out.push({
       id,
       kind,
       text: typeof c.text === "string" ? c.text.slice(0, 2000) : kind === "text" ? "New text" : undefined,
       imageUrl: typeof c.imageUrl === "string" && c.imageUrl.trim() ? c.imageUrl.trim().slice(0, 800) : null,
       pages: pages && pages.length ? pages : undefined,
+      shape: kind === "shape" ? shape : undefined,
+      fillColor: kind === "shape" ? fillColor : undefined,
+      tool: kind === "tool" ? (c.tool === "calendar" ? "calendar" : "contact") : undefined,
     })
   }
   return out

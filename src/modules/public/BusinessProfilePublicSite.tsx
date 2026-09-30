@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type FormEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type FormEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react"
 import logo from "../../assets/logo.png"
 import { PhotoLightbox } from "../../components/PhotoLightbox"
+import { WebsiteCalendarBookingForm } from "../../components/WebsiteCalendarTool"
 import PlatformBadge, { type PlatformBadgeId, isPlatformBadgeId } from "../../components/PlatformBadge"
 import type {
   BusinessProfileTemplateId,
@@ -17,6 +18,7 @@ import type {
   WebsiteScrollBand,
   WebsiteSocialLinks,
   WebsiteSubPages,
+  WebsiteCalendarToolSettings,
   WebsiteTextStyle,
   WebsiteTextStyles,
   WebsiteLayoutViewport,
@@ -29,6 +31,7 @@ import {
   websiteDesignScale,
   clampWebsiteOffsetX,
   clampWebsiteOffsetY,
+  defaultWebsiteCalendarToolSettings,
   defaultWebsiteFeatureCards,
   defaultWebsiteHomeSectionOrder,
   defaultWebsiteNavBar,
@@ -40,6 +43,7 @@ import {
   canvasItemVisibleOnPage,
   isWebsiteImageFreeScale,
   websiteCanvasReachPx,
+  websiteLayerZIndex,
   WEBSITE_EDITOR_PAGE_CANVAS_MIN_PX,
   websiteCustomPagePathId,
   websiteTextStyleToCss,
@@ -79,12 +83,15 @@ export type PublicBusinessProfileData = {
   subPages?: WebsiteSubPages
   customPages?: WebsiteCustomPage[]
   canvasItems?: WebsiteCanvasItem[]
+  websiteCalendar?: WebsiteCalendarToolSettings
   featureCards?: WebsiteContentCard[]
   serviceCards?: WebsiteContentCard[]
   textStyles?: WebsiteTextStyles
   /** Independent phone layout. When empty, the live site falls back to desktop styles. */
   textStylesMobile?: WebsiteTextStyles
   homeSectionOrder?: WebsiteHomeSectionId[]
+  /** Front-to-back overlap. Empty leaves the current stacking alone. */
+  layerOrder?: string[]
   fixedBackground?: boolean
   /** Client footer line (no Design.com / third-party watermarks). */
   footerCopyright?: string
@@ -790,14 +797,14 @@ function CanvasEditable({
     }
     if (Tag === "a") {
       return (
-        <a className={className} style={liveStyle} href={href || "#"} onClick={onAnchorClick}>
+        <a className={className} style={liveStyle} href={href || "#"} onClick={onAnchorClick} data-layer-target={targetId}>
           {children}
         </a>
       )
     }
     const Comp = Tag
     return (
-      <Comp className={className} style={liveStyle}>
+      <Comp className={className} style={liveStyle} data-layer-target={targetId}>
         {children}
       </Comp>
     )
@@ -925,6 +932,7 @@ function CanvasEditable({
       className={`${className ?? ""}${selected ? " bp-edit-selected" : " bp-edit-target"}`.trim()}
       style={baseStyle}
       data-edit-target={targetId}
+      data-layer-target={targetId}
       onClick={(e) => {
         e.preventDefault()
         e.stopPropagation()
@@ -972,6 +980,7 @@ function FreeformCanvasLayer({
   tagline = "",
   resolveLink,
   onFollowPage,
+  site,
 }: {
   items: WebsiteCanvasItem[]
   textStyles: WebsiteTextStyles
@@ -984,6 +993,14 @@ function FreeformCanvasLayer({
   tagline?: string
   resolveLink?: (target: WebsiteBuiltInLinkTarget | undefined) => BuiltInLink | null
   onFollowPage?: (page: WebsitePublicPageId, e: MouseEvent) => void
+  site?: {
+    slug: string
+    businessName: string
+    theme: BusinessProfileTheme
+    showJobDescription?: boolean
+    calendar?: WebsiteCalendarToolSettings
+    layering?: boolean
+  }
 }) {
   const layerRef = useRef<HTMLDivElement | null>(null)
   const [layerWidth, setLayerWidth] = useState(WEBSITE_FREEFORM_DESIGN_WIDTH)
@@ -1011,7 +1028,7 @@ function FreeformCanvasLayer({
   return (
     <div
       ref={layerRef}
-      className={`bp-freeform-layer${pinnedOnly ? " bp-freeform-layer-pinned" : ""}`}
+      className={`bp-freeform-layer${pinnedOnly ? " bp-freeform-layer-pinned" : ""}${site?.layering ? " bp-layering" : ""}`}
       onDragOver={(e) => {
         if (!editMode || pinnedOnly || !editor?.onCreatePhotoAtDrop) return
         e.preventDefault()
@@ -1052,6 +1069,189 @@ function FreeformCanvasLayer({
         const pinnedClass = st.scrollFixed ? " bp-freeform-item-pinned" : ""
         const itemLink = !editMode ? resolveLink?.(st.linkTarget) ?? null : null
 
+        if (item.kind === "shape" || item.kind === "tool") {
+          const boxW = item.kind === "tool" ? (st.maxWidth ?? 420) : (st.maxWidth ?? 180)
+          const boxH = item.kind === "tool" ? (st.imageSize ?? 560) : (st.imageSize ?? 140)
+          const shapeFill = item.fillColor || "#1B4F72"
+          const startBoxResize = (edge: "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw") => (e: ReactPointerEvent<HTMLElement>) => {
+            if (!editor?.onPatchTextStyle) return
+            e.preventDefault()
+            e.stopPropagation()
+            const handle = e.currentTarget as HTMLElement
+            const startX = e.clientX
+            const startY = e.clientY
+            const startW = boxW
+            const startH = boxH
+            const parent = handle.parentElement
+            try {
+              handle.setPointerCapture(e.pointerId)
+            } catch {
+              /* ignore */
+            }
+            const onMove = (ev: PointerEvent) => {
+              const dx = (ev.clientX - startX) / scale
+              const dy = (ev.clientY - startY) / scale
+              const growW = edge.includes("e") ? dx : edge.includes("w") ? -dx : 0
+              const growH = edge.includes("s") || edge === "se" || edge === "sw" ? dy : edge.includes("n") ? -dy : 0
+              const w = Math.max(48, Math.round(startW + growW))
+              const h = Math.max(48, Math.round(startH + growH))
+              if (parent) {
+                parent.style.width = `${w * scale}px`
+                parent.style.height = `${h * scale}px`
+                parent.style.marginLeft = `${(-(w * scale)) / 2}px`
+              }
+              handle.dataset.rw = String(w)
+              handle.dataset.rh = String(h)
+            }
+            const onUp = (ev: PointerEvent) => {
+              handle.removeEventListener("pointermove", onMove)
+              handle.removeEventListener("pointerup", onUp)
+              handle.removeEventListener("pointercancel", onUp)
+              try {
+                handle.releasePointerCapture(ev.pointerId)
+              } catch {
+                /* ignore */
+              }
+              editor.onPatchTextStyle?.(targetId, {
+                maxWidth: Number(handle.dataset.rw ?? startW),
+                imageSize: Number(handle.dataset.rh ?? startH),
+              })
+            }
+            handle.addEventListener("pointermove", onMove)
+            handle.addEventListener("pointerup", onUp)
+            handle.addEventListener("pointercancel", onUp)
+          }
+          const calendar = site?.calendar ?? defaultWebsiteCalendarToolSettings()
+          return (
+            <div
+              key={item.id}
+              className={`bp-freeform-item${editMode ? " bp-edit-target" : ""}${selected ? " bp-edit-selected" : ""}${pinnedClass}`}
+              data-edit-target={targetId}
+              data-layer-target={targetId}
+              style={{
+                width: boxW * scale,
+                height: boxH * scale,
+                transform: `translate(${ox * scale}px, ${oy * scale}px)`,
+                left: "50%",
+                marginLeft: -(boxW * scale) / 2,
+                top: 140 * scale,
+                position: "absolute",
+                boxSizing: "border-box",
+                overflow: "visible",
+              }}
+              onClick={(e) => {
+                if (!editMode) return
+                e.stopPropagation()
+                editor?.onSelectTarget?.(targetId)
+              }}
+              onContextMenu={(e) => {
+                if (!editMode) return
+                e.preventDefault()
+                e.stopPropagation()
+                editor?.onSelectTarget?.(targetId)
+                editor?.onTargetContextMenu?.(targetId, e.clientX, e.clientY)
+              }}
+              onPointerDown={(e) => {
+                if (!editMode || !editor?.onPatchTextStyle || e.button !== 0) return
+                const hit = e.target as HTMLElement
+                if (hit.closest?.("[data-resize-handle],input,textarea,select")) return
+                if (item.kind === "tool" && !selected && !hit.closest?.("[data-tool-drag]")) return
+                e.preventDefault()
+                e.stopPropagation()
+                editor.onSelectTarget?.(targetId)
+                const el = e.currentTarget as HTMLElement
+                try {
+                  el.setPointerCapture(e.pointerId)
+                } catch {
+                  /* ignore */
+                }
+                const startX = e.clientX
+                const startY = e.clientY
+                const ox0 = ox
+                const oy0 = oy
+                const onMove = (ev: PointerEvent) => {
+                  const nextX = clampWebsiteOffsetX(ox0 + (ev.clientX - startX) / scale)
+                  const nextY = clampWebsiteOffsetY(oy0 + (ev.clientY - startY) / scale)
+                  el.style.transform = `translate(${nextX * scale}px, ${nextY * scale}px)`
+                  el.dataset.dragX = String(nextX)
+                  el.dataset.dragY = String(nextY)
+                }
+                const onUp = () => {
+                  el.removeEventListener("pointermove", onMove)
+                  el.removeEventListener("pointerup", onUp)
+                  el.removeEventListener("pointercancel", onUp)
+                  editor.onPatchTextStyle?.(targetId, {
+                    offsetX: Number(el.dataset.dragX ?? ox0),
+                    offsetY: Number(el.dataset.dragY ?? oy0),
+                  })
+                }
+                el.addEventListener("pointermove", onMove)
+                el.addEventListener("pointerup", onUp)
+                el.addEventListener("pointercancel", onUp)
+              }}
+            >
+              <div style={{ width: "100%", height: "100%", overflow: "auto", boxSizing: "border-box" }}>
+                {item.kind === "shape" ? (
+                  <div
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      background: shapeFill,
+                      borderRadius: item.shape === "circle" ? "50%" : item.shape === "rounded" ? 18 : 0,
+                      clipPath: item.shape === "triangle" ? "polygon(50% 0, 100% 100%, 0 100%)" : undefined,
+                    }}
+                  />
+                ) : item.tool === "calendar" ? (
+                  <div style={{ background: "rgba(255,255,255,0.94)", borderRadius: 12, minHeight: "100%", boxSizing: "border-box", overflow: "hidden" }}>
+                    {editMode && selected ? (
+                      <div data-tool-drag style={{ cursor: "grab", background: "#2563eb", color: "#fff", fontSize: 12, fontWeight: 800, padding: "6px 10px" }}>
+                        Drag to move
+                      </div>
+                    ) : null}
+                    <div style={{ padding: 12 }}>
+                    <WebsiteCalendarBookingForm
+                      slug={site?.slug || "preview"}
+                      businessName={site?.businessName || "This business"}
+                      calendar={calendar}
+                      fieldBackground={site?.theme.fieldBackgroundColor || "#fff"}
+                      fontColor={site?.theme.fontColor || "#0f172a"}
+                      primaryColor={site?.theme.primaryColor || "#0f766e"}
+                    />
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ background: "rgba(255,255,255,0.94)", borderRadius: 12, minHeight: "100%", boxSizing: "border-box", overflow: "hidden" }}>
+                    {editMode && selected ? (
+                      <div data-tool-drag style={{ cursor: "grab", background: "#2563eb", color: "#fff", fontSize: 12, fontWeight: 800, padding: "6px 10px" }}>
+                        Drag to move
+                      </div>
+                    ) : null}
+                    <div style={{ padding: 8 }}>
+                    <BusinessProfileContactForm
+                      slug={site?.slug || "preview"}
+                      businessName={site?.businessName || "This business"}
+                      theme={site?.theme ?? DEFAULT_BUSINESS_PROFILE_THEME}
+                      showJobDescription={site?.showJobDescription}
+                    />
+                    </div>
+                  </div>
+                )}
+              </div>
+              {editMode && selected
+                ? (["n", "s", "e", "w", "ne", "nw", "se", "sw"] as const).map((edge) => (
+                    <span
+                      key={edge}
+                      data-resize-handle
+                      className={`bp-edit-resize bp-shape-handle bp-edit-resize-${edge}`}
+                      title="Drag to resize"
+                      onPointerDown={startBoxResize(edge)}
+                    />
+                  ))
+                : null}
+            </div>
+          )
+        }
+
         if (item.kind === "photo") {
           const url = item.imageUrl?.trim() || ""
           if (!url && !editMode) return null
@@ -1064,6 +1264,7 @@ function FreeformCanvasLayer({
               key={item.id}
               className={`bp-freeform-item${editMode ? " bp-edit-target" : ""}${selected ? " bp-edit-selected" : ""}${pinnedClass}`}
               data-edit-target={targetId}
+              data-layer-target={targetId}
               style={{
                 width: width * scale,
                 height: hugImage ? undefined : (height || 150) * scale,
@@ -1476,6 +1677,42 @@ function ShowcaseLayout({
   const fixedBackground = data.fixedBackground !== false
   const shellRef = useRef<HTMLDivElement | null>(null)
   const [designScale, setDesignScale] = useState(1)
+  useLayoutEffect(() => {
+    const root = shellRef.current
+    if (!root) return
+    const order = data.layerOrder ?? []
+    const picked = editor?.selectedTargetId ?? ""
+    const nodes = root.querySelectorAll<HTMLElement>("[data-layer-target]")
+    nodes.forEach((node) => {
+      const id = node.getAttribute("data-layer-target") || ""
+      const pickedHere = Boolean(picked && id === picked)
+      if (!order.length) {
+        if (pickedHere) {
+          node.style.zIndex = "700"
+          node.dataset.layerApplied = "1"
+          return
+        }
+        if (node.dataset.layerApplied === "1") {
+          node.style.removeProperty("z-index")
+          if (node.dataset.layerPos === "1") {
+            node.style.removeProperty("position")
+            delete node.dataset.layerPos
+          }
+          delete node.dataset.layerApplied
+        }
+        return
+      }
+      const z = websiteLayerZIndex(order, id)
+      if (z == null && !pickedHere) return
+      if (getComputedStyle(node).position === "static") {
+        node.style.position = "relative"
+        node.dataset.layerPos = "1"
+      }
+      node.style.zIndex = String(pickedHere ? 700 : z)
+      node.dataset.layerApplied = "1"
+    })
+  }, [data.layerOrder, activePage, editMode, data.canvasItems, previewMode, editor?.selectedTargetId])
+
   useEffect(() => {
     const root = shellRef.current
     if (!root || typeof ResizeObserver === "undefined") return
@@ -2205,6 +2442,7 @@ function ShowcaseLayout({
         }
         style={bgStyle}
         data-edit-target="slot.background"
+        data-layer-target="slot.background"
         aria-hidden
         onDragOver={(e) => editMode && e.preventDefault()}
         onDrop={(e) => onSlotDrop("background", e)}
@@ -2272,6 +2510,14 @@ function ShowcaseLayout({
           tagline={data.tagline}
           resolveLink={(target) => optionalBuiltInLink(target, hrefFor, telHref, data.email)}
           onFollowPage={go}
+          site={{
+            slug: data.slug,
+            businessName: data.businessName,
+            theme,
+            showJobDescription: data.templateId === "hair_plumbing",
+            calendar: data.websiteCalendar,
+            layering: Boolean(data.layerOrder?.length),
+          }}
         />
       </div>
       <FreeformCanvasLayer
@@ -2285,6 +2531,14 @@ function ShowcaseLayout({
         tagline={data.tagline}
         resolveLink={(target) => optionalBuiltInLink(target, hrefFor, telHref, data.email)}
         onFollowPage={go}
+        site={{
+          slug: data.slug,
+          businessName: data.businessName,
+          theme,
+          showJobDescription: data.templateId === "hair_plumbing",
+          calendar: data.websiteCalendar,
+          layering: Boolean(data.layerOrder?.length),
+        }}
       />
     </div>
   )
@@ -2621,6 +2875,16 @@ export function BusinessProfilePublicSite({
           left: -6px;
           cursor: nesw-resize;
         }
+        .bp-shape-handle { bottom: auto; }
+        .bp-shape-handle.bp-edit-resize-s,
+        .bp-shape-handle.bp-edit-resize-se,
+        .bp-shape-handle.bp-edit-resize-sw { bottom: -6px; }
+        .bp-edit-resize-n { top: -6px; left: 50%; margin-left: -7px; cursor: ns-resize; }
+        .bp-edit-resize-s { bottom: -6px; left: 50%; margin-left: -7px; cursor: ns-resize; }
+        .bp-edit-resize-e { top: 50%; right: -6px; margin-top: -7px; cursor: ew-resize; }
+        .bp-edit-resize-w { top: 50%; left: -6px; margin-top: -7px; cursor: ew-resize; }
+        .bp-edit-resize-ne { top: -6px; right: -6px; cursor: nesw-resize; }
+        .bp-edit-resize-nw { top: -6px; left: -6px; cursor: nwse-resize; }
         .bp-showcase-scroll-bg {
           position: absolute; inset: 0; z-index: 0;
           overflow: hidden;
@@ -2649,6 +2913,9 @@ export function BusinessProfilePublicSite({
           position: relative;
           z-index: 1;
           overflow: visible;
+        }
+        .bp-freeform-layer.bp-layering {
+          z-index: auto;
         }
         .bp-freeform-layer {
           position: absolute;

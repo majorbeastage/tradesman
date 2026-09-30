@@ -1,5 +1,12 @@
 import { useEffect, useState, useMemo, useRef, useCallback, useLayoutEffect, type MouseEvent as ReactMouseEvent } from "react"
 import { supabase } from "../../lib/supabase"
+import {
+  defaultWebsiteCalendarToolSettings,
+  mergeBusinessPublicProfileMetadata,
+  parseBusinessPublicProfileSettings,
+  type WebsiteCalendarToolSettings,
+} from "../../lib/businessPublicProfile"
+import { WebsiteCalendarSettingsPanel } from "../../components/WebsiteCalendarTool"
 import { outboundMessagesJsonBody } from "../../lib/platformToolsJsonBody"
 import { parseLocalDateTime } from "../../lib/parseLocalDateTime"
 import {
@@ -432,6 +439,56 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
     () => resolveCalendarEventOwnerUserId(userId, authUserId || userId, teamStructureOwnerId),
     [userId, authUserId, teamStructureOwnerId],
   )
+  const [websiteCalendarOpen, setWebsiteCalendarOpen] = useState(false)
+  const [websiteCalendarDraft, setWebsiteCalendarDraft] = useState<WebsiteCalendarToolSettings>(defaultWebsiteCalendarToolSettings())
+  const [websiteCalendarOnSite, setWebsiteCalendarOnSite] = useState(false)
+  const [websiteCalendarSaving, setWebsiteCalendarSaving] = useState(false)
+  const [websiteCalendarNotice, setWebsiteCalendarNotice] = useState("")
+  const websiteCalendarOwnerId = calendarOwnerUserId || calendarDbUserId || userId
+
+  useEffect(() => {
+    if (!supabase || !websiteCalendarOwnerId) return
+    let cancelled = false
+    void supabase
+      .from("profiles")
+      .select("metadata")
+      .eq("id", websiteCalendarOwnerId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return
+        const meta =
+          data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+            ? (data.metadata as Record<string, unknown>)
+            : {}
+        const settings = parseBusinessPublicProfileSettings(meta)
+        setWebsiteCalendarDraft(settings.websiteCalendar)
+        setWebsiteCalendarOnSite(settings.canvasItems.some((item) => item.kind === "tool" && item.tool === "calendar"))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [websiteCalendarOwnerId])
+
+  async function saveWebsiteCalendar() {
+    if (!supabase || !websiteCalendarOwnerId) return
+    setWebsiteCalendarSaving(true)
+    setWebsiteCalendarNotice("")
+    const { data, error } = await supabase.from("profiles").select("metadata").eq("id", websiteCalendarOwnerId).maybeSingle()
+    if (error) {
+      setWebsiteCalendarSaving(false)
+      setWebsiteCalendarNotice(error.message)
+      return
+    }
+    const prev =
+      data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+        ? (data.metadata as Record<string, unknown>)
+        : {}
+    const current = parseBusinessPublicProfileSettings(prev)
+    const next = mergeBusinessPublicProfileMetadata(prev, { ...current, websiteCalendar: websiteCalendarDraft })
+    const upd = await supabase.from("profiles").update({ metadata: next }).eq("id", websiteCalendarOwnerId)
+    setWebsiteCalendarSaving(false)
+    setWebsiteCalendarNotice(upd.error ? upd.error.message : "Website calendar saved.")
+  }
   const sandboxTraining = useSandboxTrainingMode()
   const aiAutomationsEnabled = useScopedAiAutomationsEnabled(userId)
   const portalConfig = usePortalConfigForPage()
@@ -4066,6 +4123,65 @@ export default function CalendarPage({ setPage }: { setPage?: (page: string) => 
               >
                 Job Types
               </button>
+            ) : null}
+            {websiteCalendarOnSite ? (
+              <button
+                type="button"
+                onClick={() => setWebsiteCalendarOpen(true)}
+                style={{ padding: "8px 14px", borderRadius: "6px", border: `1px solid ${theme.border}`, background: "white", cursor: "pointer", color: theme.text, fontWeight: 700 }}
+              >
+                Website Calendar
+              </button>
+            ) : null}
+            {websiteCalendarOpen ? (
+              <div
+                style={{
+                  position: "fixed",
+                  inset: 0,
+                  background: "rgba(15,23,42,0.45)",
+                  zIndex: 80,
+                  display: "grid",
+                  placeItems: "center",
+                  padding: 16,
+                }}
+                onClick={() => setWebsiteCalendarOpen(false)}
+              >
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    width: "min(520px, 100%)",
+                    maxHeight: "min(90vh, 760px)",
+                    overflow: "auto",
+                    background: "#fff",
+                    color: "#0f172a",
+                    borderRadius: 12,
+                    padding: 16,
+                    display: "grid",
+                    gap: 12,
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                    <strong>Website Calendar</strong>
+                    <button type="button" onClick={() => setWebsiteCalendarOpen(false)} style={{ border: "none", background: "transparent", fontWeight: 800, cursor: "pointer" }}>
+                      Close
+                    </button>
+                  </div>
+                  <WebsiteCalendarSettingsPanel
+                    value={websiteCalendarDraft}
+                    userId={websiteCalendarOwnerId}
+                    onChange={setWebsiteCalendarDraft}
+                  />
+                  {websiteCalendarNotice ? <p style={{ margin: 0, fontSize: 12 }}>{websiteCalendarNotice}</p> : null}
+                  <button
+                    type="button"
+                    disabled={websiteCalendarSaving}
+                    onClick={() => void saveWebsiteCalendar()}
+                    style={{ justifySelf: "start", padding: "8px 14px", borderRadius: 8, border: "none", background: "#0f766e", color: "#fff", fontWeight: 800, cursor: "pointer" }}
+                  >
+                    {websiteCalendarSaving ? "Saving…" : "Save website calendar"}
+                  </button>
+                </div>
+              </div>
             ) : null}
             {showCalCompletionSettings ? (
               <button

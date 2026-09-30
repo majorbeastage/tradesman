@@ -141,10 +141,54 @@ export type WebsiteSocialPlatformId = (typeof WEBSITE_SOCIAL_PLATFORM_OPTIONS)[n
 
 export type WebsiteSocialLinks = Partial<Record<WebsiteSocialPlatformId, string>>
 
-/** Freeform photo/text blocks clients can place anywhere on Classic / Showcase. */
+export const WEBSITE_SHAPE_KINDS = ["rectangle", "rounded", "circle", "triangle"] as const
+export type WebsiteShapeKind = (typeof WEBSITE_SHAPE_KINDS)[number]
+
+export const WEBSITE_CALENDAR_DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const
+export type WebsiteCalendarDay = (typeof WEBSITE_CALENDAR_DAYS)[number]
+
+export const WEBSITE_CALENDAR_DAY_OPTIONS: Array<{ id: WebsiteCalendarDay; label: string }> = [
+  { id: "sun", label: "Sun" },
+  { id: "mon", label: "Mon" },
+  { id: "tue", label: "Tue" },
+  { id: "wed", label: "Wed" },
+  { id: "thu", label: "Thu" },
+  { id: "fri", label: "Fri" },
+  { id: "sat", label: "Sat" },
+]
+
+export const WEBSITE_CALENDAR_REQUIRED_FIELDS = [
+  "full_name",
+  "email",
+  "phone",
+  "address",
+  "secondary_time",
+] as const
+export type WebsiteCalendarRequiredField = (typeof WEBSITE_CALENDAR_REQUIRED_FIELDS)[number]
+
+export const WEBSITE_CALENDAR_REQUIRED_FIELD_OPTIONS: Array<{ id: WebsiteCalendarRequiredField; label: string }> = [
+  { id: "full_name", label: "Full name" },
+  { id: "email", label: "Email" },
+  { id: "phone", label: "Phone number" },
+  { id: "address", label: "Address" },
+  { id: "secondary_time", label: "Secondary time" },
+]
+
+/** Availability and booking fields for the website Custom Calendar tool. */
+export type WebsiteCalendarToolSettings = {
+  jobTypeDescription: string
+  jobTypeId: string | null
+  days: WebsiteCalendarDay[]
+  startTime: string
+  endTime: string
+  slotMinutes: number
+  requiredFields: WebsiteCalendarRequiredField[]
+}
+
+/** Freeform photo/text/shape/tool blocks clients can place anywhere on Classic / Showcase. */
 export type WebsiteCanvasItem = {
   id: string
-  kind: "text" | "photo"
+  kind: "text" | "photo" | "shape" | "tool"
   /** Text content when kind === "text". */
   text?: string
   /** Image URL when kind === "photo". */
@@ -154,6 +198,9 @@ export type WebsiteCanvasItem = {
    * New items default to the page being edited.
    */
   pages?: WebsitePublicPageId[]
+  shape?: WebsiteShapeKind
+  fillColor?: string
+  tool?: "contact" | "calendar"
 }
 
 /** Max freeform fields per site (text + photos). */
@@ -173,8 +220,13 @@ export function parseWebsiteCanvasItems(raw: unknown): WebsiteCanvasItem[] {
         ? o.id.trim().replace(/[^a-z0-9_-]/gi, "").slice(0, 40)
         : ""
     if (!id) continue
-    const kind = o.kind === "photo" ? "photo" : o.kind === "text" ? "text" : null
+    const kind =
+      o.kind === "photo" ? "photo" : o.kind === "shape" ? "shape" : o.kind === "tool" ? "tool" : o.kind === "text" ? "text" : null
     if (!kind) continue
+    const shape: WebsiteShapeKind =
+      o.shape === "rounded" || o.shape === "circle" || o.shape === "triangle" || o.shape === "rectangle" ? o.shape : "rectangle"
+    const fillColor = typeof o.fillColor === "string" && /^#[0-9a-fA-F]{6}$/.test(o.fillColor.trim()) ? o.fillColor.trim() : "#1B4F72"
+    const tool = o.tool === "calendar" ? "calendar" : "contact"
     out.push({
       id,
       kind,
@@ -183,8 +235,75 @@ export function parseWebsiteCanvasItems(raw: unknown): WebsiteCanvasItem[] {
       pages: Array.isArray(o.pages)
         ? o.pages.map(parseWebsitePublicPageId).filter((p): p is WebsitePublicPageId => p != null).slice(0, 12)
         : undefined,
+      shape: kind === "shape" ? shape : undefined,
+      fillColor: kind === "shape" ? fillColor : undefined,
+      tool: kind === "tool" ? tool : undefined,
     })
     if (out.length >= WEBSITE_CANVAS_ITEMS_MAX) break
+  }
+  return out
+}
+
+export function defaultWebsiteCalendarToolSettings(): WebsiteCalendarToolSettings {
+  return {
+    jobTypeDescription: "",
+    jobTypeId: null,
+    days: ["mon", "tue", "wed", "thu", "fri"],
+    startTime: "08:00",
+    endTime: "17:00",
+    slotMinutes: 60,
+    requiredFields: ["full_name", "email", "phone"],
+  }
+}
+
+function parseHm(raw: unknown, fallback: string): string {
+  if (typeof raw !== "string") return fallback
+  const m = /^(\d{1,2}):(\d{2})$/.exec(raw.trim())
+  if (!m) return fallback
+  const h = Math.min(23, Math.max(0, Number(m[1])))
+  const min = Math.min(59, Math.max(0, Number(m[2])))
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`
+}
+
+export function parseWebsiteCalendarToolSettings(raw: unknown): WebsiteCalendarToolSettings {
+  const base = defaultWebsiteCalendarToolSettings()
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return base
+  const o = raw as Record<string, unknown>
+  const days = Array.isArray(o.days)
+    ? o.days.filter((d): d is WebsiteCalendarDay => WEBSITE_CALENDAR_DAYS.includes(d as WebsiteCalendarDay))
+    : base.days
+  const requiredFields = Array.isArray(o.requiredFields)
+    ? o.requiredFields.filter((f): f is WebsiteCalendarRequiredField =>
+        WEBSITE_CALENDAR_REQUIRED_FIELDS.includes(f as WebsiteCalendarRequiredField),
+      )
+    : base.requiredFields
+  const slot = typeof o.slotMinutes === "number" && Number.isFinite(o.slotMinutes) ? Math.round(o.slotMinutes) : base.slotMinutes
+  return {
+    jobTypeDescription: typeof o.jobTypeDescription === "string" ? o.jobTypeDescription.slice(0, 500) : "",
+    jobTypeId: typeof o.jobTypeId === "string" && o.jobTypeId.trim() ? o.jobTypeId.trim().slice(0, 80) : null,
+    days: days.length ? days : base.days,
+    startTime: parseHm(o.startTime, base.startTime),
+    endTime: parseHm(o.endTime, base.endTime),
+    slotMinutes: Math.min(240, Math.max(15, slot)),
+    requiredFields,
+  }
+}
+
+/** Clock times from start through the last slot that still fits before end. */
+export function websiteCalendarSlotTimes(start: string, end: string, slotMinutes: number): string[] {
+  const toMin = (hm: string) => {
+    const [h, m] = hm.split(":").map((n) => Number(n))
+    return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0)
+  }
+  const startM = toMin(start)
+  const endM = toMin(end)
+  const step = Math.min(240, Math.max(15, Math.round(slotMinutes) || 60))
+  const out: string[] = []
+  if (endM <= startM) return out
+  for (let t = startM; t + step <= endM && out.length < 48; t += step) {
+    const h = Math.floor(t / 60)
+    const m = t % 60
+    out.push(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`)
   }
   return out
 }
@@ -370,6 +489,30 @@ export function parseWebsiteHomeSectionOrder(raw: unknown): WebsiteHomeSectionId
   return out
 }
 
+/** Ids are edit targets. Empty array means "do not override stacking." */
+export function parseWebsiteLayerOrder(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const item of raw) {
+    if (typeof item !== "string") continue
+    const id = item.trim().slice(0, 80)
+    if (!id || seen.has(id) || !/^[a-z0-9_.:-]+$/i.test(id)) continue
+    seen.add(id)
+    out.push(id)
+    if (out.length >= 120) break
+  }
+  return out
+}
+
+/** Higher number paints in front. Index 0 in the layer list is the front. */
+export function websiteLayerZIndex(order: string[] | undefined, targetId: string): number | undefined {
+  if (!order?.length || !targetId) return undefined
+  const idx = order.indexOf(targetId)
+  if (idx < 0) return undefined
+  return 480 - idx
+}
+
 export type WebsiteSubPageId = "about" | "contact"
 
 export type WebsiteSubPages = {
@@ -461,12 +604,16 @@ export function websiteCanvasReachPx(
     if (st?.scrollFixed) continue
     const oy = typeof st?.offsetY === "number" && Number.isFinite(st.offsetY) ? st.offsetY : 0
     const h =
-      item.kind === "photo"
+      item.kind === "photo" || item.kind === "shape" || item.kind === "tool"
         ? typeof st?.imageSize === "number" && Number.isFinite(st.imageSize)
           ? st.imageSize
-          : typeof st?.maxWidth === "number" && Number.isFinite(st.maxWidth)
-            ? st.maxWidth
-            : 200
+          : item.kind === "tool"
+            ? 560
+            : typeof st?.maxWidth === "number" && Number.isFinite(st.maxWidth)
+              ? st.maxWidth
+              : item.kind === "shape"
+                ? 140
+                : 200
         : 72
     max = Math.max(max, 140 + oy + Math.max(40, h))
   }
@@ -959,8 +1106,10 @@ export type BusinessPublicProfileSettings = {
   subPages: WebsiteSubPages
   /** Extra client-defined sub-pages. */
   customPages: WebsiteCustomPage[]
-  /** Freeform drag/resize text & photo fields on the Classic canvas. */
+  /** Freeform drag/resize text, photo, shape, and tool fields on the canvas. */
   canvasItems: WebsiteCanvasItem[]
+  /** Shared settings for the Custom Calendar tool (builder and Scheduling). */
+  websiteCalendar: WebsiteCalendarToolSettings
   /** Feature highlight cards under the about band. */
   featureCards: WebsiteContentCard[]
   /** Specialty / service cards (title + body + image slot). */
@@ -969,8 +1118,13 @@ export type BusinessPublicProfileSettings = {
   textStyles: WebsiteTextStyles
   /** Independent mobile layout (positions, sizes, visibility). */
   textStylesMobile: WebsiteTextStyles
-  /** Home section render order (drag reorder in builder). */
+  /** Home section render order (top-to-bottom on the page). */
   homeSectionOrder: WebsiteHomeSectionId[]
+  /**
+   * Front-to-back overlap order. First id paints in front.
+   * Empty means leave the current site stacking alone.
+   */
+  layerOrder: string[]
   /** Fixed background stays put while content scrolls (Classic). */
   fixedBackground: boolean
   /** Footer copyright line on Classic sites. */
@@ -1022,11 +1176,13 @@ export function emptyBusinessPublicProfileSettings(): BusinessPublicProfileSetti
     subPages: defaultWebsiteSubPages(),
     customPages: [],
     canvasItems: [],
+    websiteCalendar: defaultWebsiteCalendarToolSettings(),
     featureCards: [],
     serviceCards: [],
     textStyles: {},
     textStylesMobile: {},
     homeSectionOrder: defaultWebsiteHomeSectionOrder(),
+    layerOrder: [],
     fixedBackground: true,
     footerCopyright: "",
     showPoweredBy: true,
@@ -1178,6 +1334,7 @@ export function parseBusinessPublicProfileSettings(metadata: unknown): BusinessP
     subPages: parseWebsiteSubPages(o.subPages),
     customPages: parseWebsiteCustomPages(o.customPages),
     canvasItems: parseWebsiteCanvasItems(o.canvasItems),
+    websiteCalendar: parseWebsiteCalendarToolSettings(o.websiteCalendar),
     featureCards: parseWebsiteContentCards(o.featureCards, defaultWebsiteFeatureCards(), 4),
     serviceCards: parseWebsiteContentCards(o.serviceCards, defaultWebsiteServiceCards(), 6),
     textStyles: parseWebsiteTextStyles(o.textStyles),
@@ -1186,6 +1343,7 @@ export function parseBusinessPublicProfileSettings(metadata: unknown): BusinessP
         ? parseWebsiteTextStyles(o.textStyles)
         : parseWebsiteTextStyles(o.textStylesMobile),
     homeSectionOrder: parseWebsiteHomeSectionOrder(o.homeSectionOrder),
+    layerOrder: parseWebsiteLayerOrder(o.layerOrder),
     fixedBackground: o.fixedBackground !== false,
     footerCopyright: readNestedProfileString(o, "footerCopyright", "footer_copyright").slice(0, 200),
     showPoweredBy: o.showPoweredBy === true,
@@ -1245,6 +1403,7 @@ export function mergeBusinessPublicProfileMetadata(
       subPages: parseWebsiteSubPages(settings.subPages),
       customPages: parseWebsiteCustomPages(settings.customPages),
       canvasItems: parseWebsiteCanvasItems(settings.canvasItems),
+      websiteCalendar: parseWebsiteCalendarToolSettings(settings.websiteCalendar),
       featureCards: parseWebsiteContentCards(settings.featureCards, defaultWebsiteFeatureCards(), 4),
       serviceCards: parseWebsiteContentCards(settings.serviceCards, defaultWebsiteServiceCards(), 6),
       textStyles: parseWebsiteTextStyles(settings.textStyles),
@@ -1252,6 +1411,7 @@ export function mergeBusinessPublicProfileMetadata(
         Object.keys(settings.textStylesMobile ?? {}).length > 0 ? settings.textStylesMobile : settings.textStyles,
       ),
       homeSectionOrder: parseWebsiteHomeSectionOrder(settings.homeSectionOrder),
+      layerOrder: parseWebsiteLayerOrder(settings.layerOrder),
       fixedBackground: settings.fixedBackground !== false,
       footerCopyright: settings.footerCopyright.trim().slice(0, 200),
       showPoweredBy: settings.showPoweredBy === true,
