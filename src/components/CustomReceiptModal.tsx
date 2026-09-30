@@ -21,6 +21,9 @@ import { useAuth } from "../contexts/AuthContext"
 import CustomerSearchPicker, { customerSearchPickerRowToContact } from "./CustomerSearchPicker"
 import { outboundMessagesJsonBody } from "../lib/platformToolsJsonBody"
 import { uploadBytesForOutbound } from "../lib/uploadCommAttachment"
+import { buildInvoiceFormFromQuote, loadInvoicesFromProfile, loadQuotesForInvoices, type InvoiceQuotePick, type InvoiceRecord } from "../lib/invoices"
+import { ensureCustomerAccountNumber } from "../lib/customerAccountNumber"
+import ReceiptSettingsDialog from "./ReceiptSettingsDialog"
 
 export type CustomReceiptModalProps = {
   open: boolean
@@ -57,6 +60,10 @@ export default function CustomReceiptModal({
   const [sending, setSending] = useState(false)
   const [sendMenuOpen, setSendMenuOpen] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  const [quotes, setQuotes] = useState<InvoiceQuotePick[]>([])
+  const [invoices, setInvoices] = useState<InvoiceRecord[]>([])
+  const [showReceiptSettings, setShowReceiptSettings] = useState(false)
+  const [accountNumber, setAccountNumber] = useState("")
   const isInline = variant === "inline"
 
   useEffect(() => {
@@ -74,8 +81,14 @@ export default function CustomReceiptModal({
     void (async () => {
       setCustomersLoading(true)
       try {
-        const rows = await loadCustomersForCustomReceipt(supabase, userId)
+        const [rows, quoteRows, invoiceRows] = await Promise.all([
+          loadCustomersForCustomReceipt(supabase, userId),
+          loadQuotesForInvoices(supabase, userId).catch(() => [] as InvoiceQuotePick[]),
+          loadInvoicesFromProfile(supabase, userId).catch(() => [] as InvoiceRecord[]),
+        ])
         setCustomers(rows)
+        setQuotes(quoteRows)
+        setInvoices(invoiceRows)
         if (initialCustomerId?.trim()) {
           const match = rows.find((c) => c.id === initialCustomerId.trim())
           if (match) applyCustomerRow(match)
@@ -98,10 +111,98 @@ export default function CustomReceiptModal({
       customerAddress: row.service_address,
     }))
     setLoadedDraftId("")
-    if (!supabase) return
+    setAccountNumber("")
+    if (!supabase || !userId) return
     void loadCustomReceiptsForCustomer(supabase, row.id)
       .then(setSavedReceipts)
       .catch(() => setSavedReceipts([]))
+    void ensureCustomerAccountNumber(supabase, userId, row.id)
+      .then((n) => setAccountNumber(n ?? ""))
+      .catch(() => setAccountNumber(""))
+  }
+
+  async function handleEstimatePick(quoteId: string) {
+    if (!supabase || !userId) return
+    if (!quoteId) {
+      setForm((prev) => ({ ...prev, quoteId: "", estimateNumber: "" }))
+      return
+    }
+    setBusy(true)
+    setNotice(null)
+    try {
+      const pick = quotes.find((q) => q.id === quoteId)
+      const built = await buildInvoiceFormFromQuote(supabase, userId, quoteId)
+      setForm((prev) => ({
+        ...prev,
+        quoteId,
+        estimateNumber: pick?.estimate_number || prev.estimateNumber,
+        customerId: built.customerId || prev.customerId,
+        customerName: built.customerName || prev.customerName,
+        customerPhone: built.customerPhone || prev.customerPhone,
+        customerEmail: built.customerEmail || prev.customerEmail,
+        customerAddress: built.customerAddress || prev.customerAddress,
+        jobTitle: built.jobTitle || prev.jobTitle,
+        notes: built.notes || prev.notes,
+        lineItems: built.lineItems.map((li) =>
+          newCustomReceiptLine({
+            description: li.description,
+            quantity: li.quantity,
+            unit_price: li.unit_price,
+            line_kind: li.line_kind,
+          }),
+        ),
+      }))
+      if (built.customerId) {
+        const n = await ensureCustomerAccountNumber(supabase, userId, built.customerId).catch(() => null)
+        setAccountNumber(n ?? "")
+      }
+      setNotice("Estimate loaded into this receipt.")
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function handleInvoicePick(invoiceId: string) {
+    if (!invoiceId) {
+      setForm((prev) => ({ ...prev, invoiceId: "", invoiceNumber: "" }))
+      return
+    }
+    const inv = invoices.find((row) => row.id === invoiceId)
+    if (!inv) return
+    const linkedQuoteId = inv.quote_id?.trim() || ""
+    const linkedEstimate = linkedQuoteId ? quotes.find((q) => q.id === linkedQuoteId) : undefined
+    const estimateLabel = linkedQuoteId ? linkedEstimate?.estimate_number || `EST-${linkedQuoteId.slice(0, 8).toUpperCase()}` : ""
+    setForm((prev) => ({
+      ...prev,
+      invoiceId,
+      invoiceNumber: inv.invoice_number || prev.invoiceNumber,
+      quoteId: linkedQuoteId,
+      estimateNumber: estimateLabel,
+      customerId: inv.customer_id || prev.customerId,
+      customerName: inv.customer_name || prev.customerName,
+      customerPhone: inv.customer_phone || prev.customerPhone,
+      customerEmail: inv.customer_email || prev.customerEmail,
+      customerAddress: inv.customer_address || prev.customerAddress,
+      jobTitle: inv.job_title || prev.jobTitle,
+      notes: inv.notes || prev.notes,
+      receiptDate: inv.invoice_date || prev.receiptDate,
+      lineItems: inv.line_items.map((li) =>
+        newCustomReceiptLine({
+          description: li.description,
+          quantity: li.quantity,
+          unit_price: li.unit_price,
+          line_kind: li.line_kind,
+        }),
+      ),
+    }))
+    if (supabase && userId && inv.customer_id) {
+      void ensureCustomerAccountNumber(supabase, userId, inv.customer_id)
+        .then((n) => setAccountNumber(n ?? ""))
+        .catch(() => setAccountNumber(""))
+    }
+    setNotice(estimateLabel ? `Invoice loaded. Estimate ${estimateLabel} came with it.` : "Invoice loaded into this receipt.")
   }
 
   const subtotal = useMemo(() => {
@@ -124,7 +225,7 @@ export default function CustomReceiptModal({
     setNotice(null)
     try {
       const template = await loadReceiptTemplateSettings(supabase, userId)
-      const bytes = await buildCustomReceiptPdfBytes(form, template, { sandboxWatermark: sandboxTraining })
+      const bytes = await buildCustomReceiptPdfBytes(form, template, { sandboxWatermark: sandboxTraining, accountNumber })
       const slug = form.customerName.trim().replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 24) || "receipt"
       downloadPdfBlob(bytes, `receipt-${slug}.pdf`)
       setNotice("PDF downloaded.")
@@ -196,7 +297,7 @@ export default function CustomReceiptModal({
     setNotice(null)
     try {
       const template = await loadReceiptTemplateSettings(supabase, userId)
-      const bytes = await buildCustomReceiptPdfBytes(form, template, { sandboxWatermark: sandboxTraining })
+      const bytes = await buildCustomReceiptPdfBytes(form, template, { sandboxWatermark: sandboxTraining, accountNumber })
       if (!bytes.length) throw new Error("Receipt PDF is empty.")
       const slug = form.customerName.trim().replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 24) || "receipt"
       const filename = `receipt-${slug}.pdf`
@@ -310,7 +411,7 @@ export default function CustomReceiptModal({
               Custom Receipt
             </h2>
             <p style={{ margin: "6px 0 0", fontSize: 13, color: "#64748b", lineHeight: 1.45 }}>
-              Standalone receipt using your Receipt template settings. Link a customer to save on their profile, or enter details manually.
+              Standalone receipt using your Receipt settings. Link a customer, or start from an estimate or invoice.
             </p>
           </div>
           <button
@@ -321,6 +422,23 @@ export default function CustomReceiptModal({
             aria-label="Close"
           >
             ×
+          </button>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 12 }}>
+          <button
+            type="button"
+            onClick={() => setShowReceiptSettings(true)}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 6,
+              border: `1px solid ${theme.border}`,
+              background: "#fff",
+              color: theme.text,
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            Receipt settings
           </button>
         </div>
 
@@ -341,6 +459,39 @@ export default function CustomReceiptModal({
             emptyLabel="— No customer —"
             loading={customersLoading}
           />
+
+          <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
+            <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600 }}>
+              From estimate
+              <select value={form.quoteId} onChange={(e) => void handleEstimatePick(e.target.value)} disabled={busy} style={{ ...theme.formInput, fontSize: 14 }}>
+                <option value="">Choose estimate…</option>
+                {quotes.map((q) => (
+                  <option key={q.id} value={q.id}>
+                    {q.title ? `${q.estimate_number} — ${q.title}` : q.estimate_number}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600 }}>
+              From invoice
+              <select value={form.invoiceId} onChange={(e) => handleInvoicePick(e.target.value)} disabled={busy} style={{ ...theme.formInput, fontSize: 14 }}>
+                <option value="">Choose invoice…</option>
+                {invoices.map((inv) => (
+                  <option key={inv.id} value={inv.id}>
+                    {inv.invoice_number} — {inv.customer_name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>
+            You can pick an estimate, an invoice, or both. The last one you pick fills the line items. Both numbers stay on the receipt when both are selected.
+          </p>
+          {accountNumber ? (
+            <p style={{ margin: 0, fontSize: 13 }}>
+              <strong>Account #</strong> {accountNumber}
+            </p>
+          ) : null}
 
           {savedReceipts.length > 0 ? (
             <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600, color: theme.text }}>
@@ -546,6 +697,27 @@ export default function CustomReceiptModal({
             </div>
           </div>
 
+          <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+            <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600 }}>
+              Payment method
+              <input
+                value={form.paymentMethod}
+                onChange={(e) => setForm((p) => ({ ...p, paymentMethod: e.target.value }))}
+                placeholder="Check, card, cash…"
+                style={{ ...theme.formInput, fontSize: 14 }}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6, fontSize: 13, fontWeight: 600 }}>
+              Amount paid
+              <input
+                value={form.amountPaid}
+                onChange={(e) => setForm((p) => ({ ...p, amountPaid: e.target.value }))}
+                placeholder={subtotal > 0 ? subtotal.toFixed(2) : "Paid in full if blank"}
+                style={{ ...theme.formInput, fontSize: 14 }}
+              />
+            </label>
+          </div>
+
           <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
             <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600 }}>
               <input
@@ -689,6 +861,13 @@ export default function CustomReceiptModal({
           </div>
         </div>
       </div>
+      <ReceiptSettingsDialog
+        open={showReceiptSettings}
+        onClose={() => setShowReceiptSettings(false)}
+        supabase={supabase}
+        userId={userId}
+        onSaved={(message) => setNotice(message)}
+      />
     </CustomReceiptShell>
   )
 }

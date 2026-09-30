@@ -35,6 +35,21 @@ export async function fetchUserPublicTwilioNumber(
   return formatUsPhoneDisplay(raw)
 }
 
+/** Twilio business line first, then the profile phone fields. */
+export async function resolveDocumentBusinessPhone(
+  supabase: SupabaseClient,
+  userId: string,
+  fallbackPhones: Array<string | null | undefined>,
+): Promise<string> {
+  const twilio = await fetchUserPublicTwilioNumber(supabase, userId)
+  if (twilio) return twilio
+  for (const raw of fallbackPhones) {
+    const phone = String(raw ?? "").trim()
+    if (phone) return phone
+  }
+  return ""
+}
+
 export type TradesmanVoiceLine = {
   userId: string
   /** Purchased Tradesman / Twilio DID (public_address). */

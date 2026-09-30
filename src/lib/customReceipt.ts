@@ -2,7 +2,12 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import type { ReceiptAdditionalLine } from "./calendarReceiptMetadata"
 import { bumpCustomerLastActivityAt } from "./customerSchedulingActivity"
 import { buildReceiptPdfBytes } from "./documentPdf"
-import { fetchQuoteLogoForExport, resolveReceiptTemplateLogoUrl } from "./quoteLogoImage"
+import { fetchQuoteLogoForExport, resolveBusinessLogoUrl, resolveReceiptTemplateLogoUrl } from "./quoteLogoImage"
+import { parseDocumentVisualTemplate, type DocumentVisualStyle } from "./documentVisualTemplate"
+import { buildGraphicalCustomerDocumentPdf } from "./graphicalDocumentPdf"
+import { parseBusinessPublicProfileSettings } from "./businessPublicProfile"
+import { resolveDocumentBusinessPhone } from "./userPublicBusinessLine"
+import { formatDocumentNumber, parseDocumentNumberSettings } from "./documentNumberFormat"
 import { computeQuoteLineTotal, parseQuoteItemMetadata } from "./quoteItemMath"
 import { isCustomerArchivedForHub } from "./customerContactKind"
 import { loadOwnedCustomerRows } from "./loadOwnedCustomerRows"
@@ -40,6 +45,12 @@ export type CustomReceiptDraft = {
   manual_amount?: number | null
   sent_at?: string | null
   status?: string | null
+  payment_method?: string
+  amount_paid?: string
+  quote_id?: string
+  invoice_id?: string
+  estimate_number?: string
+  invoice_number?: string
 }
 
 export type CustomReceiptTemplateSettings = {
@@ -48,6 +59,17 @@ export type CustomReceiptTemplateSettings = {
   templateFooter: string | null
   itemize: boolean
   logo: Awaited<ReturnType<typeof fetchQuoteLogoForExport>>
+  layout: DocumentVisualStyle
+  primaryColor: string
+  secondaryColor: string
+  phone: string
+  tagline: string
+  includeDate: boolean
+  includeJob: boolean
+  includeNotes: boolean
+  includePaymentMethod: boolean
+  /** Set when custom receipt numbering is turned on. */
+  receiptNumber: string | null
 }
 
 export type CustomReceiptFormState = {
@@ -62,6 +84,12 @@ export type CustomReceiptFormState = {
   lineItems: CustomReceiptLineItem[]
   manualAmount: string
   useManualAmount: boolean
+  paymentMethod: string
+  amountPaid: string
+  quoteId: string
+  invoiceId: string
+  estimateNumber: string
+  invoiceNumber: string
 }
 
 export type CustomerReceiptPickerRow = {
@@ -117,6 +145,12 @@ export function defaultCustomReceiptFormState(): CustomReceiptFormState {
     lineItems: [],
     manualAmount: "",
     useManualAmount: false,
+    paymentMethod: "",
+    amountPaid: "",
+    quoteId: "",
+    invoiceId: "",
+    estimateNumber: "",
+    invoiceNumber: "",
   }
 }
 
@@ -189,6 +223,12 @@ export function parseCustomReceiptDrafts(raw: unknown): CustomReceiptDraft[] {
       manual_amount: manual_amount != null && Number.isFinite(manual_amount) ? manual_amount : null,
       sent_at: typeof row.sent_at === "string" ? row.sent_at : undefined,
       status: typeof row.status === "string" ? row.status : undefined,
+      payment_method: typeof row.payment_method === "string" ? row.payment_method : undefined,
+      amount_paid: typeof row.amount_paid === "string" ? row.amount_paid : undefined,
+      quote_id: typeof row.quote_id === "string" ? row.quote_id : undefined,
+      invoice_id: typeof row.invoice_id === "string" ? row.invoice_id : undefined,
+      estimate_number: typeof row.estimate_number === "string" ? row.estimate_number : undefined,
+      invoice_number: typeof row.invoice_number === "string" ? row.invoice_number : undefined,
     })
   }
   return out.sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))
@@ -207,6 +247,12 @@ export function customReceiptDraftToFormState(draft: CustomReceiptDraft): Custom
     lineItems: draft.line_items.map((li) => newCustomReceiptLine(li)),
     manualAmount: draft.manual_amount != null && Number.isFinite(draft.manual_amount) ? draft.manual_amount.toFixed(2) : "",
     useManualAmount: draft.manual_amount != null && Number.isFinite(draft.manual_amount),
+    paymentMethod: draft.payment_method ?? "",
+    amountPaid: draft.amount_paid ?? "",
+    quoteId: draft.quote_id ?? "",
+    invoiceId: draft.invoice_id ?? "",
+    estimateNumber: draft.estimate_number ?? "",
+    invoiceNumber: draft.invoice_number ?? "",
   }
 }
 
@@ -230,6 +276,12 @@ export function formStateToCustomReceiptDraft(
     notes: form.notes.trim() || undefined,
     line_items: form.lineItems,
     manual_amount: form.useManualAmount && Number.isFinite(manualParsed) ? manualParsed : null,
+    payment_method: form.paymentMethod.trim() || undefined,
+    amount_paid: form.amountPaid.trim() || undefined,
+    quote_id: form.quoteId.trim() || undefined,
+    invoice_id: form.invoiceId.trim() || undefined,
+    estimate_number: form.estimateNumber.trim() || undefined,
+    invoice_number: form.invoiceNumber.trim() || undefined,
   }
 }
 
@@ -239,7 +291,7 @@ export async function loadReceiptTemplateSettings(
 ): Promise<CustomReceiptTemplateSettings> {
   const { data: prof } = await supabase
     .from("profiles")
-    .select("metadata, document_template_receipt, display_name")
+    .select("metadata, document_template_receipt, display_name, primary_phone, best_contact_phone")
     .eq("id", userId)
     .maybeSingle()
   const foot = (prof as { document_template_receipt?: string | null } | null)?.document_template_receipt
@@ -253,12 +305,37 @@ export async function loadReceiptTemplateSettings(
   const itemize = meta.receipt_template_itemize === true
   const introRaw = meta.receipt_template_intro
   const templateHeader = typeof introRaw === "string" && introRaw.trim() ? introRaw.trim() : null
+  const visual = parseDocumentVisualTemplate(meta, "receipt")
+  const receiptNumberSettings = parseDocumentNumberSettings(meta, "receipt")
+  const receiptNumber = receiptNumberSettings.enabled ? formatDocumentNumber(receiptNumberSettings) : null
   let logo: Awaited<ReturnType<typeof fetchQuoteLogoForExport>> = null
-  if (meta.receipt_template_carry_from_estimate === true || meta.receipt_template_show_logo === true) {
-    const u = resolveReceiptTemplateLogoUrl(meta)
+  const wantLogo =
+    visual.style === "graphical" ||
+    meta.receipt_template_carry_from_estimate === true ||
+    meta.receipt_template_show_logo === true
+  if (wantLogo) {
+    const u = visual.style === "graphical" ? resolveBusinessLogoUrl(meta) : resolveReceiptTemplateLogoUrl(meta)
     if (u) logo = await fetchQuoteLogoForExport(u)
   }
-  return { businessLabel, templateHeader, templateFooter, itemize, logo }
+  const row = prof as { primary_phone?: string | null; best_contact_phone?: string | null } | null
+  const phone = await resolveDocumentBusinessPhone(supabase, userId, [row?.primary_phone, row?.best_contact_phone])
+  return {
+    businessLabel,
+    templateHeader,
+    templateFooter,
+    itemize,
+    logo,
+    layout: visual.style,
+    primaryColor: visual.primaryColor,
+    secondaryColor: visual.secondaryColor,
+    phone,
+    tagline: parseBusinessPublicProfileSettings(meta).tagline.trim(),
+    includeDate: meta.receipt_template_include_date !== false,
+    includeJob: meta.receipt_template_include_job !== false,
+    includeNotes: meta.receipt_template_include_notes !== false,
+    includePaymentMethod: meta.receipt_template_include_payment_method !== false,
+    receiptNumber,
+  }
 }
 
 function formatReceiptDateLabel(isoDate: string): string {
@@ -279,19 +356,73 @@ function buildAmountLabel(form: CustomReceiptFormState, subtotal: number): strin
 export async function buildCustomReceiptPdfBytes(
   form: CustomReceiptFormState,
   template: CustomReceiptTemplateSettings,
-  opts?: { sandboxWatermark?: boolean },
+  opts?: { sandboxWatermark?: boolean; accountNumber?: string | null },
 ): Promise<Uint8Array> {
   const { quoteLines, subtotal } = formatCustomReceiptLineItems(form.lineItems)
+  const total = form.useManualAmount ? Number.parseFloat(form.manualAmount.replace(/[^0-9.]/g, "")) : subtotal
+  const safeTotal = Number.isFinite(total) ? total : subtotal
+  const paidRaw = Number.parseFloat(form.amountPaid.replace(/[^0-9.]/g, ""))
+  const amountPaid = Number.isFinite(paidRaw) ? paidRaw : safeTotal
   const customerName = form.customerName.trim() || "Customer"
+  const sourceBits = [
+    form.estimateNumber.trim() ? `Estimate ${form.estimateNumber.trim()}` : "",
+    form.invoiceNumber.trim() ? `Invoice ${form.invoiceNumber.trim()}` : "",
+  ].filter(Boolean)
+  if (template.layout === "graphical") {
+    const method = form.paymentMethod.trim()
+    return buildGraphicalCustomerDocumentPdf({
+      documentKind: "receipt",
+      businessName: template.businessLabel,
+      phone: template.phone,
+      tagline: template.tagline,
+      logo: template.logo,
+      primaryColor: template.primaryColor,
+      secondaryColor: template.secondaryColor,
+      documentNumber: template.receiptNumber || form.invoiceNumber.trim() || form.estimateNumber.trim() || null,
+      accountNumber: opts?.accountNumber,
+      dateLabel: formatReceiptDateLabel(form.receiptDate),
+      paymentMethod: method || "Payment received",
+      paymentStatus: method ? `PAID - ${method.toUpperCase()}` : "PAID",
+      billToName: customerName,
+      billToPhone: form.customerPhone,
+      billToEmail: form.customerEmail,
+      billToAddress: form.customerAddress,
+      jobTitle: form.jobTitle,
+      notes: form.notes,
+      lines: form.lineItems.map((li) => {
+        const qty = Number.isFinite(li.quantity) ? li.quantity : 0
+        const rate = Number.isFinite(li.unit_price) ? li.unit_price : 0
+        return {
+          description: li.description,
+          quantity: qty,
+          rate,
+          amount: qty * rate,
+        }
+      }),
+      subtotal: safeTotal,
+      amountPaid,
+      balanceDue: Math.max(0, Math.round((safeTotal - amountPaid) * 100) / 100),
+      sourceLabel: sourceBits.join(" · "),
+      showDate: template.includeDate,
+      showJob: template.includeJob,
+      showNotes: template.includeNotes,
+      showPaymentMethod: template.includePaymentMethod,
+      sandboxWatermark: opts?.sandboxWatermark,
+    })
+  }
   const contactLines = [
+    opts?.accountNumber?.trim() ? `Account: ${opts.accountNumber.trim()}` : "",
     form.customerPhone.trim() ? `Phone: ${form.customerPhone.trim()}` : "",
     form.customerEmail.trim() ? `Email: ${form.customerEmail.trim()}` : "",
     form.customerAddress.trim() ? `Address: ${form.customerAddress.trim()}` : "",
+    template.receiptNumber ? `Receipt ${template.receiptNumber}` : "",
+    template.includePaymentMethod && form.paymentMethod.trim() ? `Payment method: ${form.paymentMethod.trim()}` : "",
+    sourceBits.length ? sourceBits.join(" · ") : "",
   ].filter(Boolean)
-  const jobTitle = form.jobTitle.trim() || "Custom receipt"
+  const jobTitle = template.includeJob ? form.jobTitle.trim() || "Custom receipt" : "Receipt"
   const completedAtLabel = formatReceiptDateLabel(form.receiptDate)
   const amountLabel = buildAmountLabel(form, subtotal)
-  const headerNote = form.notes.trim() || null
+  const headerNote = template.includeNotes ? form.notes.trim() || null : null
   const templateHeader = [template.templateHeader, headerNote].filter(Boolean).join("\n\n") || null
 
   return buildReceiptPdfBytes({

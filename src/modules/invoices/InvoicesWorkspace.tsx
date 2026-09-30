@@ -45,6 +45,9 @@ import { AdminSortableRow } from "../../components/admin/AdminSortableRow"
 import { reorderByIndex } from "../../lib/reorderArray"
 import { appendEmailSignature, loadStoredEmailSignature, saveStoredEmailSignature } from "../../lib/emailSignature"
 import { loadPurchaseOrdersFromProfile, type PurchaseOrderRecord } from "../../lib/purchaseOrders"
+import { CustomerAccountNumberFields, DocumentVisualTemplateFields } from "../../components/DocumentTemplateSettingFields"
+import { applyDocumentVisualTemplate, parseDocumentVisualTemplate, type DocumentVisualStyle } from "../../lib/documentVisualTemplate"
+import { ensureCustomerAccountNumber } from "../../lib/customerAccountNumber"
 
 type InvoiceDeliveryPanel = null | "email" | "sms" | "separate_email" | "both"
 
@@ -126,7 +129,7 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
   const [invoiceSmsAttachEntity, setInvoiceSmsAttachEntity] = useState(true)
   const [notice, setNotice] = useState<string | null>(null)
   const [includePaymentLink, setIncludePaymentLink] = useState(true)
-  const [paymentProvider, setPaymentProvider] = useState<PaymentProviderId>("helcim")
+  const [paymentProvider, setPaymentProvider] = useState<PaymentProviderId>("stripe")
   const [newDesc, setNewDesc] = useState("")
   const [newQty, setNewQty] = useState("1")
   const [newUnit, setNewUnit] = useState("0")
@@ -135,6 +138,14 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
   const [invoiceNumberEnabled, setInvoiceNumberEnabled] = useState(false)
   const [invoiceNumberPrefix, setInvoiceNumberPrefix] = useState("INV")
   const [invoiceNumberDigits, setInvoiceNumberDigits] = useState("4")
+  const [accountNumberEnabled, setAccountNumberEnabled] = useState(false)
+  const [accountNumberPrefix, setAccountNumberPrefix] = useState("ACCT")
+  const [accountNumberDigits, setAccountNumberDigits] = useState("4")
+  const [accountNumberPreviewSeq, setAccountNumberPreviewSeq] = useState(1)
+  const [customerAccountNumber, setCustomerAccountNumber] = useState("")
+  const [invoiceLayout, setInvoiceLayout] = useState<DocumentVisualStyle>("basic")
+  const [invoicePrimaryColor, setInvoicePrimaryColor] = useState("#1B4F72")
+  const [invoiceSecondaryColor, setInvoiceSecondaryColor] = useState("#5DADE2")
   const [invoiceTplIncludePreparedDate, setInvoiceTplIncludePreparedDate] = useState(true)
   const [invoiceTplIncludeDueDate, setInvoiceTplIncludeDueDate] = useState(true)
   const [invoiceTplIncludePhotos, setInvoiceTplIncludePhotos] = useState(false)
@@ -174,9 +185,18 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
 
   function applyInvoiceTemplateMeta(meta: Record<string, unknown>) {
     const inv = parseDocumentNumberSettings(meta, "invoice")
+    const acct = parseDocumentNumberSettings(meta, "account")
+    const visual = parseDocumentVisualTemplate(meta, "invoice")
     setInvoiceNumberEnabled(inv.enabled === true)
     setInvoiceNumberPrefix(inv.prefix)
     setInvoiceNumberDigits(String(inv.sequenceDigits))
+    setAccountNumberEnabled(acct.enabled === true)
+    setAccountNumberPrefix(acct.prefix)
+    setAccountNumberDigits(String(acct.sequenceDigits))
+    setAccountNumberPreviewSeq(acct.nextSequence)
+    setInvoiceLayout(visual.style)
+    setInvoicePrimaryColor(visual.primaryColor)
+    setInvoiceSecondaryColor(visual.secondaryColor)
     setInvoiceTplIncludePreparedDate(meta.invoice_template_include_prepared_date !== false)
     setInvoiceTplIncludeDueDate(meta.invoice_template_include_due_date !== false)
     setInvoiceTplIncludePhotos(meta.invoice_template_include_photos === true)
@@ -365,6 +385,11 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
       customerEmail: row.email,
       customerAddress: row.service_address,
     }))
+    setCustomerAccountNumber("")
+    if (!supabase || !userId) return
+    void ensureCustomerAccountNumber(supabase, userId, row.id)
+      .then((n) => setCustomerAccountNumber(n ?? ""))
+      .catch(() => setCustomerAccountNumber(""))
   }
 
   async function handleQuotePick(quoteId: string) {
@@ -417,7 +442,7 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
     setNotice(null)
     try {
       const template = await loadInvoiceTemplateSettings(supabase, userId)
-      const bytes = await buildInvoicePdfBytes(form, template, { sandboxWatermark: sandboxTraining })
+      const bytes = await buildInvoicePdfBytes(form, template, { sandboxWatermark: sandboxTraining, accountNumber: customerAccountNumber })
       downloadPdfBlob(bytes, `${form.invoiceNumber.trim() || "invoice"}.pdf`)
       setNotice("PDF downloaded.")
     } catch (e) {
@@ -531,6 +556,7 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
       const bytes = await buildInvoicePdfBytes(form, template, {
         sandboxWatermark: sandboxTraining,
         paymentUrl,
+        accountNumber: customerAccountNumber,
       })
       const filename = `${form.invoiceNumber.trim() || "invoice"}.pdf`
       const copyAttachments = form.attachments.filter((a) => a.attach_to_customer_copy && a.public_url.trim())
@@ -1290,6 +1316,12 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
             <span style={{ fontWeight: 600, display: "block", marginBottom: 4 }}>Invoice #</span>
             <input value={form.invoiceNumber} onChange={(e) => setForm((p) => ({ ...p, invoiceNumber: e.target.value }))} style={inputStyle} />
           </label>
+          {customerAccountNumber ? (
+            <label style={{ fontSize: 13 }}>
+              <span style={{ fontWeight: 600, display: "block", marginBottom: 4 }}>Account #</span>
+              <input value={customerAccountNumber} readOnly style={inputStyle} />
+            </label>
+          ) : null}
           {invoiceTplIncludePreparedDate ? (
             <label style={{ fontSize: 13 }}>
               <span style={{ fontWeight: 600, display: "block", marginBottom: 4 }}>Date prepared</span>
@@ -1710,6 +1742,35 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
                     })}
                   </strong>
                 </p>
+                <CustomerAccountNumberFields
+                  enabled={accountNumberEnabled}
+                  prefix={accountNumberPrefix}
+                  digits={accountNumberDigits}
+                  preview={formatDocumentNumber({
+                    format: buildDocumentNumberFormat(accountNumberPrefix.trim() || "ACCT", clampDocumentNumberDigits(accountNumberDigits, 4)),
+                    prefix: accountNumberPrefix.trim() || "ACCT",
+                    sequenceDigits: clampDocumentNumberDigits(accountNumberDigits, 4),
+                    nextSequence: accountNumberPreviewSeq,
+                  })}
+                  onEnabled={setAccountNumberEnabled}
+                  onPrefix={setAccountNumberPrefix}
+                  onDigits={setAccountNumberDigits}
+                />
+              </div>
+            </details>
+
+            <details style={{ border: `1px solid ${theme.border}`, borderRadius: 8, padding: "10px 12px" }}>
+              <summary style={{ ...summaryStyle, fontSize: 13 }}>Template</summary>
+              <div style={{ marginTop: 10 }}>
+                <DocumentVisualTemplateFields
+                  name="invoice-template-style"
+                  style={invoiceLayout}
+                  primaryColor={invoicePrimaryColor}
+                  secondaryColor={invoiceSecondaryColor}
+                  onStyle={setInvoiceLayout}
+                  onPrimary={setInvoicePrimaryColor}
+                  onSecondary={setInvoiceSecondaryColor}
+                />
               </div>
             </details>
 
@@ -1829,10 +1890,20 @@ export default function InvoicesWorkspace({ supabase, userId, setPage }: Props) 
                       data?.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
                         ? { ...(data.metadata as Record<string, unknown>) }
                         : {}
-                    const next = applyDocumentNumberSettingsToMeta(prev, "invoice", {
+                    let next = applyDocumentNumberSettingsToMeta(prev, "invoice", {
                       prefix: invoiceNumberPrefix,
                       sequenceDigits: clampDocumentNumberDigits(invoiceNumberDigits, 4),
                       enabled: invoiceNumberEnabled,
+                    })
+                    next = applyDocumentNumberSettingsToMeta(next, "account", {
+                      prefix: accountNumberPrefix,
+                      sequenceDigits: clampDocumentNumberDigits(accountNumberDigits, 4),
+                      enabled: accountNumberEnabled,
+                    })
+                    next = applyDocumentVisualTemplate(next, "invoice", {
+                      style: invoiceLayout,
+                      primaryColor: invoicePrimaryColor,
+                      secondaryColor: invoiceSecondaryColor,
                     })
                     next.invoice_template_include_prepared_date = invoiceTplIncludePreparedDate
                     next.invoice_template_include_due_date = invoiceTplIncludeDueDate

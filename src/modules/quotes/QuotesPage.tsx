@@ -162,6 +162,7 @@ import {
   parseDocumentNumberSettings,
   type DocumentNumberDigitCount,
 } from "../../lib/documentNumberFormat"
+import { CustomerAccountNumberFields } from "../../components/DocumentTemplateSettingFields"
 import { buildQuoteHtmlDocument, downloadQuoteHtmlFile } from "../../lib/documentQuoteHtml"
 import { findLatestQuoteIdForCustomer } from "../../lib/quoteCustomerNavigation"
 import { logEstimateScheduledCommunicationEvent } from "../../lib/customerSchedulingActivity"
@@ -625,6 +626,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
   const [estimateNumberEnabled, setEstimateNumberEnabled] = useState(false)
   const [estimateNumberPreviewSeq, setEstimateNumberPreviewSeq] = useState(1)
   const [invoiceNumberPreviewSeq, setInvoiceNumberPreviewSeq] = useState(1)
+  const [accountNumberPreviewSeq, setAccountNumberPreviewSeq] = useState(1)
   const [esignLinkUrl, setEsignLinkUrl] = useState<string | null>(null)
   const [esignLinkBusy, setEsignLinkBusy] = useState(false)
   const [esignLinkError, setEsignLinkError] = useState<string | null>(null)
@@ -1623,6 +1625,7 @@ export default function QuotesPage(_props: QuotesPageProps) {
         typeof meta.estimate_template_job_description_label === "string" ? meta.estimate_template_job_description_label.trim() : ""
       const estNum = parseDocumentNumberSettings(meta, "estimate")
       const invNum = parseDocumentNumberSettings(meta, "invoice")
+      const acctNum = parseDocumentNumberSettings(meta, "account")
       const next: Record<string, string> = {
         estimate_template_job_details_default: detailsDefault,
         estimate_template_include_job_description: detailsDefault === "customer" ? "checked" : "unchecked",
@@ -1635,11 +1638,15 @@ export default function QuotesPage(_props: QuotesPageProps) {
         invoice_number_prefix: invNum.prefix,
         invoice_number_digits: String(invNum.sequenceDigits),
         invoice_number_enabled: invNum.enabled ? "checked" : "unchecked",
+        customer_account_number_prefix: acctNum.prefix,
+        customer_account_number_digits: String(acctNum.sequenceDigits),
+        customer_account_number_enabled: acctNum.enabled ? "checked" : "unchecked",
       }
       setJobDetailsDefault(detailsDefault)
       setEstimateDocSectionOrder(parseEstimateDocSectionOrder(meta.estimate_template_section_order))
       setEstimateNumberPreviewSeq(estNum.nextSequence)
       setInvoiceNumberPreviewSeq(invNum.nextSequence)
+      setAccountNumberPreviewSeq(acctNum.nextSequence)
       for (const item of estimateTemplateItems) {
         if (item.id === "estimate_template_notes") next[item.id] = notes
         else if (item.id === "estimate_template_footer") next[item.id] = footer
@@ -1793,6 +1800,14 @@ export default function QuotesPage(_props: QuotesPageProps) {
         prefix: invPrefix,
         sequenceDigits: invDigits,
         enabled: estimateTemplateFormValues.invoice_number_enabled === "checked",
+      }),
+    )
+    Object.assign(
+      prevMeta,
+      applyDocumentNumberSettingsToMeta(prevMeta, "account", {
+        prefix: (estimateTemplateFormValues.customer_account_number_prefix ?? "").trim() || "ACCT",
+        sequenceDigits: clampDocumentNumberDigits(estimateTemplateFormValues.customer_account_number_digits, 4),
+        enabled: estimateTemplateFormValues.customer_account_number_enabled === "checked",
       }),
     )
     setEstimateNumberPrefix(estPrefix)
@@ -5871,6 +5886,53 @@ export default function QuotesPage(_props: QuotesPageProps) {
                               })}
                             </strong>
                           </p>
+                        </div>
+                        <div
+                          style={{
+                            display: "grid",
+                            gap: 10,
+                            padding: 12,
+                            borderRadius: 8,
+                            border: `1px solid ${theme.border}`,
+                            background: "#fff",
+                          }}
+                        >
+                          <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: theme.text }}>Customer account numbers</p>
+                          <CustomerAccountNumberFields
+                            enabled={estimateTemplateFormValues.customer_account_number_enabled === "checked"}
+                            prefix={estimateTemplateFormValues.customer_account_number_prefix ?? "ACCT"}
+                            digits={estimateTemplateFormValues.customer_account_number_digits ?? "4"}
+                            preview={formatDocumentNumber({
+                              format: buildDocumentNumberFormat(
+                                (estimateTemplateFormValues.customer_account_number_prefix ?? "").trim() || "ACCT",
+                                clampDocumentNumberDigits(estimateTemplateFormValues.customer_account_number_digits, 4),
+                              ),
+                              prefix: (estimateTemplateFormValues.customer_account_number_prefix ?? "").trim() || "ACCT",
+                              sequenceDigits: clampDocumentNumberDigits(
+                                estimateTemplateFormValues.customer_account_number_digits,
+                                4,
+                              ),
+                              nextSequence: accountNumberPreviewSeq,
+                            })}
+                            onEnabled={(checked) =>
+                              setEstimateTemplateFormValues((prev) => ({
+                                ...prev,
+                                customer_account_number_enabled: checked ? "checked" : "unchecked",
+                              }))
+                            }
+                            onPrefix={(value) =>
+                              setEstimateTemplateFormValues((prev) => ({
+                                ...prev,
+                                customer_account_number_prefix: value,
+                              }))
+                            }
+                            onDigits={(value) =>
+                              setEstimateTemplateFormValues((prev) => ({
+                                ...prev,
+                                customer_account_number_digits: value,
+                              }))
+                            }
+                          />
                         </div>
                       </div>
                     </div>

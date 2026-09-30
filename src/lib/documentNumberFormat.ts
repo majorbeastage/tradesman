@@ -7,7 +7,7 @@
  * Legacy token formats are still parsed for digit length / prefix when present.
  */
 
-export type DocumentNumberKind = "estimate" | "invoice" | "work_order" | "inventory"
+export type DocumentNumberKind = "estimate" | "invoice" | "receipt" | "account" | "work_order" | "inventory"
 
 export type DocumentNumberDigitCount = 3 | 4 | 5 | 6
 
@@ -51,6 +51,24 @@ const KIND_DEFAULTS: Record<DocumentNumberKind, KindDefaults> = {
     digitsKey: "invoice_number_digits",
     seqKey: "invoice_number_next",
     enabledKey: "invoice_number_enabled",
+  },
+  receipt: {
+    prefix: "REC",
+    digits: 4,
+    formatKey: "receipt_number_format",
+    prefixKey: "receipt_number_prefix",
+    digitsKey: "receipt_number_digits",
+    seqKey: "receipt_number_next",
+    enabledKey: "receipt_number_enabled",
+  },
+  account: {
+    prefix: "ACCT",
+    digits: 4,
+    formatKey: "customer_account_number_format",
+    prefixKey: "customer_account_number_prefix",
+    digitsKey: "customer_account_number_digits",
+    seqKey: "customer_account_number_next",
+    enabledKey: "customer_account_number_enabled",
   },
   work_order: {
     prefix: "WO",

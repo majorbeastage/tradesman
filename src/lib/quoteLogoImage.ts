@@ -12,6 +12,16 @@ export function resolveReceiptTemplateLogoUrl(meta: Record<string, unknown>): st
   return est
 }
 
+/** Business logo already saved on MyT or the estimate template. */
+export function resolveBusinessLogoUrl(meta: Record<string, unknown>): string {
+  const fromTemplate = resolveReceiptTemplateLogoUrl(meta)
+  if (fromTemplate) return fromTemplate
+  const company = typeof meta.company_logo_url === "string" ? meta.company_logo_url.trim() : ""
+  if (company) return company
+  const quote = typeof meta.quote_logo_url === "string" ? meta.quote_logo_url.trim() : ""
+  return quote
+}
+
 export async function fetchQuoteLogoForExport(url: string): Promise<QuoteLogoBytes | null> {
   const trimmed = url.trim()
   if (!trimmed.startsWith("http")) return null
