@@ -30,6 +30,26 @@ export interface TradesmanNativePlugin {
     fileName?: string
     error?: string
   }>
+  /**
+   * iOS: whether this iPhone can run Tap to Pay on iPhone, and whether the
+   * on-device reader is linked in this binary. Does not start a charge.
+   */
+  tapToPayAvailability(): Promise<{
+    platform?: string
+    deviceSupported?: boolean
+    readerLinked?: boolean
+    detail?: string
+  }>
+  /**
+   * iOS: hand a prepared Stripe Terminal session to the on-device reader.
+   * Resolves with started:false when this build cannot read a card.
+   */
+  startTapToPay(options: {
+    connectionToken: string
+    clientSecret: string
+    locationId?: string
+    amountCents?: number
+  }): Promise<{ started?: boolean; code?: string; message?: string }>
 }
 
 export const TradesmanNative = registerPlugin<TradesmanNativePlugin>("TradesmanNative")

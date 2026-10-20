@@ -141,6 +141,11 @@ export async function sendPaymentRequest(input: {
   return data.paymentRequest
 }
 
+export type TapToPayProviderHints = {
+  stripeLocationId?: string | null
+  squareLocationId?: string | null
+}
+
 export async function fetchPaymentProviderStatus(
   userId: string,
   accessToken: string | null,
@@ -149,8 +154,36 @@ export async function fetchPaymentProviderStatus(
   defaultProvider: PaymentProviderId
   autoReceiptOnPaid: boolean
   hostedPayPortalConfigured: boolean
+  tapToPay?: TapToPayProviderHints
 }> {
   return paymentApiFetch("provider-status", { userId }, accessToken)
+}
+
+export async function prepareCustomerTapToPay(input: {
+  userId: string
+  customerId: string
+  amount: number
+  description: string
+  quoteId?: string | null
+  invoiceId?: string | null
+  calendarEventId?: string | null
+  accessToken: string | null
+}): Promise<{
+  paymentRequest: PaymentRequestRow
+  paymentIntentId: string
+  clientSecret: string
+  connectionToken: string
+  locationId: string
+}> {
+  return paymentApiFetch("tap-to-pay-prepare", input, input.accessToken)
+}
+
+export async function syncCustomerTapToPay(input: {
+  userId: string
+  paymentRequestId: string
+  accessToken: string | null
+}): Promise<{ status: string; paid: boolean }> {
+  return paymentApiFetch("tap-to-pay-sync", input, input.accessToken)
 }
 
 export async function savePaymentProviderCredentials(input: {

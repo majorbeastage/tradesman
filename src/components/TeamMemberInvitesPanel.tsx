@@ -17,6 +17,7 @@ import { isManagedUserRole } from "../lib/profileRoles"
 import { usePortalViewOptional, usePortalViewReadOnly } from "../contexts/PortalViewContext"
 import type { AccountSettingsCategory } from "../modules/account/accountSettingsLayout"
 import { accountSettingsCategoryStyle, accountSettingsFoldButtonStyle } from "../modules/account/accountSettingsLayout"
+import { isIosNativeApp } from "../lib/publicSite"
 
 type Props = {
   ownerUserId: string
@@ -225,7 +226,9 @@ export function TeamMemberInvitesPanel({ ownerUserId, category, defaultCollapsed
           seats.officeManagerLimit <= 0 &&
           !seats.teamInvitesAllowed ? (
             <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.45 }}>
-              Your current plan includes only the account owner sign-in. Upgrade to an Office Manager or Corporate package to invite team members.
+              {isIosNativeApp()
+                ? "This plan includes only the account owner sign-in. Team invites are not available on this plan."
+                : "Your current plan includes only the account owner sign-in. Upgrade to an Office Manager or Corporate package to invite team members."}
             </p>
           ) : null}
 

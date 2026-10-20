@@ -23,6 +23,8 @@ public class TradesmanNativePlugin: CAPPlugin, CAPBridgedPlugin, UIImagePickerCo
         CAPPluginMethod(name: "requestCameraAccess", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "requestMicrophoneAccess", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pickImage", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "tapToPayAvailability", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "startTapToPay", returnType: CAPPluginReturnPromise),
     ]
 
     private var imageCall: CAPPluginCall?
@@ -332,5 +334,30 @@ public class TradesmanNativePlugin: CAPPlugin, CAPBridgedPlugin, UIImagePickerCo
             return
         }
         finishImagePick(["cancelled": false, "error": "Could not read that photo."])
+    }
+
+    /// Device check only. The Stripe Terminal reader is not linked until Apple grants
+    /// payment acceptance and this target depends on StripeTerminal.
+    @objc func tapToPayAvailability(_ call: CAPPluginCall) {
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        let iosOk = version.majorVersion > 16 || (version.majorVersion == 16 && version.minorVersion >= 7)
+        let phone = UIDevice.current.userInterfaceIdiom == .phone
+        let deviceSupported = phone && iosOk
+        call.resolve([
+            "platform": "ios",
+            "deviceSupported": deviceSupported,
+            "readerLinked": false,
+            "detail": deviceSupported
+                ? "This iPhone meets Apple's device rules for Tap to Pay on iPhone. The card reader is not in this App Store build yet."
+                : "Tap to Pay on iPhone needs an iPhone XS or newer on iOS 16.7 or later."
+        ])
+    }
+
+    @objc func startTapToPay(_ call: CAPPluginCall) {
+        call.resolve([
+            "started": false,
+            "code": "reader_not_linked",
+            "message": "Tap to Pay on iPhone cannot read a card in this App Store build yet. Your processor setup is saved. Send the customer a card link from Customer payments until the reader is included."
+        ])
     }
 }

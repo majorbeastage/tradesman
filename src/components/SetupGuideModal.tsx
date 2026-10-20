@@ -15,6 +15,7 @@ import { resolveClientPackage } from "../lib/clientPackageContext"
 import { useAuth } from "../contexts/AuthContext"
 import { useGlobalAssistantOptional } from "../contexts/GlobalAssistantContext"
 import { useSetupWizardOptional } from "../contexts/SetupWizardContext"
+import { isIosNativeApp } from "../lib/publicSite"
 
 function SetupGuideStepper({ stepIndex, steps }: { stepIndex: number; steps: SetupGuideStep[] }) {
   return (
@@ -311,7 +312,7 @@ export default function SetupGuideModal({
             >
               Set up your profile &amp; workspace
               <span style={{ display: "block", fontSize: 12, fontWeight: 500, opacity: 0.9, marginTop: 4 }}>
-                Walk through Dashboard, Customers, Estimates, Operations (when enabled), Scheduling, My T, and Payments.
+                Walk through Dashboard, Customers, Estimates, Operations (when enabled), Scheduling, My T, and {isIosNativeApp() ? "Customer payments" : "Payments"}.
               </span>
             </button>
             <button

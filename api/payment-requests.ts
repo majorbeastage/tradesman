@@ -379,6 +379,8 @@ async function handleProviderStatus(req: VercelRequest, res: VercelResponse) {
               : Boolean(creds?.squareAccessToken && creds?.squareLocationId)
     status[p] = { connected, accountLabel: data?.account_label ?? null }
   }
+  const stripeCreds = await loadProviderCredentials(sb, userId, "stripe")
+  const squareCreds = await loadProviderCredentials(sb, userId, "square")
   const profileCtx = await loadProfilePaymentContext(sb, userId)
   res.status(200).json({
     ok: true,
@@ -386,6 +388,10 @@ async function handleProviderStatus(req: VercelRequest, res: VercelResponse) {
     defaultProvider: profileCtx.defaultProvider,
     autoReceiptOnPaid: profileCtx.autoReceipt,
     hostedPayPortalConfigured: Boolean(profileCtx.customerPayLink),
+    tapToPay: {
+      stripeLocationId: stripeCreds?.stripeTerminalLocationId?.trim() || null,
+      squareLocationId: squareCreds?.squareLocationId?.trim() || null,
+    },
   })
 }
 
@@ -398,8 +404,22 @@ async function handleSaveCredentials(req: VercelRequest, res: VercelResponse) {
     return
   }
   const fields = (body.fields && typeof body.fields === "object" ? body.fields : {}) as Record<string, string>
-  const accountLabel = String(body.accountLabel ?? "").trim() || null
-  const secret_payload = buildSecretPayloadForSave(provider, fields)
+  const { data: existingCred } = await sb
+    .from("payment_provider_credentials")
+    .select("secret_payload, account_label")
+    .eq("user_id", userId)
+    .eq("provider", provider)
+    .maybeSingle()
+  const accountLabel =
+    body.accountLabel === undefined
+      ? (typeof existingCred?.account_label === "string" ? existingCred.account_label : null)
+      : String(body.accountLabel).trim() || null
+  const existingPayload =
+    existingCred?.secret_payload && typeof existingCred.secret_payload === "object" && !Array.isArray(existingCred.secret_payload)
+      ? { ...(existingCred.secret_payload as Record<string, string>) }
+      : {}
+  // Blank fields keep the saved key. A new value replaces that key only.
+  const secret_payload = { ...existingPayload, ...buildSecretPayloadForSave(provider, fields) }
   const { error } = await sb.from("payment_provider_credentials").upsert(
     {
       user_id: userId,
@@ -645,6 +665,145 @@ async function handleAdminClientPayments(req: VercelRequest, res: VercelResponse
   res.status(200).json({ ok: true, collections })
 }
 
+async function stripeFormPost(secret: string, path: string, fields: Record<string, string>): Promise<Record<string, unknown>> {
+  const res = await fetch(`https://api.stripe.com/v1/${path}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${secret}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams(fields).toString(),
+  })
+  const data = (await res.json().catch(() => ({}))) as { error?: { message?: string } } & Record<string, unknown>
+  if (!res.ok) throw new Error(data.error?.message || `Stripe API ${res.status}`)
+  return data
+}
+
+/**
+ * Prepares a card-present PaymentIntent on the contractor's own Stripe account
+ * for Tap to Pay on iPhone. Does not charge Tradesman and never returns the secret key.
+ */
+async function handleTapToPayPrepare(req: VercelRequest, res: VercelResponse) {
+  const body = (req.body ?? {}) as Json
+  const { sb, userId } = await resolveSupabase(req, body)
+  const customerId = String(body.customerId ?? "").trim()
+  const amount = Number(body.amount)
+  const description = String(body.description ?? "").trim() || "Customer payment"
+  const quoteId = String(body.quoteId ?? "").trim() || null
+  const calendarEventId = String(body.calendarEventId ?? "").trim() || null
+  const invoiceId = String(body.invoiceId ?? "").trim() || null
+  if (!customerId || !Number.isFinite(amount) || amount <= 0) {
+    res.status(400).json({ error: "customerId and a positive amount are required." })
+    return
+  }
+  const credentials = await loadProviderCredentials(sb, userId, "stripe")
+  const secret = credentials?.stripeSecretKey?.trim() || ""
+  const locationId = credentials?.stripeTerminalLocationId?.trim() || ""
+  if (!secret) {
+    res.status(400).json({ error: "Connect Stripe under Provider settings before starting Tap to Pay on iPhone." })
+    return
+  }
+  if (!locationId) {
+    res.status(400).json({ error: "Save your Stripe Terminal location ID (tml_…) before starting Tap to Pay on iPhone." })
+    return
+  }
+  const { data: cust } = await sb.from("customers").select("id").eq("id", customerId).eq("user_id", userId).maybeSingle()
+  if (!cust) {
+    res.status(404).json({ error: "Customer not found." })
+    return
+  }
+  const amountCents = Math.round(amount * 100)
+  const connection = await stripeFormPost(secret, "terminal/connection_tokens", { location: locationId })
+  const connectionToken = typeof connection.secret === "string" ? connection.secret : ""
+  if (!connectionToken) throw new Error("Stripe did not return a Terminal connection token.")
+  const intent = await stripeFormPost(secret, "payment_intents", {
+    amount: String(amountCents),
+    currency: "usd",
+    "payment_method_types[0]": "card_present",
+    capture_method: "automatic",
+    description: description.slice(0, 500),
+    "metadata[source]": "tradesman_customer_tap_to_pay",
+    "metadata[customer_id]": customerId.slice(0, 500),
+  })
+  const paymentIntentId = typeof intent.id === "string" ? intent.id : ""
+  const clientSecret = typeof intent.client_secret === "string" ? intent.client_secret : ""
+  if (!paymentIntentId || !clientSecret) throw new Error("Stripe did not return a card-present PaymentIntent.")
+  const { data: row, error } = await sb
+    .from("payment_requests")
+    .insert({
+      created_by: userId,
+      user_id: userId,
+      customer_id: customerId,
+      quote_id: quoteId,
+      invoice_id: invoiceId,
+      calendar_event_id: calendarEventId,
+      amount,
+      currency: "USD",
+      description,
+      provider: "stripe",
+      payment_url: null,
+      status: "draft",
+      provider_reference_id: paymentIntentId,
+      metadata: { channel: "tap_to_pay_on_iphone", stripe_terminal_location_id: locationId },
+    })
+    .select("*")
+    .single()
+  if (error) {
+    res.status(500).json({ error: error.message })
+    return
+  }
+  res.status(200).json({
+    ok: true,
+    paymentRequest: row,
+    paymentIntentId,
+    clientSecret,
+    connectionToken,
+    locationId,
+  })
+}
+
+async function handleTapToPaySync(req: VercelRequest, res: VercelResponse) {
+  const body = (req.body ?? {}) as Json
+  const { sb, userId } = await resolveSupabase(req, body)
+  const paymentRequestId = String(body.paymentRequestId ?? "").trim()
+  if (!paymentRequestId) {
+    res.status(400).json({ error: "paymentRequestId required." })
+    return
+  }
+  const { data: pr, error } = await sb
+    .from("payment_requests")
+    .select("id, provider, provider_reference_id, status")
+    .eq("id", paymentRequestId)
+    .eq("user_id", userId)
+    .maybeSingle()
+  if (error || !pr) {
+    res.status(404).json({ error: "Payment request not found." })
+    return
+  }
+  const intentId = String((pr as { provider_reference_id?: string }).provider_reference_id ?? "").trim()
+  const credentials = await loadProviderCredentials(sb, userId, "stripe")
+  const secret = credentials?.stripeSecretKey?.trim() || ""
+  if (!secret || !intentId.startsWith("pi_")) {
+    res.status(400).json({ error: "This charge is not a Stripe Tap to Pay payment." })
+    return
+  }
+  const stripeRes = await fetch(`https://api.stripe.com/v1/payment_intents/${encodeURIComponent(intentId)}`, {
+    headers: { Authorization: `Bearer ${secret}` },
+  })
+  const intent = (await stripeRes.json().catch(() => ({}))) as { status?: string; error?: { message?: string } }
+  if (!stripeRes.ok) throw new Error(intent.error?.message || `Stripe API ${stripeRes.status}`)
+  const status = typeof intent.status === "string" ? intent.status : ""
+  const paid = status === "succeeded"
+  if (paid && (pr as { status?: string }).status !== "paid") {
+    await sb
+      .from("payment_requests")
+      .update({ status: "paid", paid_at: new Date().toISOString() })
+      .eq("id", paymentRequestId)
+      .eq("user_id", userId)
+  }
+  res.status(200).json({ ok: true, status, paid })
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   cors(res)
   if (req.method === "OPTIONS") {
@@ -679,6 +838,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     if (action === "admin-client-payments") {
       await handleAdminClientPayments(req, res)
+      return
+    }
+    if (action === "tap-to-pay-prepare") {
+      await handleTapToPayPrepare(req, res)
+      return
+    }
+    if (action === "tap-to-pay-sync") {
+      await handleTapToPaySync(req, res)
       return
     }
     res.status(400).json({ error: `Unknown action: ${action}` })

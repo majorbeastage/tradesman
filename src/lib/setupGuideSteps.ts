@@ -1,4 +1,6 @@
 import type { ClientPackageContext } from "./clientPackageContext"
+import { isIosNativeApp } from "./publicSite"
+import { IOS_CUSTOMER_PAYMENTS_LABEL } from "../i18n/navLabel"
 
 export type SetupGuideStepId =
   | "welcome"
@@ -139,20 +141,35 @@ function baseSteps(ctx: ClientPackageContext): SetupGuideStep[] {
     })
   }
 
-  steps.push({
-    id: "payments",
-    title: "Payments",
-    page: "payments",
-    body: "Subscription billing for your Tradesman account and (when enabled) Helcim links to collect from customers.",
-    bullets: [
-      "Payments tab visibility depends on your role and admin configuration.",
-      "Customer payment requests are created from the customer record when collections are enabled.",
-      ctx.isCorporate
-        ? "Corporate billing may include add-on External, Internal, and Office Manager seats — your admin tracks these under Billing & Helcim."
-        : "Additional user and office manager seats can be added to your subscription when you grow the team.",
-    ],
-    question: "Do you need to collect payments from customers through Tradesman?",
-  })
+  steps.push(
+    isIosNativeApp()
+      ? {
+          id: "payments",
+          title: IOS_CUSTOMER_PAYMENTS_LABEL,
+          page: "payments",
+          body: "Collect what a customer owes for a job, invoice, or deposit. Money goes to the processor account your company connected. This tab does not bill anyone for Tradesman.",
+          bullets: [
+            "Send a card link by text or email from Customer payments.",
+            "Tap to Pay on iPhone appears after your company enables it with Stripe or Square and saves the location ID.",
+            "Ask your company administrator if the tab is not on your menu.",
+          ],
+          question: "Do you take card payments from customers on the job?",
+        }
+      : {
+          id: "payments",
+          title: "Payments",
+          page: "payments",
+          body: "Subscription billing for your Tradesman account and (when enabled) Helcim links to collect from customers.",
+          bullets: [
+            "Payments tab visibility depends on your role and admin configuration.",
+            "Customer payment requests are created from the customer record when collections are enabled.",
+            ctx.isCorporate
+              ? "Corporate billing may include add-on External, Internal, and Office Manager seats — your admin tracks these under Billing & Helcim."
+              : "Additional user and office manager seats can be added to your subscription when you grow the team.",
+          ],
+          question: "Do you need to collect payments from customers through Tradesman?",
+        },
+  )
 
   steps.push({
     id: "finish",
