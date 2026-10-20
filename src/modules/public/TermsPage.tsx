@@ -7,6 +7,7 @@ import {
   TERMS_SETTINGS_KEY,
   parseSimpleLegalPage,
   resolvedLegalHeroKicker,
+  withSoleTermsSupplement,
   type SimpleLegalPage,
 } from "../../types/legal-pages"
 import { PublicLegalLayout } from "./PublicLegalLayout"
@@ -41,7 +42,7 @@ export default function TermsPage() {
     })()
   }, [])
 
-  const bodyText = content.body?.trim() ? content.body : DEFAULT_TERMS_PAGE.body
+  const bodyText = withSoleTermsSupplement(content.body?.trim() ? content.body : DEFAULT_TERMS_PAGE.body)
 
   return (
     <PublicLegalLayout

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react"
 import { supabase } from "../lib/supabase"
 import { usePortalTheme } from "../lib/useSchemeStyles"
 import { platformToolsFetchOrigins, platformToolsJsonBody, readPlatformToolsJsonBody } from "../lib/platformToolsJsonBody"
+import SoleBusinessAcceptance from "./SoleBusinessAcceptance"
 
 type Connection = { networkSlug: string; status: string; accountDisplayName?: string }
 
@@ -68,6 +69,7 @@ export default function GrowthSoleAppletPanel() {
 
   return (
     <div>
+      <SoleBusinessAcceptance />
       <div
         style={{
           border: `1px solid ${portalTheme.border}`,
