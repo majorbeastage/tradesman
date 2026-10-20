@@ -35,6 +35,7 @@ import SmsConsentPage from "./modules/public/SmsConsentPage"
 import PrivacyPage from "./modules/public/PrivacyPage"
 import AccountDeletionPage from "./modules/public/AccountDeletionPage"
 import TermsPage from "./modules/public/TermsPage"
+import SoleLegalPage from "./modules/sole/SoleLegalPage"
 import EmbedLeadPage from "./modules/public/EmbedLeadPage"
 import PublicBusinessWebProfilePage from "./modules/public/PublicBusinessWebProfilePage"
 import EstimateEsignPage from "./modules/public/EstimateEsignPage"
@@ -955,6 +956,11 @@ function App() {
 
   if (pathname === "/website-builder-preview") {
     return <WebsiteBuilderPopoutPage />
+  }
+
+  const soleLegalMatch = /^\/sole\/legal\/([a-z0-9-]+)\/?$/.exec(pathname)
+  if (soleLegalMatch) {
+    return <SoleLegalPage slug={soleLegalMatch[1] || ""} />
   }
 
   if (pathname === "/privacy") {

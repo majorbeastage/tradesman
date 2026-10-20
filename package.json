@@ -23,6 +23,7 @@
     "legal:static-html": "node scripts/generate-static-legal-html.mjs",
     "legal:sync-ssr": "node scripts/sync-legal-pages-ssr.mjs",
     "test:report-parser": "npx tsx scripts/specialty-report-parser-scrape.ts",
+    "test:sole": "npx tsx sole/enforcement.test.ts",
     "supabase:login": "npx --yes supabase@2.92.1 login",
     "supabase:deploy:resend-inbound": "npx --yes supabase@2.92.1 functions deploy resend-inbound --project-ref othemzceycphhuwojxge --use-api",
     "supabase:deploy:notify-late-punch": "npx --yes supabase@2.92.1 functions deploy notify-late-punch --project-ref othemzceycphhuwojxge --use-api",

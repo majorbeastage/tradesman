@@ -7,6 +7,7 @@ import {
   PRIVACY_SETTINGS_KEY,
   parseSimpleLegalPage,
   resolvedLegalHeroKicker,
+  withSolePrivacySupplement,
   type SimpleLegalPage,
 } from "../../types/legal-pages"
 import { PublicLegalLayout } from "./PublicLegalLayout"
@@ -44,7 +45,7 @@ export default function PrivacyPage() {
     })()
   }, [])
 
-  const bodyText = content.body?.trim() ? content.body : DEFAULT_PRIVACY_PAGE.body
+  const bodyText = withSolePrivacySupplement(content.body?.trim() ? content.body : DEFAULT_PRIVACY_PAGE.body)
 
   return (
     <PublicLegalLayout

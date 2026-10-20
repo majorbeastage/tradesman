@@ -177,6 +177,30 @@ export function stripLegacyImportantLegalNoticePrefix(body: string): string {
   return body.replace(re, "").replace(/^\n{2,}/, "\n").trimStart()
 }
 
+/** Shown on Tradesman Terms when the stored policy does not already mention SOLE. Draft for counsel. */
+export const TRADESMAN_SOLE_TERMS_SUPPLEMENT = `13. SOLE Marketing Services
+SOLE (Shop-Owned Lead Engine) is an optional service that may appear inside Growth. It is operated separately from the rest of Tradesman Systems and is described at sole.systems. SOLE helps a business connect advertising accounts it is authorized to manage, set budgets, and measure outcomes. It is not a lead broker, and it does not own the business’s advertising accounts or customer leads.
+
+These Terms do not activate SOLE. Before advertising management is used, an authorized person for the business must accept the current SOLE Terms of Service, Privacy Policy, advertising authorization, and data-sharing acknowledgment shown in Growth. Accepting these Tradesman Terms earlier is not that acceptance.
+
+Advertising results are not guaranteed. Platform charges, any SOLE servicing fee, and any Tradesman fee must be disclosed before spend is authorized. The draft SOLE documents linked from Growth require counsel review before production use.`
+
+/** Shown on Tradesman Privacy when the stored policy does not already mention SOLE. Draft for counsel. */
+export const TRADESMAN_SOLE_PRIVACY_SUPPLEMENT = `11. SOLE marketing attribution
+If a business turns on SOLE inside Growth, Tradesman may send SOLE pseudonymous lead and opportunity references, campaign attribution, whether a conversation was established, whether a job was scheduled, won, or lost, an optional service category, and an optional amount. Tradesman is not supposed to send the customer’s name, email, phone number, street address, notes, or a detailed job description on that contract.
+
+SOLE uses those events to measure advertising outcomes and to explain recommendations. The events are not claimed to be anonymous. Retention, deletion, and any later aggregated statistics are described in the SOLE Privacy Policy linked from Growth. Disconnecting SOLE stops new events. Prior use of Tradesman does not by itself authorize this sharing.`
+
+export function withSoleTermsSupplement(body: string): string {
+  if (/SOLE Marketing Services/i.test(body)) return body
+  return `${body.trim()}\n\n${TRADESMAN_SOLE_TERMS_SUPPLEMENT}`
+}
+
+export function withSolePrivacySupplement(body: string): string {
+  if (/SOLE marketing attribution/i.test(body)) return body
+  return `${body.trim()}\n\n${TRADESMAN_SOLE_PRIVACY_SUPPLEMENT}`
+}
+
 export const DEFAULT_PRIVACY_PAGE: SimpleLegalPage = {
   title: "Privacy Policy",
   subtitle:
