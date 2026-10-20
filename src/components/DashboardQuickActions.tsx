@@ -48,6 +48,7 @@ import { OPEN_DASHBOARD_TODO_EVENT } from "../lib/dashboardTodoUi"
 import { openMessenger } from "../lib/messengerBus"
 import { openMessagingAppWithSession } from "../lib/messagingHandoff"
 import { isNativeApp } from "../lib/capacitorMobile"
+import { isIosNativeApp } from "../lib/publicSite"
 import { isTabletDevice } from "../lib/deviceFormFactor"
 import DashboardTileStyleMenu from "./DashboardTileStyleMenu"
 import PlatformAssistantField from "./PlatformAssistantField"
@@ -945,6 +946,7 @@ export default function DashboardQuickActions(props: Props) {
       if (id === "scheduling_tools") return fourthLinkId === "scheduling_tools"
       if (id === "settings") return Boolean(showSettingsShortcut)
       if (id === "payments") return Boolean(showPaymentsShortcut)
+      if (id === "customer_payments_soon" && isIosNativeApp() && showPaymentsShortcut) return false
       if (id === "time_clock") return Boolean(props.showTimeClockShortcut)
       if (id === "custom_receipt") return Boolean(props.showCustomReceiptShortcut)
       if (id === "setup_guide") return Boolean(onOpenSetupGuide)

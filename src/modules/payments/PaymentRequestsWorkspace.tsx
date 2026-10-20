@@ -24,6 +24,8 @@ import {
 } from "../../lib/paymentRequests"
 import { consumePaymentsCollectPrefill, openInvoicesWorkspace } from "../../lib/workflowNavigation"
 import { PaymentRequestEditorModal } from "../../components/document-editors/PaymentRequestEditorModal"
+import TapToPayPanel from "../../components/TapToPayPanel"
+import { isIosNativeApp } from "../../lib/publicSite"
 
 const inputStyle: React.CSSProperties = {
   ...theme.formInput,
@@ -68,6 +70,8 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
   const [cloverSandbox, setCloverSandbox] = useState(false)
   const [stripeSecretKey, setStripeSecretKey] = useState("")
   const [stripeWebhookSecret, setStripeWebhookSecret] = useState("")
+  const [stripeTerminalLocation, setStripeTerminalLocation] = useState("")
+  const [savingTapLocation, setSavingTapLocation] = useState(false)
   const [manualUrl, setManualUrl] = useState("")
   const [fallbackPayUrl, setFallbackPayUrl] = useState("")
   const [autoReceipt, setAutoReceipt] = useState(true)
@@ -91,6 +95,7 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
       setProviderStatus(s.providers)
       setProvider(s.defaultProvider)
       setAutoReceipt(s.autoReceiptOnPaid)
+      setStripeTerminalLocation(s.tapToPay?.stripeLocationId?.trim() || "")
       if (supabase && userId) {
         const { data } = await supabase.from("profiles").select("metadata").eq("id", userId).maybeSingle()
         const meta =
@@ -271,6 +276,7 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
       if (settingsProvider === "stripe") {
         fields.stripe_secret_key = stripeSecretKey
         if (stripeWebhookSecret.trim()) fields.stripe_webhook_secret = stripeWebhookSecret
+        if (stripeTerminalLocation.trim()) fields.stripe_terminal_location_id = stripeTerminalLocation.trim()
       }
       if (settingsProvider === "manual") fields.manual_payment_url = manualUrl
       await savePaymentProviderCredentials({
@@ -297,8 +303,43 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
     }
   }
 
+  async function handleSaveTapLocation() {
+    if (!userId) return
+    const locationId = stripeTerminalLocation.trim()
+    if (!locationId) return
+    setSavingTapLocation(true)
+    setNotice(null)
+    try {
+      await savePaymentProviderCredentials({
+        userId,
+        provider: "stripe",
+        fields: { stripe_terminal_location_id: locationId },
+        accessToken,
+      })
+      setNotice("Stripe Terminal location saved. The secret key already on file was left as-is.")
+      await reloadProviderStatus()
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSavingTapLocation(false)
+    }
+  }
+
   return (
     <div id="payment-requests-workspace" style={{ display: "grid", gap: 20 }}>
+      {isIosNativeApp() ? (
+        <TapToPayPanel
+          userId={userId}
+          accessToken={accessToken}
+          customers={customers}
+          stripeConnected={Boolean(providerStatus?.stripe?.connected)}
+          squareConnected={Boolean(providerStatus?.square?.connected)}
+          stripeLocationId={stripeTerminalLocation}
+          onStripeLocationId={setStripeTerminalLocation}
+          onSaveStripeLocation={handleSaveTapLocation}
+          savingLocation={savingTapLocation}
+        />
+      ) : null}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <h2 style={{ margin: "0 0 6px", fontSize: "1.25rem", fontWeight: 800, color: theme.text }}>Collect from customers</h2>
@@ -387,7 +428,9 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
               <label style={labelStyle}>
                 Helcim API token
                 <span style={{ fontWeight: 500, color: "#64748b" }}>
-                  Only for customer payments on a Helcim account you already have. Tradesman subscription billing uses Stripe.
+                  {isIosNativeApp()
+                    ? "Only for customer payments on a Helcim account your company already has."
+                    : "Only for customer payments on a Helcim account you already have. Tradesman subscription billing uses Stripe."}
                 </span>
                 <input type="password" value={helcimToken} onChange={(e) => setHelcimToken(e.target.value)} style={inputStyle} placeholder="Paste new token to update" />
               </label>
@@ -449,8 +492,19 @@ export default function PaymentRequestsWorkspace({ onOpenProviderSettings }: Pro
                     placeholder="whsec_... from Stripe Dashboard"
                   />
                 </label>
+                <label style={labelStyle}>
+                  Terminal location ID (Tap to Pay on iPhone)
+                  <input
+                    value={stripeTerminalLocation}
+                    onChange={(e) => setStripeTerminalLocation(e.target.value)}
+                    style={inputStyle}
+                    placeholder="tml_…"
+                    autoComplete="off"
+                  />
+                </label>
                 <p style={{ margin: 0, fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>
-                  Use a restricted key with Checkout Sessions write access if possible. Enable Apple Pay and card payments in Stripe Dashboard → Settings → Payment methods.
+                  Use a restricted key that can create Checkout Sessions and, for Tap to Pay on iPhone, Terminal connection tokens.
+                  The location ID is the Stripe Terminal location for the city where you take cards. Leave the secret key blank to keep the key already saved.
                 </p>
               </>
             ) : null}

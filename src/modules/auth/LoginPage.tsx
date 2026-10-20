@@ -226,7 +226,7 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
               : mode === "forgot"
                 ? t("login.sub.forgot")
                 : isIosNativeApp()
-                  ? "Sign in with the seat your company issued. This app does not sell Tradesman to individuals."
+                  ? "Sign in with the seat your company already issued."
                   : t("login.sub.signin")}
           </p>
 
@@ -365,8 +365,7 @@ export default function LoginPage({ isAdminLogin = false, onSuccess, onBack, onG
                 </button>
               ) : isIosNativeApp() ? (
                 <span style={{ display: "block", fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
-                  Ask your company administrator for a seat. This App Store app does not create accounts or sell
-                  Tradesman to individuals, consumers, or families.
+                  New accounts are not created in this app. Ask your company administrator if you need a sign-in.
                 </span>
               ) : (
                 <>

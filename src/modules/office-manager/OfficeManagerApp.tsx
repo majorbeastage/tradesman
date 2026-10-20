@@ -27,7 +27,7 @@ import { usePortalTabs } from "../../hooks/usePortalTabs"
 import { theme } from "../../styles/theme"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { useLocale } from "../../i18n/LocaleContext"
-import { formatPortalTabLabel } from "../../i18n/navLabel"
+import { dashboardPaymentsQuickLabel, formatPortalTabLabel } from "../../i18n/navLabel"
 import { supabase } from "../../lib/supabase"
 import {
   filterPortalTabsForV2,
@@ -589,7 +589,7 @@ function OfficeManagerAppContent() {
               teamManagement: t("dashboard.quickTeamManagement"),
               schedulingTools: t("dashboard.quickSchedulingTools"),
               settings: t("dashboard.quickSettings"),
-              payments: t("dashboard.quickPayments"),
+              payments: dashboardPaymentsQuickLabel(t("dashboard.quickPayments")),
               insurance: t("dashboard.quickInsurance"),
               customerPaymentsSoon: t("dashboard.quickCustomerPaymentsSoon"),
               reporting: t("dashboard.quickReporting"),

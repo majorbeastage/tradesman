@@ -83,7 +83,7 @@ import RegisterSetupGuideOpener from "./components/RegisterSetupGuideOpener"
 import { supabase } from "./lib/supabase"
 import { withTimeout } from "./lib/withTimeout"
 import { useLocale } from "./i18n/LocaleContext"
-import { formatPortalTabLabel } from "./i18n/navLabel"
+import { dashboardPaymentsQuickLabel, formatPortalTabLabel } from "./i18n/navLabel"
 import { PRODUCT_PACKAGE_IDS, SIGNUP_OPEN_PRODUCT_ADVISOR_KEY, SIGNUP_PRODUCT_PACKAGE_STORAGE_KEY, type ProductPackageId } from "./lib/productPackages"
 import { normalizePasswordRecoveryUrlInBrowser } from "./lib/authRedirectBase"
 import { theme } from "./styles/theme"
@@ -220,9 +220,8 @@ function IosBusinessSignInOnly({ onLogin }: { onLogin: () => void }) {
       <div style={{ maxWidth: 440, display: "grid", gap: 14 }}>
         <h1 style={{ margin: 0, fontSize: 28, color: "#0f172a" }}>Tradesman</h1>
         <p style={{ margin: 0, fontSize: 15, lineHeight: 1.55, color: "#475569" }}>
-          This App Store app is for employees of a contracting company that already has a Tradesman organization
-          account. Ask your company administrator for a seat. The app does not sell Tradesman to individuals,
-          consumers, or families.
+          This app is for employees of a contracting company that already uses Tradesman. New accounts are not
+          created here. Sign in with the seat your company already issued.
         </p>
         <button
           type="button"
@@ -645,7 +644,7 @@ function MainAppInner() {
               teamManagement: t("dashboard.quickTeamManagement"),
               schedulingTools: t("dashboard.quickSchedulingTools"),
               settings: t("dashboard.quickSettings"),
-              payments: t("dashboard.quickPayments"),
+              payments: dashboardPaymentsQuickLabel(t("dashboard.quickPayments")),
               insurance: t("dashboard.quickInsurance"),
               customerPaymentsSoon: t("dashboard.quickCustomerPaymentsSoon"),
               reporting: t("dashboard.quickReporting"),

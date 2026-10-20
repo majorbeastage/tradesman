@@ -684,6 +684,35 @@ export default function SignupPage({ onBack, initialProductPackage }: Props) {
     }
   }
 
+  if (isIosNativeApp()) {
+    return (
+      <div style={{ minHeight: "100vh", background: theme.background, padding: 24, color: theme.text }}>
+        <div style={{ maxWidth: 480, margin: "0 auto", display: "grid", gap: 14 }}>
+          <h1 style={{ margin: 0, fontSize: 26 }}>Sign in</h1>
+          <p style={{ margin: 0, fontSize: 15, lineHeight: 1.55 }}>
+            New accounts are not created in this app. Sign in with the seat your company already issued.
+          </p>
+          <button
+            type="button"
+            onClick={onBack}
+            style={{
+              padding: "12px 16px",
+              borderRadius: 10,
+              border: "none",
+              background: theme.primary,
+              color: "#fff",
+              fontWeight: 800,
+              width: "fit-content",
+              cursor: "pointer",
+            }}
+          >
+            Back to sign in
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   if (awaitingEmailFor) {
     return (
       <div style={{ minHeight: "100vh", background: theme.background, padding: 24, color: theme.text, colorScheme: "light" }}>

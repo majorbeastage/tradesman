@@ -42,6 +42,8 @@ export type PaymentProviderCredentials = {
   cloverSandbox?: boolean | null
   stripeSecretKey?: string | null
   stripeWebhookSecret?: string | null
+  /** Stripe Terminal location (`tml_...`) for Tap to Pay on iPhone. Not a secret. */
+  stripeTerminalLocationId?: string | null
   manualPaymentUrlTemplate?: string | null
 }
 
@@ -390,6 +392,7 @@ export function parseProviderCredentialsFromDb(
     cloverSandbox: p.clover_sandbox === true || p.clover_sandbox === "true",
     stripeSecretKey: typeof p.stripe_secret_key === "string" ? p.stripe_secret_key : null,
     stripeWebhookSecret: typeof p.stripe_webhook_secret === "string" ? p.stripe_webhook_secret : null,
+    stripeTerminalLocationId: typeof p.stripe_terminal_location_id === "string" ? p.stripe_terminal_location_id : null,
     manualPaymentUrlTemplate: typeof p.manual_payment_url === "string" ? p.manual_payment_url : null,
   }
 }
@@ -424,6 +427,9 @@ export function buildSecretPayloadForSave(
     const out: Record<string, string> = {}
     if (fields.stripe_secret_key?.trim()) out.stripe_secret_key = fields.stripe_secret_key.trim()
     if (fields.stripe_webhook_secret?.trim()) out.stripe_webhook_secret = fields.stripe_webhook_secret.trim()
+    if (fields.stripe_terminal_location_id?.trim()) {
+      out.stripe_terminal_location_id = fields.stripe_terminal_location_id.trim()
+    }
     return out
   }
   const out: Record<string, string> = {}

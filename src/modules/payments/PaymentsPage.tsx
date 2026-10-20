@@ -353,7 +353,15 @@ export default function PaymentsPage() {
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-      <h1 style={{ fontSize: "1.75rem", fontWeight: 700, color: theme.text, marginBottom: 8 }}>Payments</h1>
+      <h1 style={{ fontSize: "1.75rem", fontWeight: 700, color: theme.text, marginBottom: 8 }}>
+        {iosWebBilling ? "Customer payments" : "Payments"}
+      </h1>
+      {iosWebBilling ? (
+        <p style={{ margin: "0 0 14px", fontSize: 14, color: "#475569", lineHeight: 1.55, maxWidth: 720 }}>
+          Charge a customer for a job, invoice, or deposit. The card payment goes to your company&apos;s own processor.
+          This screen does not bill the person signed in to the app.
+        </p>
+      ) : null}
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
         {iosWebBilling ? null : (
